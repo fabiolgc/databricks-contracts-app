@@ -1,0 +1,98 @@
+---
+alwaysApply: true
+---
+# Databricks Contracts App - Documentation
+
+## Project Overview
+A Next.js application deployed on Databricks Apps for managing PDF contracts, with integration to Unity Catalog, SQL Warehouse, and Databricks services. 
+
+## Reference
+- Reference the following files to stay on track with the project alignments:
+  - `.cursor/rules/development-guidelines.mdc` - Development guidelines and best practices 
+
+## Architecture
+
+### Stack
+- **Frontend**: Next.js 16 (App Router), React, TypeScript
+- **Styling**: Tailwind CSS
+- **Deployment**: Databricks Apps
+- **Database**: Databricks SQL Warehouse
+- **Storage**: Unity Catalog Volumes
+
+### Key Components
+1. **Contract Import**: Upload PDF files to Unity Catalog Volume
+2. **Chunking**: Process documents using Databricks Jobs
+3. **Vector Search**: Index and search through contract content
+4. **Agent Interface**: AI-powered contract analysis
+
+## Databricks Configuration
+
+### Environment Variables
+- `DATABRICKS_CATALOG`: Unity Catalog name
+- `DATABRICKS_SCHEMA`: Schema within the catalog
+- `DATABRICKS_VOLUME`: Volume name for PDF storage
+- `DATABRICKS_WAREHOUSE_ID`: SQL Warehouse ID
+- `DATABRICKS_SERVER_HOSTNAME`: Workspace hostname
+- `DATABRICKS_HTTP_PATH`: SQL Warehouse HTTP path
+
+### Resources Required
+- **SQL Warehouse**: For SQL operations (CAN_USE permission)
+- **Unity Catalog Volume**: For PDF storage (READ_VOLUME, WRITE_VOLUME permissions)
+- **Service Principal**: Auto-created by Databricks Apps
+
+## Development
+
+### Local Development
+```bash
+npm run dev
+```
+
+### Build
+```bash
+npm run build
+```
+
+### Deploy to Databricks
+```bash
+databricks apps deploy databricks-contracts-app --source-code-path "/Workspace/Users/<user>@databricks.com/databricks-contracts-app"
+```
+
+## Best Practices
+
+### Authentication
+- Use service principal authentication (no OBO)
+- Store credentials in environment variables
+- Never hardcode tokens or secrets
+
+### Error Handling
+- Always handle Databricks API errors gracefully
+- Provide user-friendly error messages
+- Log errors for debugging
+
+### Performance
+- Minimize client-side JavaScript
+- Use Server Components when possible
+- Optimize images and assets
+
+## Common Issues
+
+### App Not Available
+- Check service principal permissions on SQL Warehouse
+- Verify Unity Catalog Volume access
+- Review app deployment logs
+
+### Build Failures
+- Clear `.next` cache: `rm -rf .next`
+- Reinstall dependencies: `npm ci`
+- Check TypeScript errors: `npm run build`
+
+## API Routes
+
+### `/api/upload`
+Upload PDF files to Unity Catalog Volume
+
+### `/api/chunk`
+Process documents and create chunks
+
+### `/api/jobs/[runId]`
+Check status of Databricks job runs
