@@ -105,7 +105,7 @@ export async function uploadToVolume(
         Authorization: `Bearer ${config.token}`,
         "Content-Type": "application/octet-stream",
       },
-      body: file,
+      body: file as unknown as BodyInit,
     });
 
     if (!response.ok) {
