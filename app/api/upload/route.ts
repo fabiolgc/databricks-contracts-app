@@ -7,11 +7,20 @@ export const maxDuration = 300; // 5 minutes for large file uploads
 /**
  * POST /api/upload
  * Upload PDF files to Databricks Volume
+ * 
+ * Supports OBO (On-Behalf-Of) authentication:
+ * - If x-forwarded-access-token header is present, uses user's token (respects UC permissions)
+ * - Otherwise, falls back to Service Principal token
  */
 export async function POST(request: NextRequest) {
   console.log("📤 Upload request received");
 
   try {
+    // Extract user token for OBO authentication (if available)
+    const userToken = request.headers.get("x-forwarded-access-token");
+    const authMethod = userToken ? "OBO (user token)" : "Service Principal";
+    console.log(`🔐 Authentication method: ${authMethod}`);
+
     const formData = await request.formData();
     const file = formData.get("file") as File;
     const overwriteParam = formData.get("overwrite") as string;
@@ -50,8 +59,9 @@ export async function POST(request: NextRequest) {
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
 
-    // Upload to Databricks Volume
-    const result = await uploadToVolume(buffer, file.name, overwrite);
+    // Upload to Databricks Volume with OBO support
+    // If userToken is provided, upload respects user's Unity Catalog permissions
+    const result = await uploadToVolume(buffer, file.name, overwrite, userToken || undefined);
 
     if (!result.success) {
       // Special case for file exists

@@ -1,17 +1,22 @@
 /**
  * Databricks client utilities
- * Uses service principal authentication (no OBO)
+ * Supports both Service Principal and OBO (On-Behalf-Of) authentication
+ * 
+ * OBO (recommended): Uses user's token to respect Unity Catalog permissions
+ * Service Principal: Uses app's token when user token is not available
  */
 
-export function getDatabricksConfig() {
+export function getDatabricksConfig(userToken?: string) {
   // Databricks Apps automatically injects these environment variables
   const config = {
     host: process.env.DATABRICKS_SERVER_HOSTNAME || process.env.DATABRICKS_HOST,
-    // Service Principal token is injected as CLIENT_SECRET by Databricks Apps
-    token: process.env.DATABRICKS_CLIENT_SECRET || process.env.DATABRICKS_TOKEN,
+    // Priority: User token (OBO) > Service Principal > Local dev token
+    token: userToken || process.env.DATABRICKS_CLIENT_SECRET || process.env.DATABRICKS_TOKEN,
     catalog: process.env.DATABRICKS_CATALOG || "fabio_goncalves",
     schema: process.env.DATABRICKS_SCHEMA || "customer_cielo",
     volume: process.env.DATABRICKS_VOLUME || "pdf",
+    // Track which auth method is being used for logging
+    authMethod: userToken ? "OBO" : "Service Principal",
   };
 
   if (!config.host) {
@@ -19,7 +24,7 @@ export function getDatabricksConfig() {
   }
 
   if (!config.token) {
-    throw new Error("DATABRICKS_CLIENT_SECRET or DATABRICKS_TOKEN is not configured");
+    throw new Error("Authentication token not available (DATABRICKS_CLIENT_SECRET, DATABRICKS_TOKEN, or user token required)");
   }
 
   return config;
@@ -32,14 +37,19 @@ export function getVolumeBasePath() {
 
 /**
  * Check if file exists in Databricks Volume
+ * @param fileName - Name of the file to check
+ * @param userToken - Optional user token for OBO authentication
  */
 export async function checkFileExists(
-  fileName: string
+  fileName: string,
+  userToken?: string
 ): Promise<{ exists: boolean; error?: string }> {
   try {
-    const config = getDatabricksConfig();
+    const config = getDatabricksConfig(userToken);
     const volumePath = getVolumeBasePath();
     const filePath = `${volumePath}/${fileName}`;
+
+    console.log(`🔍 Checking file existence (${config.authMethod}): ${filePath}`);
 
     // Using Databricks Workspace Files API to get file metadata
     const url = `https://${config.host}/api/2.0/fs/files${filePath}`;
@@ -59,6 +69,7 @@ export async function checkFileExists(
 
     // 404 means file doesn't exist
     if (response.status === 404) {
+      console.log(`✓ File does not exist: ${filePath}`);
       return { exists: false };
     }
 
@@ -78,20 +89,27 @@ export async function checkFileExists(
 
 /**
  * Upload file to Databricks Volume using Workspace Files API
+ * @param file - File buffer to upload
+ * @param fileName - Name of the file
+ * @param overwrite - Whether to overwrite existing file
+ * @param userToken - Optional user token for OBO authentication
  */
 export async function uploadToVolume(
   file: Buffer,
   fileName: string,
-  overwrite: boolean = false
+  overwrite: boolean = false,
+  userToken?: string
 ): Promise<{ success: boolean; path: string; error?: string }> {
   try {
-    const config = getDatabricksConfig();
+    const config = getDatabricksConfig(userToken);
     const volumePath = getVolumeBasePath();
     const filePath = `${volumePath}/${fileName}`;
 
+    console.log(`📤 Starting upload (${config.authMethod}): ${fileName}`);
+
     // Check if file exists and overwrite is not enabled
     if (!overwrite) {
-      const fileCheck = await checkFileExists(fileName);
+      const fileCheck = await checkFileExists(fileName, userToken);
       if (fileCheck.exists) {
         console.log(`⚠️ File already exists: ${filePath}`);
         return {
@@ -116,11 +134,19 @@ export async function uploadToVolume(
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error("Databricks upload error:", errorText);
-      throw new Error(`Upload failed: ${response.statusText}`);
+      console.error(`❌ Databricks upload error (${response.status}):`, errorText);
+      
+      // Better error messages for common issues
+      if (response.status === 403) {
+        throw new Error(`Permission denied. User does not have WRITE_VOLUME permission on ${volumePath}`);
+      } else if (response.status === 404) {
+        throw new Error(`Volume not found: ${volumePath}`);
+      } else {
+        throw new Error(`Upload failed: ${response.statusText}`);
+      }
     }
 
-    console.log(`✅ File uploaded successfully: ${filePath}`);
+    console.log(`✅ File uploaded successfully (${config.authMethod}): ${filePath}`);
 
     return {
       success: true,
