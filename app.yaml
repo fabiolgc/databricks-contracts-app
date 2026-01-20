@@ -11,6 +11,10 @@ env:
   - name: DATABRICKS_VOLUME
     value: "pdf"
   
+  # Volume resource reference
+  - name: VOLUME_PATH
+    valueFrom: volume
+  
   - name: DATABRICKS_WAREHOUSE_ID
     value: "09231fd5489fc752"
   

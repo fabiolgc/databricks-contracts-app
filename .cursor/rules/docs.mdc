@@ -8,7 +8,153 @@ A Next.js application deployed on Databricks Apps for managing PDF contracts, wi
 
 ## Reference
 - Reference the following files to stay on track with the project alignments:
-  - `.cursor/rules/development-guidelines.mdc` - Development guidelines and best practices 
+  - `.cursor/rules/development-guidelines.mdc` - Development guidelines and best practices
+
+## Visual Identity
+- **Always follow Databricks Brand Guidelines**: https://brand.databricks.com/
+- Use Databricks official colors, typography, and design patterns
+- Maintain consistency with Databricks visual identity across all components
+- Reference the brand guide for:
+  - Color palette
+  - Typography (fonts and sizes)
+  - Logo usage
+  - Iconography
+  - Spacing and layout principles
+
+### Databricks Color Palette
+Use these official Databricks colors in all components:
+
+**Primary Colors:**
+- **Databricks Red (Primary)**: `#FF3621` - Use for primary actions, active states, and brand emphasis
+  - Tailwind: `text-[#FF3621]`, `bg-[#FF3621]`, `border-[#FF3621]`
+  - Hover states: `hover:bg-[#FF3621]/90` or `hover:text-[#FF3621]/80`
+  
+- **Databricks Dark**: `#1B1B1D` - Use for headings, primary text, and dark backgrounds
+  - Tailwind: `text-[#1B1B1D]`, `bg-[#1B1B1D]`
+
+**Secondary Colors:**
+- **Databricks Teal**: `#00A972` - Use for success states and secondary actions
+- **Databricks Blue**: `#1857B6` - Use for informational elements
+
+**Neutral Colors:**
+- Use standard Tailwind gray scale for neutral UI elements
+- `gray-50` through `gray-900` for backgrounds, borders, and secondary text
+
+### Color Usage Guidelines
+1. **Primary Actions**: Use Databricks Red (#FF3621)
+   - Submit buttons, primary CTAs
+   - Active menu items, selected states
+   - Important links and interactive elements
+
+2. **Text Hierarchy**:
+   - Headings: Databricks Dark (#1B1B1D)
+   - Body text: `text-gray-600` or `text-gray-700`
+   - Secondary text: `text-gray-500`
+
+3. **Interactive States**:
+   - Default: Use Databricks Red for primary actions
+   - Hover: Use opacity variations (`/90`, `/80`)
+   - Active: Full Databricks Red with possible shadow
+   - Disabled: Use `opacity-50` with gray
+
+4. **Backgrounds**:
+   - Main background: `bg-gray-50`
+   - Card/Section backgrounds: `bg-white`
+   - Hover states: Light tints of primary color (e.g., `bg-red-50`)
+
+5. **Borders**:
+   - Default: `border-gray-300`
+   - Active/Focus: `border-[#FF3621]`
+   - Hover: `border-gray-400` or `border-[#FF3621]/50`
+
+## Typography
+
+### Fonts
+Databricks uses **DM Sans** and **DM Mono** as official typefaces:
+
+**Primary Font: DM Sans**
+- Used for: headings, body text, navigation, buttons, UI elements
+- Weights available: 400 (Regular), 500 (Medium), 700 (Bold)
+- Variable: `--font-dm-sans`
+- Tailwind: `font-sans`
+
+**Monospace Font: DM Mono**
+- Used for: code blocks, technical content, monospaced data
+- Weights available: 400 (Regular), 500 (Medium)
+- Variable: `--font-dm-mono`
+- Tailwind: `font-mono`
+
+### Typography Scale
+
+**Headings:**
+- **H1 (Page Titles)**: `text-3xl` (2.5rem/40px), `font-bold` (700), `text-[#1B1B1D]`
+  - Example: `className="text-3xl font-bold text-[#1B1B1D]"`
+  
+- **H2 (Section Headers)**: `text-2xl` (1.75rem/28px), `font-bold` (700), `text-[#1B1B1D]`
+  - Example: `className="text-2xl font-bold text-[#1B1B1D]"`
+  
+- **H3 (Subsections)**: `text-xl` (1.5rem/24px), `font-semibold` (500-600), `text-[#1B1B1D]`
+  - Example: `className="text-xl font-semibold text-[#1B1B1D]"`
+
+**Body Text:**
+- **Regular Text**: `text-base` (1rem/16px), `font-normal` (400), `text-gray-700`
+  - Example: `className="text-base text-gray-700"`
+  
+- **Small Text**: `text-sm` (0.875rem/14px), `font-normal` (400), `text-gray-600`
+  - Example: `className="text-sm text-gray-600"`
+  
+- **Caption/Helper**: `text-xs` (0.75rem/12px), `font-normal` (400), `text-gray-500`
+  - Example: `className="text-xs text-gray-500"`
+
+**Interactive Elements:**
+- **Buttons (Primary)**: `text-sm` or `text-base`, `font-medium` (500), white text on Databricks Red background
+  - Example: `className="text-sm font-medium text-white bg-[#FF3621]"`
+  
+- **Navigation Items**: `text-sm`, `font-medium` (500), color changes based on active state
+  - Active: `className="text-sm font-medium text-[#FF3621] border-b-2 border-[#FF3621]"`
+  - Inactive: `className="text-sm font-medium text-gray-700 hover:text-gray-900"`
+  
+- **Links**: `text-sm` or `text-base`, `font-medium` (500), `text-[#FF3621]` with hover state
+  - Example: `className="text-sm font-medium text-[#FF3621] hover:text-[#FF3621]/80"`
+
+**Code & Technical:**
+- **Inline Code**: `text-sm`, `font-mono`, `bg-gray-100`, `px-1`, `rounded`
+  - Example: `className="text-sm font-mono bg-gray-100 px-1 rounded"`
+  
+- **Code Blocks**: `text-sm`, `font-mono`, `bg-gray-900`, `text-gray-100`
+  - Example: `className="text-sm font-mono bg-gray-900 text-gray-100 p-4 rounded-lg"`
+
+### Best Practices
+
+1. **Consistency**: Always use the defined scale. Don't create custom sizes.
+2. **Hierarchy**: Maintain clear visual hierarchy using size and weight combinations.
+3. **Accessibility**: Ensure minimum 16px (1rem) for body text for readability.
+4. **Line Height**: Use generous line heights (1.5-1.75) for body text.
+5. **Spacing**: Maintain consistent spacing between typographic elements.
+6. **Responsive**: Adjust text sizes appropriately for mobile (can reduce by one step).
+
+### Common Patterns
+
+**Page Header:**
+```tsx
+<div>
+  <h1 className="text-3xl font-bold text-[#1B1B1D]">Page Title</h1>
+  <p className="mt-2 text-base text-gray-600">Description text</p>
+</div>
+```
+
+**Card Title:**
+```tsx
+<h3 className="text-xl font-semibold text-[#1B1B1D]">Card Title</h3>
+<p className="text-sm text-gray-600 mt-1">Card description</p>
+```
+
+**Button Text:**
+```tsx
+<button className="px-4 py-2 text-sm font-medium text-white bg-[#FF3621] rounded-md">
+  Action Button
+</button>
+``` 
 
 ## Architecture
 
@@ -91,8 +237,461 @@ databricks apps deploy databricks-contracts-app --source-code-path "/Workspace/U
 ### `/api/upload`
 Upload PDF files to Unity Catalog Volume
 
+**Parameters:**
+- `file` (FormData): PDF file to upload
+- `overwrite` (FormData, optional): "true" to overwrite existing files
+
+**Response:**
+- Success (200): `{ success: true, fileName: string, path: string, size: number }`
+- File exists (409): `{ fileExists: true, fileName: string, path: string }`
+- Error (400/500): `{ error: string, fileName?: string }`
+
+**Features:**
+- Validates file type (PDF only)
+- Validates file size (max 100MB)
+- Checks for existing files before upload
+- Supports overwrite mode
+- Logs all operations to console
+
 ### `/api/chunk`
 Process documents and create chunks
 
 ### `/api/jobs/[runId]`
 Check status of Databricks job runs
+
+## Features
+
+### File Upload with Conflict Detection
+
+When uploading files, the system automatically checks if a file with the same name already exists in the Volume:
+
+1. **Conflict Detection**: Before uploading, checks if file exists
+2. **User Confirmation**: Shows modal dialog when conflict is detected
+3. **Three Options**:
+   - **Sobrescrever todos**: Overwrite this and all future conflicts without asking
+   - **Sobrescrever apenas este**: Overwrite only this file, ask again for next conflicts
+   - **Pular este arquivo**: Skip this file, continue with next files
+
+4. **Progress Tracking**: Real-time progress for each file with visual indicators
+5. **Error Handling**: Comprehensive error handling with user-friendly messages
+
+### Upload States
+
+Each file can be in one of these states:
+- **Pending** (🟡): Waiting to be uploaded
+- **Uploading** (🔄): Currently uploading with progress bar
+- **Success** (✅): Successfully uploaded
+- **Error** (❌): Failed with error message
+
+### File List Pagination
+
+When there are many files to import, the list is paginated for better usability:
+
+1. **Files per Page**: 5 files displayed at a time
+2. **Navigation Controls**: 
+   - Previous/Next buttons with chevron icons
+   - Current page indicator (e.g., "Página 1 de 3")
+   - Disabled state for first/last pages
+3. **Action Buttons**: Import and Cancel buttons are always visible at the bottom, regardless of current page
+4. **Smart Page Management**:
+   - When files are removed, automatically adjusts to valid page
+   - When files are added, maintains current page if valid
+   - Reset to page 1 when clearing all files
+
+### UI Components
+
+**Pagination Controls:**
+- Located in header next to file count
+- Compact design with icon buttons
+- Clear visual feedback for disabled state
+- Shows current page and total pages
+
+## Component Library
+
+### Buttons
+
+**Primary Button:**
+```tsx
+<button className="px-4 py-2 text-sm font-medium text-white bg-[#FF3621] rounded-lg hover:bg-[#FF3621]/90 transition-colors shadow-sm">
+  Primary Action
+</button>
+```
+- Background: Databricks Red (#FF3621)
+- Text: White, font-medium
+- Padding: `px-4 py-2`
+- Border radius: `rounded-lg` (8px)
+- Hover: 90% opacity
+- Shadow: `shadow-sm`
+
+**Success Button:**
+```tsx
+<button className="px-4 py-2 text-sm font-medium text-white bg-[#00A972] rounded-lg hover:bg-[#00A972]/90 transition-colors shadow-sm">
+  Success Action
+</button>
+```
+- Background: Databricks Teal (#00A972)
+- Use for: completion, confirmation states
+
+**Secondary Button:**
+```tsx
+<button className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 transition-colors">
+  Secondary Action
+</button>
+```
+- Background: White with gray border
+- Text: Gray-700
+- Hover: Gray-100 background
+
+**Tertiary Button (Text/Link Style):**
+```tsx
+<button className="px-4 py-2 text-sm font-medium text-[#FF3621] bg-red-50 rounded-lg hover:bg-red-100 transition-colors">
+  Tertiary Action
+</button>
+```
+- Background: Light red tint
+- Text: Databricks Red
+- Use for: less important actions
+
+**Disabled State:**
+```tsx
+disabled={isDisabled}
+className="... disabled:opacity-50 disabled:cursor-not-allowed"
+```
+
+### Cards & Containers
+
+**Main Card Container:**
+```tsx
+<div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+  {/* Content */}
+</div>
+```
+- Background: White
+- Border: `rounded-xl` (12px), `border-gray-200`
+- Shadow: `shadow-sm`
+- Overflow: `overflow-hidden` (para bordas internas)
+
+**Card Header:**
+```tsx
+<div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
+  <h3 className="text-lg font-semibold text-[#1B1B1D]">Title</h3>
+</div>
+```
+- Background: `bg-gray-50`
+- Border: `border-b border-gray-200`
+- Padding: `px-4 py-3`
+
+**Card Body:**
+```tsx
+<div className="px-4 py-4 bg-gray-50/50">
+  {/* Content */}
+</div>
+```
+- Background: `bg-gray-50/50` (50% opacity)
+- Padding: `px-4 py-4`
+
+**Card Footer:**
+```tsx
+<div className="px-4 py-4 bg-gray-50 border-t border-gray-200">
+  {/* Actions */}
+</div>
+```
+- Background: `bg-gray-50`
+- Border: `border-t border-gray-200`
+
+### Modals
+
+**Modal Overlay:**
+```tsx
+<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+  {/* Modal content */}
+</div>
+```
+- Position: Fixed, full screen
+- Z-index: 50
+- Background: Black 50% opacity
+- Padding: `p-4` for mobile spacing
+
+**Modal Content:**
+```tsx
+<div className="bg-white rounded-xl shadow-2xl p-6 max-w-md w-full">
+  <h3 className="text-xl font-bold text-[#1B1B1D] mb-2">Modal Title</h3>
+  <p className="text-base text-gray-600 mb-6">Description</p>
+  {/* Actions */}
+</div>
+```
+- Background: White
+- Border radius: `rounded-xl`
+- Shadow: `shadow-2xl` (stronger)
+- Max width: `max-w-md` (448px)
+- Padding: `p-6`
+
+### Tables & Lists
+
+**Table Container:**
+```tsx
+<div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+  <table className="w-full">
+    {/* Table content */}
+  </table>
+</div>
+```
+
+**Table Row (Interactive):**
+```tsx
+<tr className="transition-colors hover:bg-gray-100/50">
+  {/* Cells */}
+</tr>
+```
+- Hover: `hover:bg-gray-100/50`
+- Transition: `transition-colors`
+
+**List Item:**
+```tsx
+<li 
+  className="px-4 py-4 transition-colors duration-300"
+  data-file-id={id}
+>
+  {/* Content */}
+</li>
+```
+- Padding: `px-4 py-4`
+- Transition: `transition-colors duration-300`
+
+**Dividers:**
+```tsx
+<ul className="divide-y divide-gray-200">
+  {/* List items */}
+</ul>
+```
+
+### Upload Area
+
+**Drag & Drop Zone:**
+```tsx
+<div className={`
+  border-2 border-dashed rounded-xl p-12 text-center
+  transition-all duration-200 cursor-pointer
+  ${isDragging 
+    ? "border-[#FF3621] bg-red-50 shadow-sm" 
+    : "border-gray-300 hover:border-[#FF3621]/50 hover:bg-gray-50"
+  }
+`}>
+  {/* Content */}
+</div>
+```
+- Border: Dashed, 2px
+- Radius: `rounded-xl`
+- Padding: `p-12`
+- States: Dragging vs hover
+- Transition: `transition-all duration-200`
+
+### Status Indicators
+
+**Status Icons:**
+```tsx
+// Pending
+<svg className="h-5 w-5 text-[#FF3621]" />
+
+// Uploading
+<Loader2 className="h-5 w-5 text-[#FF3621] animate-spin" />
+
+// Success
+<CheckCircle2 className="h-5 w-5 text-[#00A972]" />
+
+// Error
+<XCircle className="h-5 w-5 text-red-600" />
+```
+
+**Status Text:**
+```tsx
+// Success
+<span className="text-xs text-[#00A972]">✓ Concluído</span>
+
+// Uploading
+<span className="text-xs text-[#FF3621]">Enviando...</span>
+
+// Error
+<span className="text-xs text-red-600">✕ {error}</span>
+```
+
+### Spacing & Sizing
+
+**Container Spacing:**
+- Max width: `max-w-7xl mx-auto`
+- Page padding: `px-4 sm:px-6 lg:px-8`
+- Section spacing: `space-y-6` or `space-y-8`
+
+**Element Spacing:**
+- Gap between elements: `gap-2`, `gap-3`, `gap-4`
+- Margin top: `mt-2`, `mt-4`, `mt-6`
+- Padding: `p-4`, `px-4 py-2`, `p-6`
+
+**Component Sizes:**
+- Icon size: `h-4 w-4`, `h-5 w-5` (small/medium)
+- Icon large: `h-12 w-12` (upload icon)
+- Button height: `py-2` (~40px total)
+- Input height: `py-2.5` (~44px total)
+
+### Borders & Shadows
+
+**Border Radius:**
+- Small: `rounded` (4px)
+- Medium: `rounded-md` (6px)
+- Large: `rounded-lg` (8px)
+- Extra large: `rounded-xl` (12px)
+- Full: `rounded-full` (circle)
+
+**Shadows:**
+- Subtle: `shadow-sm` - Cards, buttons
+- Medium: `shadow` - Elevated cards
+- Strong: `shadow-2xl` - Modals, popovers
+
+**Borders:**
+- Standard: `border border-gray-200`
+- Thick: `border-2`
+- Bottom only: `border-b border-gray-200`
+- Left accent: `border-l-4 border-l-[#FF3621]`
+
+### Animations & Transitions
+
+**Standard Transition:**
+```tsx
+className="transition-colors duration-200"
+```
+- Use for: background, text color changes
+- Duration: 200-300ms
+
+**Transform Transition:**
+```tsx
+className="transition-all duration-200"
+```
+- Use for: size, position changes
+- Duration: 200-300ms
+
+**Loading Animation:**
+```tsx
+<Loader2 className="animate-spin" />
+```
+
+**Pulse Animation (Highlight):**
+```tsx
+className="animate-pulse bg-green-50"
+```
+- Use for: highlighting new items
+- Duration: 1.5s
+
+### Notifications (Toast)
+
+**Configuration:**
+```tsx
+<Toaster 
+  position="top-right" 
+  richColors 
+  closeButton
+  duration={6000}
+/>
+```
+
+**Usage:**
+```tsx
+// Success
+toast.success("Message", { duration: 6000 })
+
+// Warning
+toast.warning("Message", { duration: 7000 })
+
+// Error
+toast.error("Message", { duration: 7000 })
+
+// With description
+toast.warning("Title", {
+  description: "Details here",
+  duration: 8000
+})
+
+// With rich content
+toast.warning(
+  <div>
+    <p className="font-medium mb-1">Title</p>
+    <ul className="text-sm space-y-0.5">
+      <li>• Item 1</li>
+      <li>• Item 2</li>
+    </ul>
+  </div>,
+  { duration: 8000 }
+)
+```
+
+**Duration Guidelines:**
+- Simple message: 5-6 seconds
+- List/complex: 7-8 seconds
+- Always include close button
+
+### Icons
+
+**Icon Library:** Lucide React
+```tsx
+import { Upload, CheckCircle2, XCircle, Loader2, ChevronLeft, ChevronRight } from "lucide-react"
+```
+
+**Icon Sizing:**
+- Small: `className="h-4 w-4"`
+- Medium: `className="h-5 w-5"`
+- Large: `className="h-12 w-12"`
+
+**Icon Colors:**
+- Primary: `text-[#FF3621]`
+- Success: `text-[#00A972]`
+- Error: `text-red-600`
+- Neutral: `text-gray-400` or `text-gray-600`
+
+### Accessibility
+
+**Interactive Elements:**
+- Always include `aria-label` for icon buttons
+- Use semantic HTML (`<button>`, `<nav>`, etc)
+- Provide disabled states with proper styling
+- Ensure sufficient color contrast
+
+**Keyboard Navigation:**
+- Tab order follows visual flow
+- Enter/Space activates buttons
+- Escape closes modals
+
+**Screen Readers:**
+- Use meaningful alt text for images
+- Provide context for icon-only buttons
+- Include status messages in accessible way
+
+### Responsive Design
+
+**Breakpoints:**
+- Mobile: default (< 640px)
+- Tablet: `sm:` (≥ 640px)
+- Desktop: `lg:` (≥ 1024px)
+
+**Patterns:**
+```tsx
+// Hide on mobile, show on desktop
+className="hidden sm:flex"
+
+// Full width on mobile, fixed on desktop
+className="w-full sm:w-auto"
+
+// Different padding
+className="px-4 sm:px-6 lg:px-8"
+```
+
+### Best Practices Summary
+
+1. **Always use Tailwind CSS** - No custom CSS unless absolutely necessary
+2. **Use Databricks colors** - #FF3621 (red), #00A972 (teal), #1B1B1D (dark)
+3. **Consistent spacing** - Use spacing scale (2, 3, 4, 6, 8)
+4. **Round corners** - Use `rounded-lg` or `rounded-xl` for modern look
+5. **Smooth transitions** - Always add `transition-colors` or `transition-all`
+6. **Clear states** - Hover, active, disabled, loading
+7. **Professional shadows** - Use `shadow-sm` for subtle elevation
+8. **Semantic colors** - Green for success, red for error, gray for neutral
+9. **DM Sans font** - For all text elements
+10. **Accessibility first** - Labels, ARIA, keyboard support
