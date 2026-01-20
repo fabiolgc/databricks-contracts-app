@@ -1,5 +1,7 @@
 # Databricks Apps Configuration
 # Next.js App running on Node.js runtime
+# Databricks injects PORT=8000 automatically, so we don't set it here
+
 command: ["npm", "run", "start"]
 
 env:
@@ -24,10 +26,5 @@ env:
   - name: DATABRICKS_HTTP_PATH
     value: "/sql/1.0/warehouses/09231fd5489fc752"
   
-  # Databricks Token (from service principal)
-  - name: DATABRICKS_TOKEN
-    valueFrom: DATABRICKS_ADMIN_TOKEN
-    
-  # App runs on port 3000 (Next.js default)
-  - name: PORT
-    value: "3000"
+  # Databricks Token (uses CLIENT_SECRET injected by Databricks)
+  # Databricks automatically injects DATABRICKS_CLIENT_SECRET for service principal auth

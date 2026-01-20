@@ -4,16 +4,22 @@
  */
 
 export function getDatabricksConfig() {
+  // Databricks Apps automatically injects these environment variables
   const config = {
-    host: process.env.DATABRICKS_SERVER_HOSTNAME,
-    token: process.env.DATABRICKS_TOKEN,
+    host: process.env.DATABRICKS_SERVER_HOSTNAME || process.env.DATABRICKS_HOST,
+    // Service Principal token is injected as CLIENT_SECRET by Databricks Apps
+    token: process.env.DATABRICKS_CLIENT_SECRET || process.env.DATABRICKS_TOKEN,
     catalog: process.env.DATABRICKS_CATALOG || "fabio_goncalves",
     schema: process.env.DATABRICKS_SCHEMA || "customer_cielo",
     volume: process.env.DATABRICKS_VOLUME || "pdf",
   };
 
   if (!config.host) {
-    throw new Error("DATABRICKS_SERVER_HOSTNAME is not configured");
+    throw new Error("DATABRICKS_SERVER_HOSTNAME or DATABRICKS_HOST is not configured");
+  }
+
+  if (!config.token) {
+    throw new Error("DATABRICKS_CLIENT_SECRET or DATABRICKS_TOKEN is not configured");
   }
 
   return config;
