@@ -1,10 +1,10 @@
 "use client"
 
-import { useState } from "react"
-import { Upload, CheckCircle2, XCircle, Loader2, ChevronLeft, ChevronRight } from "lucide-react"
+import { useState, useEffect } from "react"
+import { Upload, CheckCircle2, XCircle, Loader2, ChevronLeft, ChevronRight, Database, Settings } from "lucide-react"
 import { toast } from "sonner"
 
-type FileStatus = "pending" | "uploading" | "success" | "error" | "skipped"
+type FileStatus = "pending" | "uploading" | "extracting" | "success" | "error" | "skipped"
 
 interface FileWithStatus {
   id: string
@@ -14,6 +14,20 @@ interface FileWithStatus {
   status: FileStatus
   progress: number
   error?: string
+  textLength?: number
+  pageCount?: number
+  // Timing for each phase
+  uploadStartTime?: number
+  uploadDuration?: number      // Time spent uploading (red)
+  extractStartTime?: number
+  extractDuration?: number     // Time spent extracting (blue)
+  totalDuration?: number       // Total time (green)
+}
+
+interface TableConfig {
+  catalog: string
+  schema: string
+  tableName: string
 }
 
 const FILES_PER_PAGE = 5
@@ -32,6 +46,81 @@ export default function ImportPage() {
   const [showOverwriteDialog, setShowOverwriteDialog] = useState(false)
   const [currentConflictFile, setCurrentConflictFile] = useState<string | null>(null)
   const [currentPage, setCurrentPage] = useState(1)
+  
+  // Table configuration for documents
+  const [tableConfig, setTableConfig] = useState<TableConfig>({
+    catalog: "",
+    schema: "",
+    tableName: "contracts_raw"
+  })
+  const [isConfigSaved, setIsConfigSaved] = useState(false)
+  const [showConfig, setShowConfig] = useState(false)
+  
+  // Timer for processing
+  const [processingStartTime, setProcessingStartTime] = useState<number | null>(null)
+  const [elapsedTime, setElapsedTime] = useState<number>(0)
+
+  // Load environment config on mount and auto-save if all fields are present
+  useEffect(() => {
+    const loadConfig = async () => {
+      try {
+        const response = await fetch("/api/config")
+        if (response.ok) {
+          const config = await response.json()
+          const newConfig = {
+            catalog: config.catalog || "",
+            schema: config.schema || "",
+            tableName: "contracts_raw"
+          }
+          setTableConfig(newConfig)
+          
+          // Auto-save if all fields are filled from environment
+          if (newConfig.catalog && newConfig.schema && newConfig.tableName) {
+            setIsConfigSaved(true)
+          }
+        }
+      } catch (error) {
+        console.error("Error loading config:", error)
+      }
+    }
+    loadConfig()
+  }, [])
+
+  // Timer effect for processing (global and per-file)
+  useEffect(() => {
+    let intervalId: NodeJS.Timeout | null = null
+    
+    if (isUploading && processingStartTime) {
+      intervalId = setInterval(() => {
+        // Update global elapsed time
+        setElapsedTime(Math.floor((Date.now() - processingStartTime) / 1000))
+        
+        // Update per-file elapsed time for files being processed
+        setFiles(prev => prev.map(f => {
+          if (f.status === "uploading" && f.uploadStartTime) {
+            return { ...f, uploadDuration: Math.floor((Date.now() - f.uploadStartTime) / 1000) }
+          }
+          if (f.status === "extracting" && f.extractStartTime) {
+            return { ...f, extractDuration: Math.floor((Date.now() - f.extractStartTime) / 1000) }
+          }
+          return f
+        }))
+      }, 1000)
+    } else if (!isUploading) {
+      setElapsedTime(0)
+    }
+    
+    return () => {
+      if (intervalId) clearInterval(intervalId)
+    }
+  }, [isUploading, processingStartTime])
+
+  // Format elapsed time as mm:ss
+  function formatElapsedTime(seconds: number): string {
+    const mins = Math.floor(seconds / 60)
+    const secs = seconds % 60
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
+  }
 
   function handleDragOver(e: React.DragEvent) {
     e.preventDefault()
@@ -165,10 +254,11 @@ export default function ImportPage() {
   }
 
   async function uploadFile(file: FileWithStatus, shouldOverwrite: boolean = false) {
-    // Update status to uploading
+    // Update status to uploading with start time
+    const uploadStartTime = Date.now()
     setFiles(prev =>
       prev.map(f =>
-        f.id === file.id ? { ...f, status: "uploading", progress: 0 } : f
+        f.id === file.id ? { ...f, status: "uploading", progress: 0, uploadStartTime, uploadDuration: 0 } : f
       )
     )
 
@@ -226,10 +316,93 @@ export default function ImportPage() {
     }
   }
 
+  // Extract text from a single file after upload
+  async function extractTextFromFile(file: FileWithStatus): Promise<boolean> {
+    // Update status to extracting, record upload final time and start extract timer
+    const extractStartTime = Date.now()
+    setFiles(prev =>
+      prev.map(f => {
+        if (f.id === file.id) {
+          const finalUploadDuration = f.uploadStartTime ? Math.floor((Date.now() - f.uploadStartTime) / 1000) : 0
+          return { ...f, status: "extracting", uploadDuration: finalUploadDuration, extractStartTime, extractDuration: 0 }
+        }
+        return f
+      })
+    )
+
+    try {
+      console.log(`📝 Extracting text from: ${file.name}`)
+      
+      const response = await fetch("/api/extract-text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tableConfig,
+          fileName: file.name,
+          mode: "replace"  // Always replace if exists
+        })
+      })
+
+      const result = await response.json()
+
+      if (result.success) {
+        console.log(`✅ Text extracted: ${file.name} (${result.textLength} chars, ${result.pageCount} pages)`)
+        setFiles(prev =>
+          prev.map(f => {
+            if (f.id === file.id) {
+              const finalExtractDuration = f.extractStartTime ? Math.floor((Date.now() - f.extractStartTime) / 1000) : 0
+              const totalDuration = (f.uploadDuration || 0) + finalExtractDuration
+              return { 
+                ...f, 
+                status: "success", 
+                progress: 100,
+                textLength: result.textLength,
+                pageCount: result.pageCount,
+                extractDuration: finalExtractDuration,
+                totalDuration
+              }
+            }
+            return f
+          })
+        )
+        return true
+      } else {
+        throw new Error(result.error || "Text extraction failed")
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Text extraction failed"
+      console.error(`❌ Error extracting text from ${file.name}:`, errorMessage)
+
+      setFiles(prev =>
+        prev.map(f => {
+          if (f.id === file.id) {
+            const finalExtractDuration = f.extractStartTime ? Math.floor((Date.now() - f.extractStartTime) / 1000) : 0
+            const totalDuration = (f.uploadDuration || 0) + finalExtractDuration
+            return { ...f, status: "error", error: `Extração: ${errorMessage}`, progress: 0, extractDuration: finalExtractDuration, totalDuration }
+          }
+          return f
+        })
+      )
+      return false
+    }
+  }
+
   async function handleImport() {
     if (files.length === 0) return
 
+    // Check if table is configured
+    if (!isConfigSaved) {
+      toast.warning("Configure a tabela de documentos primeiro", {
+        description: "Clique em 'Verificar / Salvar' na seção de configuração",
+        duration: 5000
+      })
+      setShowConfig(true)
+      return
+    }
+
     setIsUploading(true)
+    setProcessingStartTime(Date.now())
+    setElapsedTime(0)
     let localOverwriteAll = false
     let successCount = 0
     let errorCount = 0
@@ -249,9 +422,10 @@ export default function ImportPage() {
         await new Promise(resolve => setTimeout(resolve, 300))
       }
 
-      const result = await uploadFile(file, localOverwriteAll)
+      // Step 1: Upload to volume
+      const uploadResult = await uploadFile(file, localOverwriteAll)
 
-      if (result === "conflict") {
+      if (uploadResult === "conflict") {
         // Show dialog and wait for user decision
         setCurrentConflictFile(file.name)
         setShowOverwriteDialog(true)
@@ -275,11 +449,14 @@ export default function ImportPage() {
           // Cancel entire import process
           console.log("🚫 Import cancelled by user")
           setIsUploading(false)
+          setProcessingStartTime(null)
           
           // Reset all pending files to their original state
           setFiles(prev =>
             prev.map(f =>
-              f.status === "uploading" ? { ...f, status: "pending", progress: 0 } : f
+              f.status === "uploading" || f.status === "extracting" 
+                ? { ...f, status: "pending", progress: 0 } 
+                : f
             )
           )
           
@@ -295,10 +472,23 @@ export default function ImportPage() {
             localOverwriteAll = true
             console.log("🔄 Overwrite ALL enabled - will not ask again")
           }
-          // Retry with overwrite
+          // Retry upload with overwrite
           const retryResult = await uploadFile(file, true)
-          if (retryResult === "success") successCount++
-          else if (retryResult === "error") errorCount++
+          if (retryResult === "success") {
+            // Step 2: Extract text after successful upload
+            const extractResult = await extractTextFromFile(file)
+            if (extractResult) {
+              successCount++
+              toast.success(`${file.name}`, {
+                description: "Upload e extração de texto concluídos",
+                duration: 3000
+              })
+            } else {
+              errorCount++
+            }
+          } else if (retryResult === "error") {
+            errorCount++
+          }
         } else {
           // Skip this file
           console.log(`⏭️ Skipping file: ${file.name}`)
@@ -309,19 +499,31 @@ export default function ImportPage() {
           )
           skippedCount++
         }
-      } else if (result === "success") {
+      } else if (uploadResult === "success") {
+        // Step 2: Extract text after successful upload
+        const extractResult = await extractTextFromFile(file)
+        if (extractResult) {
         successCount++
-      } else if (result === "error") {
+          toast.success(`${file.name}`, {
+            description: "Upload e extração de texto concluídos",
+            duration: 3000
+          })
+        } else {
+          errorCount++
+        }
+      } else if (uploadResult === "error") {
         errorCount++
       }
     }
 
+    const totalTime = processingStartTime ? Math.floor((Date.now() - processingStartTime) / 1000) : 0
     setIsUploading(false)
+    setProcessingStartTime(null)
 
     // Sort files: success/error/skipped at end, pending at start
     setFiles(prev => {
       const sorted = [...prev].sort((a, b) => {
-        const order = { pending: 0, uploading: 1, success: 2, error: 3, skipped: 4 }
+        const order = { pending: 0, uploading: 1, extracting: 2, success: 3, error: 4, skipped: 5 }
         return order[a.status] - order[b.status]
       })
       return sorted
@@ -330,6 +532,7 @@ export default function ImportPage() {
     // Show summary toast
     if (errorCount === 0 && skippedCount === 0 && successCount > 0) {
       toast.success(`${successCount} arquivo(s) importado(s) com sucesso!`, {
+        description: `Textos extraídos em ${formatElapsedTime(totalTime)}`,
         duration: 6000,
       })
     } else if (successCount > 0) {
@@ -338,7 +541,7 @@ export default function ImportPage() {
       if (errorCount > 0) parts.push(`${errorCount} com erro`)
       
       toast.warning(parts.join(', '), {
-        duration: 8000,
+          duration: 8000,
       })
     } else if (errorCount > 0 || skippedCount > 0) {
       const parts = []
@@ -350,7 +553,23 @@ export default function ImportPage() {
       })
     }
 
-    console.log(`📊 Upload complete: ${successCount} success, ${errorCount} errors, ${skippedCount} skipped`)
+    console.log(`📊 Import complete: ${successCount} success, ${errorCount} errors, ${skippedCount} skipped`)
+  }
+
+  // Save table configuration
+  async function saveTableConfig() {
+    if (!tableConfig.catalog || !tableConfig.schema || !tableConfig.tableName) {
+      toast.warning("Preencha todos os campos de configuração")
+      return
+    }
+
+    setIsConfigSaved(true)
+    setShowConfig(false)
+    
+    toast.success("Configuração salva!", {
+      description: `Tabela: ${tableConfig.catalog}.${tableConfig.schema}.${tableConfig.tableName}`,
+      duration: 4000
+    })
   }
 
   function handleOverwriteDecision(decision: "overwrite" | "overwrite_all" | "skip" | "cancel") {
@@ -415,18 +634,119 @@ export default function ImportPage() {
       <div>
         <h1 className="text-3xl font-bold text-[#1B1B1D]">Importar Documentos</h1>
         <p className="mt-2 text-base text-gray-600">
-          Faça upload dos seus contratos em PDF para análise
+          Faça upload dos seus contratos em PDF e extraia o texto automaticamente
         </p>
       </div>
 
+      {/* Table Configuration Section */}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <button
+          onClick={() => setShowConfig(!showConfig)}
+          className="w-full px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between hover:bg-gray-100 transition-colors"
+        >
+          <div className="flex items-center gap-2">
+            <Database className="h-5 w-5 text-[#FF3621]" />
+            <h2 className="text-lg font-semibold text-[#1B1B1D]">Configurar Tabela de Documentos</h2>
+          </div>
+          <div className="flex items-center gap-2">
+            {isConfigSaved && (
+              <span className="flex items-center gap-1 text-sm text-[#00A972]">
+                <CheckCircle2 className="h-4 w-4" />
+                Configurado
+              </span>
+            )}
+            <ChevronRight className={`h-5 w-5 text-gray-400 transition-transform ${showConfig ? 'rotate-90' : ''}`} />
+          </div>
+        </button>
+        
+        {showConfig && (
+          <div className="p-4">
+            <p className="text-sm text-gray-600 mb-4">
+              Configure onde os documentos extraídos serão salvos. O texto será extraído automaticamente após o upload.
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Catálogo
+                </label>
+                <input
+                  type="text"
+                  value={tableConfig.catalog}
+                  onChange={(e) => {
+                    setTableConfig(prev => ({ ...prev, catalog: e.target.value }))
+                    setIsConfigSaved(false)
+                  }}
+                  placeholder="ex: fabio_goncalves"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#FF3621]/20 focus:border-[#FF3621]"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Schema
+                </label>
+                <input
+                  type="text"
+                  value={tableConfig.schema}
+                  onChange={(e) => {
+                    setTableConfig(prev => ({ ...prev, schema: e.target.value }))
+                    setIsConfigSaved(false)
+                  }}
+                  placeholder="ex: customer_cielo"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#FF3621]/20 focus:border-[#FF3621]"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Nome da Tabela
+                </label>
+                <input
+                  type="text"
+                  value={tableConfig.tableName}
+                  onChange={(e) => {
+                    setTableConfig(prev => ({ ...prev, tableName: e.target.value }))
+                    setIsConfigSaved(false)
+                  }}
+                  placeholder="ex: contracts_documents"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#FF3621]/20 focus:border-[#FF3621]"
+                />
+              </div>
+            </div>
+            
+            <div className="mt-4 flex items-center gap-3">
+              {!isConfigSaved ? (
+                <button
+                  onClick={saveTableConfig}
+                  disabled={!tableConfig.catalog || !tableConfig.schema || !tableConfig.tableName}
+                  className="px-4 py-2 text-sm font-medium text-white bg-[#FF3621] rounded-lg hover:bg-[#FF3621]/90 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  <Settings className="h-4 w-4" />
+                  Verificar / Salvar
+                </button>
+              ) : (
+                <span className="flex items-center gap-2 text-sm text-[#00A972]">
+                  <CheckCircle2 className="h-4 w-4" />
+                  Configuração salva
+                </span>
+              )}
+              <span className="text-sm text-gray-600">
+                Tabela: <code className="bg-gray-100 px-2 py-0.5 rounded text-xs">
+                  {tableConfig.catalog}.{tableConfig.schema}.{tableConfig.tableName}
+                </code>
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+
       {files.length === 0 && (
-        <div
+        <label
+          htmlFor="file-upload"
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
           className={`
             border-2 border-dashed rounded-xl p-12 text-center
-            transition-all duration-200 cursor-pointer
+            transition-all duration-200 cursor-pointer block
             ${isDragging 
               ? "border-[#FF3621] bg-red-50 shadow-sm" 
               : "border-gray-300 hover:border-[#FF3621]/50 hover:bg-gray-50"
@@ -435,25 +755,23 @@ export default function ImportPage() {
         >
           <Upload className="mx-auto h-12 w-12 text-gray-400" />
           <div className="mt-4">
-            <label htmlFor="file-upload" className="cursor-pointer">
-              <span className="text-base text-[#FF3621] hover:text-[#FF3621]/80 font-medium">
-                Clique para selecionar
-              </span>
-              <span className="text-base text-gray-600"> ou arraste os arquivos aqui</span>
-            </label>
-            <input
-              id="file-upload"
-              type="file"
-              multiple
-              accept=".pdf"
-              onChange={handleFileSelect}
-              className="hidden"
-            />
+            <span className="text-base text-[#FF3621] hover:text-[#FF3621]/80 font-medium">
+              Clique para selecionar
+            </span>
+            <span className="text-base text-gray-600"> ou arraste os arquivos aqui</span>
           </div>
           <p className="mt-2 text-sm text-gray-500">
             Apenas arquivos PDF (máximo 10MB por arquivo)
           </p>
-        </div>
+          <input
+            id="file-upload"
+            type="file"
+            multiple
+            accept=".pdf"
+            onChange={handleFileSelect}
+            className="hidden"
+          />
+        </label>
       )}
 
       {files.length > 0 && (() => {
@@ -533,6 +851,9 @@ export default function ImportPage() {
                       {file.status === "uploading" && (
                         <Loader2 className="h-5 w-5 text-[#FF3621] animate-spin" />
                       )}
+                      {file.status === "extracting" && (
+                        <Loader2 className="h-5 w-5 text-blue-500 animate-spin" />
+                      )}
                       {file.status === "success" && (
                         <CheckCircle2 className="h-5 w-5 text-[#00A972]" />
                       )}
@@ -551,23 +872,74 @@ export default function ImportPage() {
                       <p className="text-sm font-medium text-[#1B1B1D] truncate">
                         {file.name}
                       </p>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <p className="text-sm text-gray-500">
                           {(file.size / 1024 / 1024).toFixed(2)} MB
                         </p>
                         {file.status === "uploading" && (
-                          <span className="text-xs text-[#FF3621]">
-                            Enviando...
+                          <span className="text-xs flex items-center gap-1.5">
+                            <span className="text-[#FF3621]">Enviando...</span>
+                            <span className="font-mono text-[10px] flex items-center gap-0.5">
+                              <span className="bg-red-100 text-red-600 px-1 py-0.5 rounded">
+                                {formatElapsedTime(file.uploadDuration || 0)}
+                              </span>
+                            </span>
+                          </span>
+                        )}
+                        {file.status === "extracting" && (
+                          <span className="text-xs flex items-center gap-1.5">
+                            <span className="text-blue-500">Extraindo texto...</span>
+                            <span className="font-mono text-[10px] flex items-center gap-0.5">
+                              <span className="bg-red-100 text-red-600 px-1 py-0.5 rounded">
+                                {formatElapsedTime(file.uploadDuration || 0)}
+                              </span>
+                              <span className="text-gray-400">|</span>
+                              <span className="bg-blue-100 text-blue-600 px-1 py-0.5 rounded">
+                                {formatElapsedTime(file.extractDuration || 0)}
+                              </span>
+                            </span>
                           </span>
                         )}
                         {file.status === "success" && (
-                          <span className="text-xs text-[#00A972]">
-                            ✓ Concluído
+                          <span className="text-xs flex items-center gap-1.5">
+                            <span className="text-[#00A972]">
+                              ✓ {file.textLength?.toLocaleString() || 0} chars • {file.pageCount || 0} pág
+                            </span>
+                            <span className="font-mono text-[10px] flex items-center gap-0.5">
+                              <span className="bg-red-100 text-red-600 px-1 py-0.5 rounded">
+                                {formatElapsedTime(file.uploadDuration || 0)}
+                              </span>
+                              <span className="text-gray-400">|</span>
+                              <span className="bg-blue-100 text-blue-600 px-1 py-0.5 rounded">
+                                {formatElapsedTime(file.extractDuration || 0)}
+                              </span>
+                              <span className="text-gray-400">|</span>
+                              <span className="bg-green-100 text-green-600 px-1 py-0.5 rounded">
+                                {formatElapsedTime(file.totalDuration || 0)}
+                              </span>
+                            </span>
                           </span>
                         )}
                         {file.status === "error" && (
-                          <span className="text-xs text-red-600">
-                            ✕ {file.error || "Erro"}
+                          <span className="text-xs flex items-center gap-1.5">
+                            <span className="text-red-600">✕ {file.error || "Erro"}</span>
+                            {(file.uploadDuration || file.extractDuration) && (
+                              <span className="font-mono text-[10px] flex items-center gap-0.5">
+                                {file.uploadDuration !== undefined && (
+                                  <span className="bg-red-100 text-red-600 px-1 py-0.5 rounded">
+                                    {formatElapsedTime(file.uploadDuration)}
+                                  </span>
+                                )}
+                                {file.extractDuration !== undefined && (
+                                  <>
+                                    <span className="text-gray-400">|</span>
+                                    <span className="bg-blue-100 text-blue-600 px-1 py-0.5 rounded">
+                                      {formatElapsedTime(file.extractDuration)}
+                                    </span>
+                                  </>
+                                )}
+                              </span>
+                            )}
                           </span>
                         )}
                         {file.status === "skipped" && (
@@ -580,7 +952,7 @@ export default function ImportPage() {
                   </div>
 
                   {/* Action Button */}
-                  {(file.status === "pending" || file.status === "error" || file.status === "skipped") && !isUploading && (
+                  {(file.status === "pending" || file.status === "error" || file.status === "skipped") && !isUploading && isConfigSaved && (
                     <button
                       onClick={() => {
                         setFiles(prev => {
@@ -602,6 +974,39 @@ export default function ImportPage() {
               </li>
               ))}
             </ul>
+            {/* Total timing summary - shows accumulated times */}
+            {files.some(f => f.status === "success" || f.status === "extracting" || f.status === "uploading") && (() => {
+              // Calculate total times across all files
+              const totalUpload = files.reduce((sum, f) => sum + (f.uploadDuration || 0), 0)
+              const totalExtract = files.reduce((sum, f) => sum + (f.extractDuration || 0), 0)
+              const totalTime = files.reduce((sum, f) => sum + (f.totalDuration || 0), 0)
+              
+              return (
+                <div className="px-4 py-2 bg-gray-100 border-t border-gray-200 flex items-center justify-end gap-4 text-[10px] font-mono">
+                  <span className="text-gray-500 text-xs">Tempo total:</span>
+                  <span className="flex items-center gap-1">
+                    <span className="bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-semibold">
+                      {formatElapsedTime(totalUpload)}
+                    </span>
+                    <span className="text-gray-500">Upload</span>
+                  </span>
+                  <span className="text-gray-400">|</span>
+                  <span className="flex items-center gap-1">
+                    <span className="bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded font-semibold">
+                      {formatElapsedTime(totalExtract)}
+                    </span>
+                    <span className="text-gray-500">Extração</span>
+                  </span>
+                  <span className="text-gray-400">|</span>
+                  <span className="flex items-center gap-1">
+                    <span className="bg-green-100 text-green-600 px-1.5 py-0.5 rounded font-semibold">
+                      {formatElapsedTime(totalTime)}
+                    </span>
+                    <span className="text-gray-500">Total</span>
+                  </span>
+                </div>
+              )
+            })()}
             <div className="px-4 py-4 bg-gray-50 border-t border-gray-200 flex justify-end gap-3">
               {files.every(f => f.status === "success" || f.status === "error" || f.status === "skipped") && files.length > 0 ? (
                 <button
@@ -633,7 +1038,7 @@ export default function ImportPage() {
                   >
                     {isUploading && <Loader2 className="h-4 w-4 animate-spin" />}
                     {isUploading
-                      ? "Importando..."
+                      ? `Importando... ${formatElapsedTime(elapsedTime)}`
                       : `Importar ${files.length} ${files.length === 1 ? "arquivo" : "arquivos"}`
                     }
                   </button>

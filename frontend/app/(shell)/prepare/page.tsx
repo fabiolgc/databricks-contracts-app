@@ -278,62 +278,178 @@ export default function PreparePage() {
     await executeProcessing("append")
   }
 
-  // Execute the actual processing
+  // Execute the actual processing - file by file
   async function executeProcessing(mode: "append" | "overwrite" | "clean") {
     setShowImportDialog(false)
     setImportMode(mode)
     
     const strategy = CHUNKING_STRATEGIES.find(s => s.id === selectedStrategy)
+    const filesToProcess = Array.from(selectedFiles)
     
     setProcessingStatus({
       status: "processing",
-      message: "Iniciando processamento...",
+      message: "Inicializando tabelas...",
       progress: 0,
-      totalFiles: selectedFiles.size,
+      totalFiles: filesToProcess.length,
       processedFiles: 0
     })
     
     try {
-      const response = await fetch("/api/process", {
+      // Step 1: Initialize tables
+      const initResponse = await fetch("/api/process/init", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           tableConfig,
-          files: Array.from(selectedFiles),
+          files: filesToProcess,
           strategy: selectedStrategy,
-          params: {
-            ...strategy?.params,
-            ...chunkingParams
-          },
+          params: { ...strategy?.params, ...chunkingParams },
           mode
         })
       })
       
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.detail || "Processing failed")
+      if (!initResponse.ok) {
+        const error = await initResponse.json()
+        throw new Error(error.detail || "Falha ao inicializar tabelas")
       }
       
-      const result = await response.json()
+      const initResult = await initResponse.json()
+      const actualFilesToProcess = initResult.filesToProcess || filesToProcess
       
+      if (initResult.skippedFiles?.length > 0) {
+        toast.info(`${initResult.skippedFiles.length} arquivo(s) já processado(s), serão pulados`, {
+          duration: 4000
+        })
+      }
+      
+      if (actualFilesToProcess.length === 0) {
+        setProcessingStatus({
+          status: "completed",
+          message: "Nenhum arquivo novo para processar",
+          progress: 100,
+          totalFiles: filesToProcess.length,
+          processedFiles: filesToProcess.length
+        })
+        return
+      }
+      
+      // Step 2: Process each file individually
+      let processedCount = 0
+      let totalChunks = 0
+      const errors: Array<{ file: string; error: string }> = []
+      const totalFiles = actualFilesToProcess.length
+      
+      for (let i = 0; i < totalFiles; i++) {
+        const fileName = actualFilesToProcess[i]
+        const fileNumber = i + 1
+        
+        // Update status BEFORE processing - show which file is being processed
+        setProcessingStatus({
+          status: "processing",
+          message: `Processando arquivo ${fileNumber} de ${totalFiles}: ${fileName}`,
+          progress: Math.round((i / totalFiles) * 100),
+          totalFiles: totalFiles,
+          processedFiles: processedCount
+        })
+        
+        try {
+          const fileResponse = await fetch("/api/process/file", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              tableConfig,
+              fileName,
+              strategy: selectedStrategy,
+              params: { ...strategy?.params, ...chunkingParams },
+              mode: mode === "clean" ? "overwrite" : mode // For individual files, 'clean' acts as 'overwrite'
+            })
+          })
+          
+          if (!fileResponse.ok) {
+            const error = await fileResponse.json()
+            throw new Error(error.detail || "Falha ao processar arquivo")
+          }
+          
+          const fileResult = await fileResponse.json()
+          
+          if (fileResult.success) {
+            processedCount++
+            totalChunks += fileResult.chunksCreated || 0
+            
+            // Update progress AFTER processing - show completion
+            setProcessingStatus({
+              status: "processing",
+              message: `✓ ${fileName} - ${fileResult.chunksCreated} chunks criados`,
+              progress: Math.round((fileNumber / totalFiles) * 100),
+              totalFiles: totalFiles,
+              processedFiles: processedCount
+            })
+            
+            toast.success(`Arquivo ${fileNumber}/${totalFiles}: ${fileName}`, {
+              description: `${fileResult.textLength?.toLocaleString() || 0} caracteres → ${fileResult.chunksCreated} chunks`,
+              duration: 3000
+            })
+          } else {
+            errors.push({ file: fileName, error: fileResult.error || "Erro desconhecido" })
+            
+            // Update progress even on error
+            setProcessingStatus({
+              status: "processing",
+              message: `✗ Erro em ${fileName}`,
+              progress: Math.round((fileNumber / totalFiles) * 100),
+              totalFiles: totalFiles,
+              processedFiles: processedCount
+            })
+            
+            toast.error(`Erro no arquivo ${fileNumber}/${totalFiles}`, {
+              description: `${fileName}: ${fileResult.error}`,
+              duration: 5000
+            })
+          }
+        } catch (fileError) {
+          const errorMsg = fileError instanceof Error ? fileError.message : "Erro desconhecido"
+          errors.push({ file: fileName, error: errorMsg })
+          
+          // Update progress even on exception
+          setProcessingStatus({
+            status: "processing",
+            message: `✗ Erro em ${fileName}`,
+            progress: Math.round((fileNumber / totalFiles) * 100),
+            totalFiles: totalFiles,
+            processedFiles: processedCount
+          })
+          
+          toast.error(`Erro no arquivo ${fileNumber}/${totalFiles}`, {
+            description: `${fileName}: ${errorMsg}`,
+            duration: 5000
+          })
+        }
+      }
+      
+      // Final status
+      const success = errors.length === 0
       setProcessingStatus({
-        status: "completed",
-        message: `Processamento concluído! ${result.chunksCreated} chunks criados.`,
+        status: success ? "completed" : "error",
+        message: success 
+          ? `Processamento concluído! ${totalChunks} chunks criados em ${processedCount} arquivo(s).`
+          : `Concluído com ${errors.length} erro(s). ${totalChunks} chunks criados.`,
         progress: 100,
-        totalFiles: selectedFiles.size,
-        processedFiles: selectedFiles.size
+        totalFiles: actualFilesToProcess.length,
+        processedFiles: processedCount
       })
       
-      toast.success("Processamento concluído!", {
-        description: `${result.filesProcessed} arquivos processados, ${result.chunksCreated} chunks criados`,
-        duration: 6000
-      })
+      if (success) {
+        toast.success("Processamento concluído!", {
+          description: `${processedCount} arquivos processados, ${totalChunks} chunks criados`,
+          duration: 6000
+        })
+      }
       
       // Refresh file list to show imported status
       await loadVolumeFiles()
       
       // Update table info
-      setExistingRecords(prev => mode === "clean" ? result.chunksCreated : prev + result.chunksCreated)
+      setExistingRecords(prev => mode === "clean" ? totalChunks : prev + totalChunks)
       
     } catch (error) {
       console.error("Processing error:", error)
@@ -341,7 +457,7 @@ export default function PreparePage() {
         status: "error",
         message: error instanceof Error ? error.message : "Erro no processamento",
         progress: 0,
-        totalFiles: selectedFiles.size,
+        totalFiles: filesToProcess.length,
         processedFiles: 0
       })
       

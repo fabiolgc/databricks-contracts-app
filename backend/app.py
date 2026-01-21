@@ -43,6 +43,18 @@ class ProcessRequest(BaseModel):
     params: Dict[str, Any]
     mode: str  # append, overwrite, clean
 
+class ProcessSingleFileRequest(BaseModel):
+    tableConfig: Dict[str, str]
+    fileName: str
+    strategy: str
+    params: Dict[str, Any]
+    mode: str  # append, overwrite, skip
+
+class ExtractTextRequest(BaseModel):
+    tableConfig: Dict[str, str]
+    fileName: str
+    mode: str = "replace"  # replace (if exists) or skip
+
 class ChunkPreviewRequest(BaseModel):
     tableConfig: Dict[str, str]
     limit: int = 50
@@ -374,6 +386,218 @@ async def get_config():
     }
 
 
+@app.post("/api/extract-text")
+async def extract_text_from_file(
+    request: ExtractTextRequest,
+    x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
+):
+    """
+    Extract text from a PDF file using ai_parse_document and save to documents table.
+    Called after successful upload to volume.
+    """
+    request_id = str(uuid.uuid4())[:8]
+    file_name = request.fileName
+    mode = request.mode
+    
+    print(f"\n{'=' * 80}")
+    print(f"📝 [{request_id}] Extract text request: {file_name}")
+    print(f"{'=' * 80}")
+    
+    try:
+        config = get_databricks_config(x_forwarded_access_token)
+        
+        table_config = request.tableConfig
+        catalog = table_config.get("catalog", "")
+        schema = table_config.get("schema", "")
+        table_name = table_config.get("tableName", "")
+        
+        documents_table = f"{catalog}.{schema}.{table_name}"
+        volume_path = get_volume_base_path(config)
+        
+        warehouse_id = os.getenv("DATABRICKS_WAREHOUSE_ID")
+        if not warehouse_id:
+            raise HTTPException(status_code=500, detail="Warehouse ID not configured")
+        
+        print(f"📋 [{request_id}] Configuration:")
+        print(f"  - Table: {documents_table}")
+        print(f"  - Volume: {volume_path}")
+        print(f"  - File: {file_name}")
+        print(f"  - Mode: {mode}")
+        
+        # Step 1: Create documents table if not exists
+        create_table_sql = f"""
+        CREATE TABLE IF NOT EXISTS {documents_table} (
+            id STRING,
+            file_name STRING,
+            file_path STRING,
+            raw_text STRING,
+            text_length INT,
+            page_count INT,
+            created_at TIMESTAMP,
+            updated_at TIMESTAMP,
+            metadata STRING
+        )
+        USING DELTA
+        """
+        print(f"\n📊 [{request_id}] Ensuring documents table exists...")
+        await execute_sql(config, warehouse_id, create_table_sql, request_id)
+        
+        # Step 2: Check if document already exists
+        escaped_file_name = file_name.replace("'", "''")
+        check_sql = f"SELECT id FROM {documents_table} WHERE file_name = '{escaped_file_name}'"
+        check_result = await execute_sql(config, warehouse_id, check_sql, request_id)
+        
+        existing_doc_id = None
+        if check_result and check_result.get("data_array") and len(check_result["data_array"]) > 0:
+            existing_doc_id = check_result["data_array"][0][0]
+            print(f"📁 [{request_id}] Document already exists with ID: {existing_doc_id}")
+            
+            if mode == "skip":
+                print(f"⏭️ [{request_id}] Skipping extraction (document exists)")
+                return {
+                    "success": True,
+                    "fileName": file_name,
+                    "documentId": existing_doc_id,
+                    "skipped": True,
+                    "message": "Document already exists"
+                }
+        
+        # Step 3: Extract text using ai_parse_document
+        print(f"\n🤖 [{request_id}] Extracting text with ai_parse_document...")
+        
+        extract_sql = f"""
+        WITH source_file AS (
+            SELECT path, content
+            FROM READ_FILES('{volume_path}', format => 'binaryFile')
+            WHERE path LIKE '%/{escaped_file_name}'
+            LIMIT 1
+        ),
+        parsed AS (
+            SELECT 
+                path,
+                ai_parse_document(content) as parsed
+            FROM source_file
+        ),
+        extracted AS (
+            SELECT
+                path,
+                element:content AS content,
+                idx
+            FROM (
+                SELECT
+                    path,
+                    posexplode(
+                        CASE
+                            WHEN try_cast(parsed:metadata:version AS STRING) = '1.0' 
+                            THEN try_cast(parsed:document:pages AS ARRAY<VARIANT>)
+                            ELSE try_cast(parsed:document:elements AS ARRAY<VARIANT>)
+                        END
+                    ) AS (idx, element)
+                FROM parsed
+                WHERE try_cast(parsed:error_status AS STRING) IS NULL
+            )
+        )
+        SELECT
+            path,
+            concat_ws('\\n\\n', collect_list(content)) AS full_text,
+            COUNT(*) as page_count
+        FROM extracted
+        WHERE content IS NOT NULL
+        GROUP BY path
+        """
+        
+        result = await execute_sql_long(config, warehouse_id, extract_sql, request_id, timeout_minutes=5)
+        
+        if not result or not result.get("data_array") or len(result.get("data_array", [])) == 0:
+            print(f"❌ [{request_id}] No text extracted from {file_name}")
+            return {
+                "success": False,
+                "fileName": file_name,
+                "error": "No text could be extracted from this file"
+            }
+        
+        row = result["data_array"][0]
+        file_path = row[0]
+        raw_text = row[1] or ""
+        page_count = int(row[2]) if row[2] else 0
+        
+        print(f"✅ [{request_id}] Extracted {len(raw_text)} characters from {page_count} pages")
+        
+        if not raw_text.strip():
+            return {
+                "success": False,
+                "fileName": file_name,
+                "error": "Extracted text is empty"
+            }
+        
+        # Step 4: Save to documents table (INSERT or UPDATE)
+        print(f"\n💾 [{request_id}] Saving to documents table...")
+        
+        escaped_raw_text = raw_text.replace("'", "''").replace("\\", "\\\\")
+        escaped_path = file_path.replace("'", "''")
+        
+        if existing_doc_id:
+            # Update existing document
+            update_sql = f"""
+            UPDATE {documents_table}
+            SET raw_text = '{escaped_raw_text}',
+                text_length = {len(raw_text)},
+                page_count = {page_count},
+                updated_at = current_timestamp()
+            WHERE id = '{existing_doc_id}'
+            """
+            await execute_sql(config, warehouse_id, update_sql, request_id)
+            doc_id = existing_doc_id
+            print(f"✅ [{request_id}] Document updated: {doc_id}")
+        else:
+            # Insert new document
+            doc_id = str(uuid.uuid4())
+            insert_sql = f"""
+            INSERT INTO {documents_table}
+            (id, file_name, file_path, raw_text, text_length, page_count, created_at, updated_at, metadata)
+            VALUES (
+                '{doc_id}',
+                '{escaped_file_name}',
+                '{escaped_path}',
+                '{escaped_raw_text}',
+                {len(raw_text)},
+                {page_count},
+                current_timestamp(),
+                current_timestamp(),
+                '{{}}'
+            )
+            """
+            await execute_sql(config, warehouse_id, insert_sql, request_id)
+            print(f"✅ [{request_id}] Document inserted: {doc_id}")
+        
+        print(f"\n✅ [{request_id}] Text extraction complete!")
+        print(f"  - Document ID: {doc_id}")
+        print(f"  - Text length: {len(raw_text)} chars")
+        print(f"  - Page count: {page_count}")
+        print(f"{'=' * 80}\n")
+        
+        return {
+            "success": True,
+            "fileName": file_name,
+            "documentId": doc_id,
+            "textLength": len(raw_text),
+            "pageCount": page_count,
+            "updated": existing_doc_id is not None
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"💥 [{request_id}] Exception: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "success": False,
+            "fileName": file_name,
+            "error": str(e)
+        }
+
+
 @app.get("/api/documents")
 async def list_documents(
     x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
@@ -438,7 +662,7 @@ async def check_table(
     request: Dict[str, str],
     x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
 ):
-    """Check if Delta table exists and get record count"""
+    """Check if Delta tables exist and get record counts"""
     request_id = str(uuid.uuid4())[:8]
     print(f"\n{'=' * 80}")
     print(f"🔍 [{request_id}] Check table request at {datetime.now().isoformat()}")
@@ -448,85 +672,79 @@ async def check_table(
     schema = request.get("schema", "")
     table_name = request.get("tableName", "")
     
-    print(f"📋 [{request_id}] Checking table: {catalog}.{schema}.{table_name}")
+    # New table names with suffixes
+    documents_table = f"{catalog}.{schema}.{table_name}_documents"
+    chunks_table = f"{catalog}.{schema}.{table_name}_chunks"
+    
+    print(f"📋 [{request_id}] Checking tables:")
+    print(f"  - Documents: {documents_table}")
+    print(f"  - Chunks: {chunks_table}")
     
     try:
         config = get_databricks_config(x_forwarded_access_token)
-        
-        # Use Databricks SQL Statement API to check table existence
-        url = f"https://{config['host']}/api/2.0/sql/statements"
         warehouse_id = os.getenv("DATABRICKS_WAREHOUSE_ID")
         
         if not warehouse_id:
             print(f"⚠️ [{request_id}] No warehouse ID configured")
             return {"exists": False, "recordCount": 0, "message": "Warehouse not configured"}
         
-        sql = f"""
-        SELECT COUNT(*) as count FROM {catalog}.{schema}.{table_name}
-        """
+        # Check chunks table (main table we care about)
+        chunks_result = await execute_sql(config, warehouse_id, 
+            f"SELECT COUNT(*) as count FROM {chunks_table}", request_id)
         
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.post(
-                url,
-                headers={
-                    "Authorization": f"Bearer {config['token']}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "warehouse_id": warehouse_id,
-                    "statement": sql,
-                    "wait_timeout": "30s"
-                }
-            )
-        
-        if response.status_code == 200:
-            result = response.json()
-            status = result.get("status", {}).get("state", "")
+        if chunks_result and chunks_result.get("data_array"):
+            count = int(chunks_result["data_array"][0][0]) if chunks_result["data_array"] else 0
+            print(f"✅ [{request_id}] Chunks table exists with {count} records")
             
-            if status == "SUCCEEDED":
-                data = result.get("result", {}).get("data_array", [[0]])
-                count = int(data[0][0]) if data else 0
-                print(f"✅ [{request_id}] Table exists with {count} records")
-                return {"exists": True, "recordCount": count}
-            elif "TABLE_OR_VIEW_NOT_FOUND" in str(result) or "SCHEMA_NOT_FOUND" in str(result):
-                print(f"ℹ️ [{request_id}] Table does not exist")
-                return {"exists": False, "recordCount": 0}
-            else:
-                error_msg = result.get("status", {}).get("error", {}).get("message", "Unknown error")
-                if "TABLE_OR_VIEW_NOT_FOUND" in error_msg or "SCHEMA_NOT_FOUND" in error_msg:
-                    print(f"ℹ️ [{request_id}] Table does not exist")
-                    return {"exists": False, "recordCount": 0}
-                print(f"⚠️ [{request_id}] Query status: {status}, error: {error_msg}")
-                return {"exists": False, "recordCount": 0, "message": error_msg}
+            # Also check documents table
+            docs_result = await execute_sql(config, warehouse_id,
+                f"SELECT COUNT(*) as count FROM {documents_table}", request_id)
+            docs_count = 0
+            if docs_result and docs_result.get("data_array"):
+                docs_count = int(docs_result["data_array"][0][0]) if docs_result["data_array"] else 0
+            
+            return {
+                "exists": True, 
+                "recordCount": count,
+                "documentsCount": docs_count,
+                "documentsTable": documents_table,
+                "chunksTable": chunks_table
+            }
         else:
-            error_text = response.text
-            if "TABLE_OR_VIEW_NOT_FOUND" in error_text or "SCHEMA_NOT_FOUND" in error_text:
-                print(f"ℹ️ [{request_id}] Table does not exist")
-                return {"exists": False, "recordCount": 0}
-            print(f"❌ [{request_id}] API error: {response.status_code}")
-            return {"exists": False, "recordCount": 0, "message": f"API error: {response.status_code}"}
+            print(f"ℹ️ [{request_id}] Tables do not exist yet")
+            return {
+                "exists": False, 
+                "recordCount": 0,
+                "documentsTable": documents_table,
+                "chunksTable": chunks_table
+            }
             
     except Exception as e:
-        print(f"💥 [{request_id}] Exception: {str(e)}")
-        if "TABLE_OR_VIEW_NOT_FOUND" in str(e) or "SCHEMA_NOT_FOUND" in str(e):
-            return {"exists": False, "recordCount": 0}
+        error_str = str(e)
+        print(f"💥 [{request_id}] Exception: {error_str}")
+        if "TABLE_OR_VIEW_NOT_FOUND" in error_str or "SCHEMA_NOT_FOUND" in error_str:
+            return {
+                "exists": False, 
+                "recordCount": 0,
+                "documentsTable": documents_table,
+                "chunksTable": chunks_table
+            }
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/process")
-async def process_documents(
+@app.post("/api/process/init")
+async def init_processing(
     request: ProcessRequest,
     x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
 ):
     """
-    Process PDF files using Databricks ai_parse_document function.
-    Extracts text, creates chunks, and saves to Delta table.
-    
-    Uses Databricks native AI function for superior PDF text extraction including OCR.
+    Initialize tables for processing.
+    Creates documents table and chunks table.
+    Returns list of files to process.
     """
     request_id = str(uuid.uuid4())[:8]
     print(f"\n{'=' * 80}")
-    print(f"⚙️ [{request_id}] Process documents request at {datetime.now().isoformat()}")
+    print(f"🚀 [{request_id}] Init processing at {datetime.now().isoformat()}")
     print(f"{'=' * 80}")
     
     try:
@@ -534,6 +752,123 @@ async def process_documents(
         
         table_config = request.tableConfig
         files = request.files
+        mode = request.mode
+        
+        catalog = table_config.get("catalog", "")
+        schema = table_config.get("schema", "")
+        table_name = table_config.get("tableName", "")
+        
+        # Documents table stores raw extracted text
+        documents_table = f"{catalog}.{schema}.{table_name}_documents"
+        # Chunks table stores chunked content
+        chunks_table = f"{catalog}.{schema}.{table_name}_chunks"
+        
+        warehouse_id = os.getenv("DATABRICKS_WAREHOUSE_ID")
+        if not warehouse_id:
+            raise HTTPException(status_code=500, detail="Warehouse ID not configured")
+        
+        # Step 1: If mode is 'clean', drop existing tables
+        if mode == "clean":
+            print(f"\n🗑️ [{request_id}] Cleaning existing tables...")
+            await execute_sql(config, warehouse_id, f"DROP TABLE IF EXISTS {documents_table}", request_id)
+            await execute_sql(config, warehouse_id, f"DROP TABLE IF EXISTS {chunks_table}", request_id)
+        
+        # Step 2: Create documents table
+        create_docs_sql = f"""
+        CREATE TABLE IF NOT EXISTS {documents_table} (
+            id STRING,
+            file_name STRING,
+            file_path STRING,
+            raw_text STRING,
+            text_length INT,
+            page_count INT,
+            created_at TIMESTAMP,
+            metadata STRING
+        )
+        USING DELTA
+        """
+        print(f"\n📊 [{request_id}] Creating documents table: {documents_table}")
+        await execute_sql(config, warehouse_id, create_docs_sql, request_id)
+        
+        # Step 3: Create chunks table
+        create_chunks_sql = f"""
+        CREATE TABLE IF NOT EXISTS {chunks_table} (
+            id STRING,
+            document_id STRING,
+            file_name STRING,
+            chunk_index INT,
+            total_chunks INT,
+            chunk_content STRING,
+            strategy STRING,
+            chunk_size INT,
+            chunk_overlap INT,
+            created_at TIMESTAMP
+        )
+        USING DELTA
+        """
+        print(f"\n📊 [{request_id}] Creating chunks table: {chunks_table}")
+        await execute_sql(config, warehouse_id, create_chunks_sql, request_id)
+        
+        # Step 4: Get list of already processed files
+        existing_files = set()
+        if mode == "append":
+            check_sql = f"SELECT DISTINCT file_name FROM {documents_table}"
+            result = await execute_sql(config, warehouse_id, check_sql, request_id)
+            if result and result.get("data_array"):
+                existing_files = set(row[0] for row in result.get("data_array", []))
+            print(f"📁 [{request_id}] Already processed: {len(existing_files)} files")
+        
+        # Filter files
+        files_to_process = []
+        skipped_files = []
+        for file_name in files:
+            if mode == "append" and file_name in existing_files:
+                skipped_files.append(file_name)
+            else:
+                files_to_process.append(file_name)
+        
+        print(f"\n✅ [{request_id}] Init complete!")
+        print(f"  - Files to process: {len(files_to_process)}")
+        print(f"  - Files skipped: {len(skipped_files)}")
+        
+        return {
+            "success": True,
+            "documentsTable": documents_table,
+            "chunksTable": chunks_table,
+            "filesToProcess": files_to_process,
+            "skippedFiles": skipped_files
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"💥 [{request_id}] Exception: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/process/file")
+async def process_single_file(
+    request: ProcessSingleFileRequest,
+    x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
+):
+    """
+    Process a single PDF file:
+    1. Extract text using ai_parse_document
+    2. Save raw text to documents table
+    3. Create chunks based on strategy
+    4. Save chunks to chunks table
+    """
+    request_id = str(uuid.uuid4())[:8]
+    file_name = request.fileName
+    
+    print(f"\n{'=' * 80}")
+    print(f"📄 [{request_id}] Processing file: {file_name}")
+    print(f"{'=' * 80}")
+    
+    try:
+        config = get_databricks_config(x_forwarded_access_token)
+        
+        table_config = request.tableConfig
         strategy = request.strategy
         params = request.params
         mode = request.mode
@@ -541,231 +876,169 @@ async def process_documents(
         catalog = table_config.get("catalog", "")
         schema = table_config.get("schema", "")
         table_name = table_config.get("tableName", "")
-        full_table_name = f"{catalog}.{schema}.{table_name}"
-        volume_path = get_volume_base_path(config)
         
-        print(f"📋 [{request_id}] Processing configuration:")
-        print(f"  - Table: {full_table_name}")
-        print(f"  - Files: {len(files)}")
-        print(f"  - Strategy: {strategy}")
-        print(f"  - Mode: {mode}")
-        print(f"  - Params: {params}")
-        print(f"  - Volume: {volume_path}")
+        documents_table = f"{catalog}.{schema}.{table_name}_documents"
+        chunks_table = f"{catalog}.{schema}.{table_name}_chunks"
+        volume_path = get_volume_base_path(config)
         
         warehouse_id = os.getenv("DATABRICKS_WAREHOUSE_ID")
         if not warehouse_id:
             raise HTTPException(status_code=500, detail="Warehouse ID not configured")
         
-        # Step 1: If mode is 'clean', drop existing data
-        if mode == "clean":
-            print(f"\n🗑️ [{request_id}] Cleaning existing data...")
-            drop_sql = f"DROP TABLE IF EXISTS {full_table_name}"
-            await execute_sql(config, warehouse_id, drop_sql, request_id)
-        
-        # Step 2: Create chunks table if not exists
-        create_table_sql = f"""
-        CREATE TABLE IF NOT EXISTS {full_table_name} (
-            id STRING,
-            file_name STRING,
-            file_path STRING,
-            chunk_index INT,
-            total_chunks INT,
-            content STRING,
-            chunk_content STRING,
-            strategy STRING,
-            chunk_size INT,
-            chunk_overlap INT,
-            created_at TIMESTAMP,
-            metadata STRING
-        )
-        USING DELTA
-        """
-        print(f"\n📊 [{request_id}] Ensuring chunks table exists...")
-        await execute_sql(config, warehouse_id, create_table_sql, request_id)
-        
-        # Step 3: Get list of already imported files if mode is 'append'
-        existing_files = set()
-        if mode == "append":
-            check_sql = f"SELECT DISTINCT file_name FROM {full_table_name}"
-            result = await execute_sql(config, warehouse_id, check_sql, request_id)
-            if result and result.get("data_array"):
-                existing_files = set(row[0] for row in result.get("data_array", []))
-            print(f"📁 [{request_id}] Already imported: {len(existing_files)} files")
-        
-        # Filter files to process
-        files_to_process = []
-        for file_name in files:
-            if mode == "append" and file_name in existing_files:
-                print(f"⏭️ [{request_id}] Skipping already imported: {file_name}")
-                continue
-            files_to_process.append(file_name)
-        
-        if not files_to_process:
-            return {
-                "success": True,
-                "filesProcessed": 0,
-                "chunksCreated": 0,
-                "table": full_table_name,
-                "message": "No new files to process"
-            }
-        
-        # Step 4: If overwrite mode, delete existing chunks for selected files
-        if mode == "overwrite":
-            for file_name in files_to_process:
-                delete_sql = f"DELETE FROM {full_table_name} WHERE file_name = '{file_name}'"
-                await execute_sql(config, warehouse_id, delete_sql, request_id)
-                print(f"🗑️ [{request_id}] Deleted existing chunks for: {file_name}")
-        
-        # Step 5: Create temp table name for parsed documents
-        temp_parsed_table = f"{catalog}.{schema}._temp_parsed_{request_id.replace('-', '_')}"
-        
-        # Step 6: Build file filter for ai_parse_document
-        # Filter to only process selected files
-        file_filter = " OR ".join([f"path LIKE '%{f}'" for f in files_to_process])
-        
-        # Step 7: Use ai_parse_document to extract text from PDFs
-        # This is the Databricks native function for document parsing
-        print(f"\n🤖 [{request_id}] Extracting text using ai_parse_document...")
-        
-        ai_parse_sql = f"""
-        CREATE OR REPLACE TABLE {temp_parsed_table} AS (
-            WITH source_files AS (
-                SELECT
-                    path,
-                    content
-                FROM READ_FILES('{volume_path}', format => 'binaryFile')
-                WHERE ({file_filter})
-            ),
-            parsed_documents AS (
-                SELECT
-                    path,
-                    ai_parse_document(content) as parsed
-                FROM source_files
-                WHERE lower(path) LIKE '%.pdf'
-            ),
-            extracted_content AS (
-                SELECT
-                    path,
-                    element:content AS content,
-                    idx
-                FROM (
-                    SELECT
-                        path,
-                        posexplode(
-                            CASE
-                                WHEN try_cast(parsed:metadata:version AS STRING) = '1.0' 
-                                THEN try_cast(parsed:document:pages AS ARRAY<VARIANT>)
-                                ELSE try_cast(parsed:document:elements AS ARRAY<VARIANT>)
-                            END
-                        ) AS (idx, element)
-                    FROM parsed_documents
-                    WHERE try_cast(parsed:error_status AS STRING) IS NULL
-                )
-            ),
-            concatenated AS (
-                SELECT
-                    path,
-                    concat_ws('\n\n', collect_list(content)) AS full_text
-                FROM extracted_content
-                WHERE content IS NOT NULL
-                GROUP BY path
-            )
-            SELECT
-                regexp_extract(path, r'([^/]+)$', 1) as file_name,
-                path as file_path,
-                full_text as content
-            FROM concatenated
-        )
-        """
-        
-        # Execute with extended timeout for AI processing
-        print(f"  📄 Parsing {len(files_to_process)} files with AI...")
-        await execute_sql_long(config, warehouse_id, ai_parse_sql, request_id, timeout="300s")
-        
-        # Step 8: Read extracted text from temp table
-        print(f"\n📖 [{request_id}] Reading extracted text...")
-        read_sql = f"SELECT file_name, file_path, content FROM {temp_parsed_table}"
-        parsed_result = await execute_sql(config, warehouse_id, read_sql, request_id)
-        
-        if not parsed_result or not parsed_result.get("data_array"):
-            # Cleanup temp table
-            await execute_sql(config, warehouse_id, f"DROP TABLE IF EXISTS {temp_parsed_table}", request_id)
-            return {
-                "success": False,
-                "error": "No text could be extracted from the documents",
-                "filesProcessed": 0,
-                "chunksCreated": 0
-            }
-        
-        # Step 9: Process chunks and insert into target table
-        total_chunks = 0
-        files_processed = 0
         chunk_size = params.get("chunkSize", 1000)
         chunk_overlap = params.get("chunkOverlap", 200)
         
-        for row in parsed_result.get("data_array", []):
-            file_name = row[0]
-            file_path = row[1]
-            text_content = row[2] or ""
-            
-            print(f"\n📄 [{request_id}] Processing: {file_name}")
-            print(f"  📝 Extracted {len(text_content)} characters")
-            
-            if not text_content.strip():
-                print(f"  ⚠️ No text content extracted, skipping")
-                continue
-            
-            # Create chunks based on strategy
-            chunks = create_chunks(text_content, strategy, chunk_size, chunk_overlap)
-            print(f"  ✂️ Created {len(chunks)} chunks using '{strategy}' strategy")
-            
-            # Insert chunks into Delta table
-            for idx, chunk in enumerate(chunks):
-                chunk_id = str(uuid.uuid4())
-                # Escape single quotes for SQL
-                escaped_chunk = chunk.replace("'", "''").replace("\\", "\\\\")
-                escaped_content = text_content[:500].replace("'", "''").replace("\\", "\\\\") if idx == 0 else ""
-                escaped_file_name = file_name.replace("'", "''")
-                escaped_file_path = file_path.replace("'", "''")
-                
-                insert_sql = f"""
-                INSERT INTO {full_table_name} 
-                (id, file_name, file_path, chunk_index, total_chunks, content, chunk_content, 
-                 strategy, chunk_size, chunk_overlap, created_at, metadata)
-                VALUES (
-                    '{chunk_id}',
-                    '{escaped_file_name}',
-                    '{escaped_file_path}',
-                    {idx},
-                    {len(chunks)},
-                    '{escaped_content}',
-                    '{escaped_chunk}',
-                    '{strategy}',
-                    {chunk_size},
-                    {chunk_overlap},
-                    current_timestamp(),
-                    '{{}}'
-                )
-                """
-                await execute_sql(config, warehouse_id, insert_sql, request_id)
-            
-            total_chunks += len(chunks)
-            files_processed += 1
+        # Step 1: If overwrite mode, delete existing data for this file
+        if mode == "overwrite":
+            print(f"🗑️ [{request_id}] Deleting existing data for: {file_name}")
+            escaped_name = file_name.replace("'", "''")
+            await execute_sql(config, warehouse_id, 
+                f"DELETE FROM {documents_table} WHERE file_name = '{escaped_name}'", request_id)
+            await execute_sql(config, warehouse_id, 
+                f"DELETE FROM {chunks_table} WHERE file_name = '{escaped_name}'", request_id)
         
-        # Step 10: Cleanup temp table
-        print(f"\n🧹 [{request_id}] Cleaning up temp table...")
-        await execute_sql(config, warehouse_id, f"DROP TABLE IF EXISTS {temp_parsed_table}", request_id)
+        # Step 2: Extract text using ai_parse_document
+        print(f"\n🤖 [{request_id}] Extracting text with ai_parse_document...")
         
-        print(f"\n✅ [{request_id}] Processing complete!")
-        print(f"  - Files processed: {files_processed}")
-        print(f"  - Total chunks: {total_chunks}")
+        escaped_file_name = file_name.replace("'", "''")
+        file_path = f"{volume_path}/{file_name}"
+        
+        # Use ai_parse_document to extract text from this single file
+        extract_sql = f"""
+        WITH source_file AS (
+            SELECT path, content
+            FROM READ_FILES('{volume_path}', format => 'binaryFile')
+            WHERE path LIKE '%/{escaped_file_name}'
+            LIMIT 1
+        ),
+        parsed AS (
+            SELECT 
+                path,
+                ai_parse_document(content) as parsed
+            FROM source_file
+        ),
+        extracted AS (
+            SELECT
+                path,
+                element:content AS content,
+                idx
+            FROM (
+                SELECT
+                    path,
+                    posexplode(
+                        CASE
+                            WHEN try_cast(parsed:metadata:version AS STRING) = '1.0' 
+                            THEN try_cast(parsed:document:pages AS ARRAY<VARIANT>)
+                            ELSE try_cast(parsed:document:elements AS ARRAY<VARIANT>)
+                        END
+                    ) AS (idx, element)
+                FROM parsed
+                WHERE try_cast(parsed:error_status AS STRING) IS NULL
+            )
+        )
+        SELECT
+            path,
+            concat_ws('\\n\\n', collect_list(content)) AS full_text,
+            COUNT(*) as page_count
+        FROM extracted
+        WHERE content IS NOT NULL
+        GROUP BY path
+        """
+        
+        # Execute with polling for AI processing
+        result = await execute_sql_long(config, warehouse_id, extract_sql, request_id, timeout_minutes=5)
+        
+        if not result or not result.get("data_array") or len(result.get("data_array", [])) == 0:
+            print(f"❌ [{request_id}] No text extracted from {file_name}")
+            return {
+                "success": False,
+                "fileName": file_name,
+                "error": "No text could be extracted from this file",
+                "chunksCreated": 0
+            }
+        
+        row = result["data_array"][0]
+        extracted_path = row[0]
+        raw_text = row[1] or ""
+        page_count = int(row[2]) if row[2] else 0
+        
+        print(f"✅ [{request_id}] Extracted {len(raw_text)} characters from {page_count} pages")
+        
+        if not raw_text.strip():
+            return {
+                "success": False,
+                "fileName": file_name,
+                "error": "Extracted text is empty",
+                "chunksCreated": 0
+            }
+        
+        # Step 3: Save raw text to documents table
+        print(f"\n💾 [{request_id}] Saving to documents table...")
+        doc_id = str(uuid.uuid4())
+        escaped_raw_text = raw_text.replace("'", "''").replace("\\", "\\\\")
+        escaped_path = extracted_path.replace("'", "''")
+        
+        insert_doc_sql = f"""
+        INSERT INTO {documents_table}
+        (id, file_name, file_path, raw_text, text_length, page_count, created_at, metadata)
+        VALUES (
+            '{doc_id}',
+            '{escaped_file_name}',
+            '{escaped_path}',
+            '{escaped_raw_text}',
+            {len(raw_text)},
+            {page_count},
+            current_timestamp(),
+            '{{}}'
+        )
+        """
+        await execute_sql(config, warehouse_id, insert_doc_sql, request_id)
+        print(f"✅ [{request_id}] Document saved with ID: {doc_id}")
+        
+        # Step 4: Create chunks
+        print(f"\n✂️ [{request_id}] Creating chunks with '{strategy}' strategy...")
+        chunks = create_chunks(raw_text, strategy, chunk_size, chunk_overlap)
+        print(f"✅ [{request_id}] Created {len(chunks)} chunks")
+        
+        # Step 5: Save chunks to chunks table
+        print(f"\n💾 [{request_id}] Saving {len(chunks)} chunks...")
+        
+        for idx, chunk in enumerate(chunks):
+            chunk_id = str(uuid.uuid4())
+            escaped_chunk = chunk.replace("'", "''").replace("\\", "\\\\")
+            
+            insert_chunk_sql = f"""
+            INSERT INTO {chunks_table}
+            (id, document_id, file_name, chunk_index, total_chunks, chunk_content, 
+             strategy, chunk_size, chunk_overlap, created_at)
+            VALUES (
+                '{chunk_id}',
+                '{doc_id}',
+                '{escaped_file_name}',
+                {idx},
+                {len(chunks)},
+                '{escaped_chunk}',
+                '{strategy}',
+                {chunk_size},
+                {chunk_overlap},
+                current_timestamp()
+            )
+            """
+            await execute_sql(config, warehouse_id, insert_chunk_sql, request_id)
+        
+        print(f"\n✅ [{request_id}] File processing complete!")
+        print(f"  - Document ID: {doc_id}")
+        print(f"  - Text length: {len(raw_text)} chars")
+        print(f"  - Chunks created: {len(chunks)}")
         print(f"{'=' * 80}\n")
         
         return {
             "success": True,
-            "filesProcessed": files_processed,
-            "chunksCreated": total_chunks,
-            "table": full_table_name
+            "fileName": file_name,
+            "documentId": doc_id,
+            "textLength": len(raw_text),
+            "pageCount": page_count,
+            "chunksCreated": len(chunks)
         }
         
     except HTTPException:
@@ -774,7 +1047,60 @@ async def process_documents(
         print(f"💥 [{request_id}] Exception: {str(e)}")
         import traceback
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
+        return {
+            "success": False,
+            "fileName": file_name,
+            "error": str(e),
+            "chunksCreated": 0
+        }
+
+
+@app.post("/api/process")
+async def process_documents(
+    request: ProcessRequest,
+    x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
+):
+    """
+    Legacy endpoint - redirects to new file-by-file processing.
+    Kept for backwards compatibility.
+    """
+    # Initialize tables first
+    init_result = await init_processing(request, x_forwarded_access_token)
+    
+    if not init_result.get("success"):
+        return init_result
+    
+    # Process each file
+    files_to_process = init_result.get("filesToProcess", [])
+    total_chunks = 0
+    files_processed = 0
+    errors = []
+    
+    for file_name in files_to_process:
+        file_request = ProcessSingleFileRequest(
+            tableConfig=request.tableConfig,
+            fileName=file_name,
+            strategy=request.strategy,
+            params=request.params,
+            mode=request.mode
+        )
+        
+        result = await process_single_file(file_request, x_forwarded_access_token)
+        
+        if result.get("success"):
+            files_processed += 1
+            total_chunks += result.get("chunksCreated", 0)
+        else:
+            errors.append({"file": file_name, "error": result.get("error")})
+    
+    return {
+        "success": len(errors) == 0,
+        "filesProcessed": files_processed,
+        "chunksCreated": total_chunks,
+        "documentsTable": init_result.get("documentsTable"),
+        "chunksTable": init_result.get("chunksTable"),
+        "errors": errors if errors else None
+    }
 
 
 @app.post("/api/chunks/preview")
@@ -797,7 +1123,9 @@ async def preview_chunks(
         catalog = table_config.get("catalog", "")
         schema = table_config.get("schema", "")
         table_name = table_config.get("tableName", "")
-        full_table_name = f"{catalog}.{schema}.{table_name}"
+        
+        # Use the chunks table (with _chunks suffix)
+        chunks_table = f"{catalog}.{schema}.{table_name}_chunks"
         
         warehouse_id = os.getenv("DATABRICKS_WAREHOUSE_ID")
         if not warehouse_id:
@@ -805,7 +1133,7 @@ async def preview_chunks(
         
         sql = f"""
         SELECT file_name, chunk_index, total_chunks, chunk_content
-        FROM {full_table_name}
+        FROM {chunks_table}
         ORDER BY file_name, chunk_index
         LIMIT {limit}
         """
@@ -849,7 +1177,7 @@ async def execute_sql(config: dict, warehouse_id: str, sql: str, request_id: str
             json={
                 "warehouse_id": warehouse_id,
                 "statement": sql,
-                "wait_timeout": "60s"
+                "wait_timeout": "50s"  # Max allowed is 50s
             }
         )
     
@@ -861,6 +1189,12 @@ async def execute_sql(config: dict, warehouse_id: str, sql: str, request_id: str
     
     result = response.json()
     status = result.get("status", {}).get("state", "")
+    statement_id = result.get("statement_id", "")
+    
+    # If still running after wait_timeout, poll for completion
+    if status in ["PENDING", "RUNNING"]:
+        print(f"  ⏳ [{request_id}] Query still running, polling...")
+        return await poll_sql_statement(config, statement_id, request_id)
     
     if status == "SUCCEEDED":
         return result.get("result", {})
@@ -870,17 +1204,52 @@ async def execute_sql(config: dict, warehouse_id: str, sql: str, request_id: str
         return None
 
 
-async def execute_sql_long(config: dict, warehouse_id: str, sql: str, request_id: str, timeout: str = "300s") -> dict:
+async def poll_sql_statement(config: dict, statement_id: str, request_id: str, max_attempts: int = 60) -> dict:
+    """Poll for SQL statement completion"""
+    url = f"https://{config['host']}/api/2.0/sql/statements/{statement_id}"
+    
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        for attempt in range(max_attempts):
+            await asyncio.sleep(5)  # Wait 5 seconds between polls
+            
+            response = await client.get(
+                url,
+                headers={"Authorization": f"Bearer {config['token']}"}
+            )
+            
+            if response.status_code != 200:
+                print(f"  ⚠️ [{request_id}] Poll failed: {response.status_code}")
+                continue
+            
+            result = response.json()
+            status = result.get("status", {}).get("state", "")
+            
+            if status == "SUCCEEDED":
+                print(f"  ✅ [{request_id}] Query completed after {(attempt + 1) * 5}s")
+                return result.get("result", {})
+            elif status in ["FAILED", "CANCELED", "CLOSED"]:
+                error_msg = result.get("status", {}).get("error", {}).get("message", "Unknown error")
+                print(f"  ❌ [{request_id}] Query {status}: {error_msg}")
+                return None
+            else:
+                if attempt % 6 == 0:  # Log every 30 seconds
+                    print(f"  🔄 [{request_id}] Still running... ({(attempt + 1) * 5}s)")
+    
+    print(f"  ❌ [{request_id}] Query timed out after {max_attempts * 5}s")
+    return None
+
+
+async def execute_sql_long(config: dict, warehouse_id: str, sql: str, request_id: str, timeout_minutes: int = 10) -> dict:
     """
-    Execute long-running SQL statement (like ai_parse_document) with extended timeout.
-    Uses statement API with async polling for completion.
+    Execute long-running SQL statement (like ai_parse_document) with async polling.
+    Uses wait_timeout=0s to immediately return and poll for completion.
     """
     url = f"https://{config['host']}/api/2.0/sql/statements"
     
-    print(f"  🔄 [{request_id}] Executing long-running SQL (timeout: {timeout})...")
+    print(f"  🔄 [{request_id}] Executing long-running SQL (max {timeout_minutes} min)...")
     
-    async with httpx.AsyncClient(timeout=600.0) as client:  # 10 min HTTP timeout
-        # Submit statement
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        # Submit statement with wait_timeout=0s (immediate return, use polling)
         response = await client.post(
             url,
             headers={
@@ -890,12 +1259,12 @@ async def execute_sql_long(config: dict, warehouse_id: str, sql: str, request_id
             json={
                 "warehouse_id": warehouse_id,
                 "statement": sql,
-                "wait_timeout": timeout
+                "wait_timeout": "0s"  # Disable wait, use polling
             }
         )
     
     if response.status_code != 200:
-        print(f"❌ [{request_id}] Long SQL execution failed: {response.status_code}")
+        print(f"❌ [{request_id}] Long SQL submission failed: {response.status_code}")
         print(f"  Response: {response.text[:500]}")
         return None
     
@@ -903,47 +1272,54 @@ async def execute_sql_long(config: dict, warehouse_id: str, sql: str, request_id
     status = result.get("status", {}).get("state", "")
     statement_id = result.get("statement_id", "")
     
-    print(f"  📋 [{request_id}] Statement ID: {statement_id}, Status: {status}")
+    print(f"  📋 [{request_id}] Statement ID: {statement_id}, Initial status: {status}")
     
-    # If still running, poll for completion
+    # If already succeeded (unlikely with wait_timeout=0s but possible for cached results)
+    if status == "SUCCEEDED":
+        return result.get("result", {})
+    
+    # Poll for completion
     if status in ["PENDING", "RUNNING"]:
-        print(f"  ⏳ [{request_id}] Statement running, polling for completion...")
-        poll_url = f"{url}/{statement_id}"
-        max_attempts = 60  # 10 min max (10s intervals)
+        print(f"  ⏳ [{request_id}] Polling for completion...")
+        max_attempts = timeout_minutes * 6  # Poll every 10 seconds
         
         async with httpx.AsyncClient(timeout=30.0) as client:
             for attempt in range(max_attempts):
                 await asyncio.sleep(10)  # Wait 10 seconds between polls
                 
                 poll_response = await client.get(
-                    poll_url,
+                    f"{url}/{statement_id}",
                     headers={"Authorization": f"Bearer {config['token']}"}
                 )
                 
                 if poll_response.status_code != 200:
-                    print(f"❌ [{request_id}] Poll failed: {poll_response.status_code}")
+                    print(f"  ⚠️ [{request_id}] Poll request failed: {poll_response.status_code}")
                     continue
                 
                 poll_result = poll_response.json()
                 status = poll_result.get("status", {}).get("state", "")
-                print(f"  📊 [{request_id}] Poll {attempt + 1}: {status}")
                 
                 if status == "SUCCEEDED":
+                    elapsed = (attempt + 1) * 10
+                    print(f"  ✅ [{request_id}] Long SQL completed after {elapsed}s")
                     return poll_result.get("result", {})
                 elif status in ["FAILED", "CANCELED", "CLOSED"]:
                     error_msg = poll_result.get("status", {}).get("error", {}).get("message", "Unknown error")
-                    print(f"❌ [{request_id}] Statement failed: {error_msg}")
+                    print(f"  ❌ [{request_id}] Long SQL {status}: {error_msg}")
                     return None
+                else:
+                    # Log progress every minute
+                    if attempt % 6 == 0 and attempt > 0:
+                        elapsed = (attempt + 1) * 10
+                        print(f"  🔄 [{request_id}] Still running... ({elapsed}s elapsed)")
         
-        print(f"❌ [{request_id}] Statement timed out after polling")
+        print(f"  ❌ [{request_id}] Long SQL timed out after {timeout_minutes} minutes")
         return None
     
-    elif status == "SUCCEEDED":
-        return result.get("result", {})
-    else:
-        error_msg = result.get("status", {}).get("error", {}).get("message", "Unknown error")
-        print(f"❌ [{request_id}] Long SQL failed: {status}, error: {error_msg}")
-        return None
+    # Failed immediately
+    error_msg = result.get("status", {}).get("error", {}).get("message", "Unknown error")
+    print(f"❌ [{request_id}] Long SQL failed immediately: {status}, error: {error_msg}")
+    return None
 
 
 async def read_file_from_volume(config: dict, file_path: str, request_id: str) -> bytes:
