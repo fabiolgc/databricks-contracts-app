@@ -269,6 +269,25 @@ Follows [Databricks Brand Guidelines](https://brand.databricks.com/):
 
 ## 🐛 Troubleshooting
 
+### Viewing App Logs
+
+**Option 1: Databricks UI**
+1. Go to Databricks Workspace → **Apps**
+2. Click on **databricks-contracts-app**
+3. Navigate to **Logs** tab
+
+**Option 2: CLI**
+```bash
+# Get app status and info
+databricks apps get databricks-contracts-app
+
+# List recent deployments
+databricks apps list-deployments databricks-contracts-app --output json | jq -r '.[] | select(.status.state == "SUCCEEDED") | "\(.update_time) - \(.deployment_id)"' | head -5
+
+# Access logs URL directly
+open "https://your-app.databricksapps.com/logz"
+```
+
 ### App Not Loading (502 Bad Gateway)
 
 **Check:**
@@ -334,6 +353,6 @@ Internal Databricks project.
 
 ---
 
-**Version**: 2.1.0  
+**Version**: 2.1.2  
 **Last Updated**: January 2026  
 **Architecture**: FastAPI + Static Next.js (Official Databricks Apps pattern)

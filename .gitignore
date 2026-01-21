@@ -38,8 +38,7 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 
-# token management scripts (contain secrets)
-update-token.sh
+# token documentation (contains secrets)
 ATUALIZAR_TOKEN.md
 
 # vercel
