@@ -1,128 +1,303 @@
-# Development Guidelines
+---
+alwaysApply: true
+---
+# Development Guidelines - Databricks Contracts App
 
-You are an expert developer in TypeScript, Node.js, Next.js 14 App Router, React, Supabase, GraphQL, Genql, Tailwind CSS, Radix UI, and Shadcn UI.
+## Architecture Overview
+
+This is a **FastAPI (Python) + Static Next.js** application deployed on Databricks Apps following official Databricks best practices for React applications.
+
+**Stack:**
+- **Frontend**: Next.js 16 (Static Export), React 19, TypeScript
+- **Backend**: FastAPI (Python) serving static files + API endpoints
+- **Styling**: Tailwind CSS v4 with Databricks design system
+- **Deployment**: Databricks Apps (Python runtime)
+- **Database**: Databricks SQL Warehouse
+- **Storage**: Unity Catalog Volumes
 
 ## Key Principles
-- Write concise, technical responses with accurate TypeScript examples.
-- Use functional, declarative programming. Avoid classes.
-- Prefer iteration and modularization over duplication.
-- Use descriptive variable names with auxiliary verbs (e.g., isLoading, hasError).
-- Use lowercase with dashes for directories (e.g., components/auth-wizard).
-- Favor named exports for components.
-- Use the Receive an Object, Return an Object (RORO) pattern.
 
-## JavaScript/TypeScript
-- Use "function" keyword for pure functions. Omit semicolons.
-- Use TypeScript for all code. Prefer interfaces over types.
-- File structure: Exported component, subcomponents, helpers, static content, types.
-- Avoid unnecessary curly braces in conditional statements.
-- For single-line statements in conditionals, omit curly braces.
-- Use concise, one-line syntax for simple conditional statements (e.g., if (condition) doSomething()).
+- Write concise, technical TypeScript and Python code
+- Follow Databricks Brand Guidelines for all UI components
+- Prioritize type safety (TypeScript interfaces, Pydantic models)
+- Use functional, declarative programming
+- Prefer iteration and modularization over duplication
+- Use descriptive variable names (e.g., `isUploading`, `hasError`)
 
-## Error Handling and Validation
-- Prioritize error handling and edge cases:
-  - Handle errors and edge cases at the beginning of functions.
-  - Use early returns for error conditions to avoid deeply nested if statements.
-  - Place the happy path last in the function for improved readability.
-  - Avoid unnecessary else statements; use if-return pattern instead.
-  - Use guard clauses to handle preconditions and invalid states early.
-  - Implement proper error logging and user-friendly error messages.
-  - Consider using custom error types or error factories for consistent error handling.
+## Frontend (Next.js Static Export)
 
-## AI SDK
-- Use the Vercel AI SDK UI for implementing streaming chat UI.
-- Use the Vercel AI SDK Core to interact with language models.
-- Use the Vercel AI SDK RSC and Stream Helpers to stream and help with the generations.
-- Implement proper error handling for AI responses and model switching.
-- Implement fallback mechanisms for when an AI model is unavailable.
-- Handle rate limiting and quota exceeded scenarios gracefully.
-- Provide clear error messages to users when AI interactions fail.
-- Implement proper input sanitization for user messages before sending to AI models.
-- Use environment variables for storing API keys and sensitive information.
+### Configuration
 
-## React/Next.js
-- Use functional components and TypeScript interfaces.
-- Use declarative JSX.
-- Use function, not const, for components.
-- Use Shadcn UI, Radix, and Tailwind CSS for components and styling.
-- Implement responsive design with Tailwind CSS.
-- Use mobile-first approach for responsive design.
-- Place static content and interfaces at file end.
-- Use content variables for static content outside render functions.
-- Minimize 'use client', 'useEffect', and 'setState'. Favor React Server Components (RSC).
-- Use Zod for form validation.
-- Wrap client components in Suspense with fallback.
-- Use dynamic loading for non-critical components.
-- Optimize images: WebP format, size data, lazy loading.
-- Model expected errors as return values: Avoid using try/catch for expected errors in Server Actions.
-- Use error boundaries for unexpected errors: Implement error boundaries using error.tsx and global-error.tsx files.
-- Use useActionState with react-hook-form for form validation.
-- Code in services/ dir always throw user-friendly errors that can be caught and shown to the user.
-- Use next-safe-action for all server actions.
-- Implement type-safe server actions with proper validation.
-- Handle errors gracefully and return appropriate responses.
+- **Output**: `'export'` (static HTML/JS/CSS generation)
+- **No SSR**: Pure static files, no Node.js server at runtime
+- **No API Routes**: All API endpoints in FastAPI backend
+- **Images**: `unoptimized: true` (no image optimization server)
 
-## Supabase and GraphQL
-- Use the Supabase client for database interactions and real-time subscriptions.
-- Implement Row Level Security (RLS) policies for fine-grained access control.
-- Use Supabase Auth for user authentication and management.
-- Leverage Supabase Storage for file uploads and management.
-- Use Supabase Edge Functions for serverless API endpoints when needed.
-- Use the generated GraphQL client (Genql) for type-safe API interactions with Supabase.
-- Optimize GraphQL queries to fetch only necessary data.
-- Use Genql queries for fetching large datasets efficiently.
-- Implement proper authentication and authorization using Supabase RLS and Policies.
+### Component Structure
 
-## Key Conventions
-1. Rely on Next.js App Router for state changes and routing.
-2. Prioritize Web Vitals (LCP, CLS, FID).
-3. Minimize 'use client' usage:
-   - Prefer server components and Next.js SSR features.
-   - Use 'use client' only for Web API access in small components.
-   - Avoid using 'use client' for data fetching or state management.
-4. Follow the monorepo structure:
-   - Place shared code in the 'packages' directory.
-   - Keep app-specific code in the 'apps' directory.
-5. Use Taskfile commands for development and deployment tasks.
-6. Adhere to the defined database schema and use enum tables for predefined values.
+```typescript
+// Use functional components with TypeScript
+export default function ComponentName() {
+  const [state, setState] = useState<Type>(initialValue)
+  
+  // Early returns for loading/error states
+  if (isLoading) return <Loader />
+  if (error) return <Error message={error} />
+  
+  // Happy path last
+  return <MainContent />
+}
+```
+
+### Styling (Tailwind CSS + Databricks Design)
+
+**Always use Databricks colors:**
+- Primary: `#FF3621` (Databricks Red)
+- Success: `#00A972` (Databricks Teal)
+- Dark: `#1B1B1D` (Databricks Dark)
+- Neutral: Tailwind gray scale
+
+**Typography:**
+- Font: DM Sans (headings, body, UI) and DM Mono (code)
+- Sizes: `text-3xl` (H1), `text-2xl` (H2), `text-xl` (H3), `text-base` (body)
+
+**Example:**
+```tsx
+<button className="px-4 py-2 text-sm font-medium text-white bg-[#FF3621] rounded-lg hover:bg-[#FF3621]/90 transition-colors shadow-sm">
+  Primary Action
+</button>
+```
+
+### State Management
+
+- Use `useState` for local component state
+- Avoid unnecessary `useEffect` - prefer direct event handlers
+- Keep state close to where it's used
+- Use proper TypeScript types for all state
+
+### Error Handling
+
+```typescript
+try {
+  const response = await fetch("/api/upload", {...})
+  
+  if (response.status === 409) {
+    // Handle specific status codes
+  } else if (!response.ok) {
+    throw new Error(await response.text())
+  }
+  
+  const data = await response.json()
+  // Handle success
+} catch (error) {
+  const message = error instanceof Error ? error.message : "Unknown error"
+  toast.error(message)
+}
+```
+
+## Backend (FastAPI)
+
+### Structure
+
+```python
+@app.post("/api/endpoint")
+async def endpoint_name(
+    param: Type,
+    x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
+):
+    """
+    Docstring with description
+    """
+    request_id = str(uuid.uuid4())[:8]
+    
+    try:
+        # Comprehensive logging
+        print(f"[{request_id}] Operation starting...")
+        
+        # OBO authentication support
+        user_token = x_forwarded_access_token
+        
+        # Business logic
+        result = await some_operation(user_token)
+        
+        if not result["success"]:
+            raise HTTPException(status_code=500, detail=result["error"])
+        
+        return {"success": True, "data": result}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[{request_id}] Exception: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+```
+
+### OBO Authentication
+
+Always support On-Behalf-Of authentication:
+
+```python
+def get_databricks_config(user_token: Optional[str] = None):
+    return {
+        "token": user_token or os.getenv("DATABRICKS_CLIENT_SECRET"),
+        "auth_method": "OBO" if user_token else "Service Principal",
+    }
+```
+
+### Logging
+
+- Use unique request IDs for tracing
+- Log all operations with visual separators
+- Include timing information
+- Log authentication method used
+- Log errors with full stack traces
+
+## Databricks Integration
+
+### File Uploads
+
+```python
+# HTTP 200, 201, 204 are all success codes
+if response.status_code not in [200, 201, 204]:
+    # Handle error
+```
+
+### Unity Catalog Volumes
+
+- Use Workspace Files API: `/api/2.0/fs/files{volume_path}`
+- Check file existence with HEAD requests
+- Upload with PUT and `application/octet-stream`
+- Respect user permissions with OBO
+
+## Deployment
+
+### Build Process
+
+```bash
+# Frontend (Next.js static export)
+cd frontend
+npm run build  # → frontend/out/
+
+# Backend (FastAPI)
+cd backend
+# Files copied to backend/build/
+
+# Deploy
+./deploy.sh  # Automated deployment
+```
+
+### Deployment Checklist
+
+- ✅ Frontend builds successfully (`npm run build`)
+- ✅ Backend dependencies correct (`requirements.txt`)
+- ✅ `app.yaml` uses `uvicorn app:app --host 0.0.0.0 --port 8000`
+- ✅ Environment variables set in `backend/app.yaml`
+- ✅ Unity Catalog Volume exists with proper permissions
+
+## File Structure
+
+```
+/
+├── frontend/               # Next.js static app
+│   ├── app/               # App Router
+│   ├── components/        # React components
+│   ├── lib/               # Utilities (unused in static export)
+│   └── public/            # Static assets
+│
+├── backend/               # FastAPI app
+│   ├── app.py            # Main application
+│   ├── requirements.txt  # Python dependencies
+│   └── app.yaml          # Databricks config
+│
+└── deploy.sh             # Deployment automation
+```
 
 ## Naming Conventions
-- Booleans: Use auxiliary verbs such as 'does', 'has', 'is', and 'should' (e.g., isDisabled, hasError).
-- Filenames: Use lowercase with dash separators (e.g., auth-wizard.tsx).
-- File extensions: Use .config.ts, .test.ts, .context.tsx, .type.ts, .hook.ts as appropriate.
 
-## Component Structure
-- Break down components into smaller parts with minimal props.
-- Suggest micro folder structure for components.
-- Use composition to build complex components.
-- Follow the order: component declaration, styled components (if any), TypeScript types.
+**TypeScript/React:**
+- Components: PascalCase (`TopNav.tsx`)
+- Files: kebab-case (`top-nav.tsx`)
+- Functions: camelCase (`handleUpload`)
+- Booleans: auxiliary verbs (`isLoading`, `hasError`)
 
-## Data Fetching and State Management
-- Use React Server Components for data fetching when possible.
-- Implement the preload pattern to prevent waterfalls.
-- Leverage Supabase for real-time data synchronization and state management.
-- Use Vercel KV for chat history, rate limiting, and session storage when appropriate.
-
-## Styling
-- Use Tailwind CSS for styling, following the Utility First approach.
-- Utilize the Class Variance Authority (CVA) for managing component variants.
+**Python:**
+- Functions: snake_case (`upload_to_volume`)
+- Classes: PascalCase (if used)
+- Constants: UPPER_SNAKE_CASE (`MAX_FILE_SIZE`)
 
 ## Testing
-- Implement unit tests for utility functions and hooks.
-- Use integration tests for complex components and pages.
-- Implement end-to-end tests for critical user flows.
-- Use Supabase local development for testing database interactions.
 
-## Accessibility
-- Ensure interfaces are keyboard navigable.
-- Implement proper ARIA labels and roles for components.
-- Ensure color contrast ratios meet WCAG standards for readability.
+**Frontend:**
+- Build test: `npm run build` must succeed
+- Type check: `npx tsc --noEmit`
+- Lint: `npm run lint`
+
+**Backend:**
+- Manual endpoint testing during development
+- Check logs for errors in Databricks Apps `/logz`
+
+## Common Patterns
+
+### Toast Notifications
+
+```typescript
+import { toast } from "sonner"
+
+// Simple
+toast.success("Message", { duration: 6000 })
+
+// With description
+toast.warning("Title", {
+  description: "Details",
+  duration: 7000
+})
+```
+
+### File Upload with Progress
+
+```typescript
+type FileStatus = "pending" | "uploading" | "success" | "error" | "skipped"
+
+interface FileWithStatus {
+  id: string
+  file: File
+  name: string
+  size: number
+  status: FileStatus
+  error?: string
+}
+```
+
+## Security
+
+- ✅ Never commit tokens or secrets
+- ✅ Use `.env.local` for local development
+- ✅ Databricks Apps injects `DATABRICKS_CLIENT_SECRET`
+- ✅ Support OBO to respect user permissions
+- ✅ Validate all inputs (file type, size, etc)
+
+## Performance
+
+**Frontend:**
+- All pages pre-rendered at build time
+- Optimized bundle sizes with code splitting
+- No runtime server required
+
+**Backend:**
+- Use async/await for I/O operations
+- Connection pooling with httpx.AsyncClient
+- Appropriate timeout configurations (300s for uploads)
 
 ## Documentation
-- Provide clear and concise comments for complex logic.
-- Use JSDoc comments for functions and components to improve IDE intellisense.
-- Keep the README files up-to-date with setup instructions and project overview.
-- Document Supabase schema, RLS policies, and Edge Functions when used.
 
-Refer to Next.js documentation for Data Fetching, Rendering, and Routing best practices and to the
-Vercel AI SDK documentation and OpenAI/Anthropic API guidelines for best practices in AI integration.
+- Keep `.cursor/rules/docs.mdc` updated with architecture changes
+- Document API endpoints with request/response examples
+- Update README for setup instructions
+- Add comments for complex business logic only
+
+## References
+
+- [Databricks Apps for React](https://databricks.com) (August 2024)
+- [Next.js Static Export](https://nextjs.org/docs/app/building-your-application/deploying/static-exports)
+- [FastAPI Documentation](https://fastapi.tiangolo.com/)
+- [Databricks Brand Guidelines](https://brand.databricks.com/)
