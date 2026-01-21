@@ -58,6 +58,29 @@ class ExtractTextRequest(BaseModel):
 class ChunkPreviewRequest(BaseModel):
     tableConfig: Dict[str, str]
     limit: int = 50
+    fileNames: Optional[List[str]] = None  # Filter by specific file names
+
+class RawDocumentsRequest(BaseModel):
+    catalog: str
+    schema_name: str
+    tableName: str  # Base name like "contracts" - will append "_raw"
+    offset: int = 0
+    limit: int = 10
+
+class RawDocumentTextRequest(BaseModel):
+    catalog: str
+    schema_name: str
+    tableName: str
+    documentId: str
+
+class ChunkingPreviewRequest(BaseModel):
+    catalog: str
+    schema_name: str
+    tableName: str
+    documentIds: List[str]  # IDs of documents to preview (max 3)
+    strategy: str  # fixed_size, recursive, by_sentence, by_page, semantic
+    chunkSize: int = 1000
+    chunkOverlap: int = 200
 
 # CORS middleware (adjust origins as needed for your environment)
 app.add_middleware(
@@ -96,6 +119,112 @@ def get_databricks_config(user_token: Optional[str] = None):
 def get_volume_base_path(config: dict) -> str:
     """Construct volume base path"""
     return f"/Volumes/{config['catalog']}/{config['schema']}/{config['volume']}"
+
+
+# ============================================================================
+# Chunking Functions
+# ============================================================================
+
+def chunk_by_fixed_size(text: str, chunk_size: int, overlap: int) -> List[str]:
+    """Divide text into fixed-size chunks with overlap"""
+    chunks = []
+    start = 0
+    while start < len(text):
+        end = min(start + chunk_size, len(text))
+        chunks.append(text[start:end])
+        start = end - overlap
+        if start >= len(text) - overlap:
+            break
+    return chunks
+
+
+def chunk_by_recursive(text: str, chunk_size: int, overlap: int) -> List[str]:
+    """Divide text recursively by natural separators"""
+    separators = ['\n\n', '\n', '. ', ' ']
+    
+    def split_text(txt: str, sep_index: int) -> List[str]:
+        if len(txt) <= chunk_size:
+            return [txt]
+        if sep_index >= len(separators):
+            return chunk_by_fixed_size(txt, chunk_size, overlap)
+        
+        sep = separators[sep_index]
+        parts = txt.split(sep)
+        result = []
+        current = ''
+        
+        for part in parts:
+            candidate = current + sep + part if current else part
+            if len(candidate) <= chunk_size:
+                current = candidate
+            else:
+                if current:
+                    result.append(current)
+                if len(part) > chunk_size:
+                    result.extend(split_text(part, sep_index + 1))
+                    current = ''
+                else:
+                    current = part
+        if current:
+            result.append(current)
+        return result
+    
+    return split_text(text, 0)
+
+
+def chunk_by_sentence(text: str, chunk_size: int, overlap: int) -> List[str]:
+    """Divide text by sentences, grouping until max size"""
+    import re
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    chunks = []
+    current = ''
+    
+    for sentence in sentences:
+        if len(current + ' ' + sentence) <= chunk_size:
+            current = current + ' ' + sentence if current else sentence
+        else:
+            if current:
+                chunks.append(current.strip())
+            current = sentence
+    if current:
+        chunks.append(current.strip())
+    
+    # Apply overlap
+    if overlap > 0 and len(chunks) > 1:
+        overlapped = [chunks[0]]
+        for i in range(1, len(chunks)):
+            prev = chunks[i - 1]
+            overlap_text = prev[-overlap:] if len(prev) > overlap else prev
+            overlapped.append(overlap_text + ' ' + chunks[i])
+        return overlapped
+    
+    return chunks
+
+
+def chunk_by_page(text: str) -> List[str]:
+    """Divide text by page markers (triple newlines)"""
+    pages = re.split(r'\n\n\n+', text)
+    return [p.strip() for p in pages if p.strip()]
+
+
+def apply_chunking(text: str, strategy: str, chunk_size: int = 1000, overlap: int = 200) -> List[str]:
+    """Apply chunking strategy to text"""
+    if not text or not text.strip():
+        return []
+    
+    if strategy == 'fixed_size':
+        return chunk_by_fixed_size(text, chunk_size, overlap)
+    elif strategy == 'recursive':
+        return chunk_by_recursive(text, chunk_size, overlap)
+    elif strategy == 'by_sentence':
+        return chunk_by_sentence(text, chunk_size, overlap)
+    elif strategy == 'by_page':
+        return chunk_by_page(text)
+    elif strategy == 'semantic':
+        # Semantic would need embeddings - fallback to recursive for now
+        return chunk_by_recursive(text, chunk_size, overlap)
+    else:
+        return chunk_by_fixed_size(text, chunk_size, overlap)
 
 
 async def check_file_exists(
@@ -732,6 +861,249 @@ async def check_table(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ============================================================================
+# Module 2: Raw Documents API (for chunking preparation)
+# ============================================================================
+
+@app.post("/api/raw-documents")
+async def get_raw_documents(
+    request: RawDocumentsRequest,
+    x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
+):
+    """Get documents from the _raw table with pagination"""
+    request_id = str(uuid.uuid4())[:8]
+    print(f"\n{'=' * 80}")
+    print(f"📄 [{request_id}] Get raw documents at {datetime.now().isoformat()}")
+    print(f"{'=' * 80}")
+    
+    # Build full table name - use _raw suffix
+    raw_table = f"{request.catalog}.{request.schema_name}.{request.tableName}_raw"
+    
+    print(f"📋 [{request_id}] Table: {raw_table}")
+    print(f"📋 [{request_id}] Offset: {request.offset}, Limit: {request.limit}")
+    
+    try:
+        config = get_databricks_config(x_forwarded_access_token)
+        warehouse_id = os.getenv("DATABRICKS_WAREHOUSE_ID")
+        
+        if not warehouse_id:
+            raise HTTPException(status_code=500, detail="Warehouse not configured")
+        
+        # Get total count
+        count_sql = f"SELECT COUNT(*) as total FROM {raw_table}"
+        count_result = await execute_sql(config, warehouse_id, count_sql, request_id)
+        
+        total_count = 0
+        if count_result and count_result.get("data_array"):
+            total_count = int(count_result["data_array"][0][0])
+        
+        print(f"📊 [{request_id}] Total records: {total_count}")
+        
+        # Get documents (without raw_text for list view - it can be large)
+        docs_sql = f"""
+        SELECT 
+            id,
+            file_name,
+            file_path,
+            text_length,
+            page_count,
+            created_at
+        FROM {raw_table}
+        ORDER BY created_at DESC
+        LIMIT {request.limit}
+        OFFSET {request.offset}
+        """
+        
+        docs_result = await execute_sql(config, warehouse_id, docs_sql, request_id)
+        
+        documents = []
+        if docs_result and docs_result.get("data_array"):
+            for row in docs_result["data_array"]:
+                documents.append({
+                    "id": row[0],
+                    "fileName": row[1],
+                    "filePath": row[2],
+                    "textLength": int(row[3]) if row[3] else 0,
+                    "pageCount": int(row[4]) if row[4] else 0,
+                    "createdAt": row[5]
+                })
+        
+        print(f"✅ [{request_id}] Returned {len(documents)} documents")
+        
+        return {
+            "success": True,
+            "documents": documents,
+            "total": total_count,
+            "offset": request.offset,
+            "limit": request.limit,
+            "hasMore": request.offset + len(documents) < total_count
+        }
+        
+    except Exception as e:
+        error_str = str(e)
+        print(f"💥 [{request_id}] Exception: {error_str}")
+        if "TABLE_OR_VIEW_NOT_FOUND" in error_str:
+            return {
+                "success": False,
+                "documents": [],
+                "total": 0,
+                "error": "Tabela não encontrada. Importe documentos primeiro no Módulo 1.",
+                "tableNotFound": True
+            }
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/raw-documents/text")
+async def get_raw_document_text(
+    request: RawDocumentTextRequest,
+    x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
+):
+    """Get the raw_text of a specific document"""
+    request_id = str(uuid.uuid4())[:8]
+    print(f"\n{'=' * 80}")
+    print(f"📝 [{request_id}] Get document text at {datetime.now().isoformat()}")
+    print(f"{'=' * 80}")
+    
+    raw_table = f"{request.catalog}.{request.schema_name}.{request.tableName}_raw"
+    
+    print(f"📋 [{request_id}] Table: {raw_table}")
+    print(f"📋 [{request_id}] Document ID: {request.documentId}")
+    
+    try:
+        config = get_databricks_config(x_forwarded_access_token)
+        warehouse_id = os.getenv("DATABRICKS_WAREHOUSE_ID")
+        
+        if not warehouse_id:
+            raise HTTPException(status_code=500, detail="Warehouse not configured")
+        
+        # Get document with raw_text
+        sql = f"""
+        SELECT 
+            id,
+            file_name,
+            raw_text,
+            text_length,
+            page_count
+        FROM {raw_table}
+        WHERE id = '{request.documentId}'
+        """
+        
+        result = await execute_sql(config, warehouse_id, sql, request_id)
+        
+        if result and result.get("data_array") and len(result["data_array"]) > 0:
+            row = result["data_array"][0]
+            print(f"✅ [{request_id}] Found document: {row[1]}")
+            return {
+                "success": True,
+                "document": {
+                    "id": row[0],
+                    "fileName": row[1],
+                    "rawText": row[2],
+                    "textLength": int(row[3]) if row[3] else 0,
+                    "pageCount": int(row[4]) if row[4] else 0
+                }
+            }
+        else:
+            print(f"⚠️ [{request_id}] Document not found")
+            raise HTTPException(status_code=404, detail="Documento não encontrado")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"💥 [{request_id}] Exception: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/chunking/preview")
+async def get_chunking_preview(
+    request: ChunkingPreviewRequest,
+    x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
+):
+    """Generate a preview of how chunks would look for selected documents"""
+    request_id = str(uuid.uuid4())[:8]
+    print(f"\n{'=' * 80}")
+    print(f"🔍 [{request_id}] Chunking preview at {datetime.now().isoformat()}")
+    print(f"{'=' * 80}")
+    
+    raw_table = f"{request.catalog}.{request.schema_name}.{request.tableName}_raw"
+    
+    print(f"📋 [{request_id}] Table: {raw_table}")
+    print(f"📋 [{request_id}] Documents: {len(request.documentIds)}")
+    print(f"📋 [{request_id}] Strategy: {request.strategy}")
+    print(f"📋 [{request_id}] Chunk size: {request.chunkSize}, Overlap: {request.chunkOverlap}")
+    
+    # Limit to max 3 documents for preview
+    doc_ids = request.documentIds[:3]
+    
+    try:
+        config = get_databricks_config(x_forwarded_access_token)
+        warehouse_id = os.getenv("DATABRICKS_WAREHOUSE_ID")
+        
+        if not warehouse_id:
+            raise HTTPException(status_code=500, detail="Warehouse not configured")
+        
+        # Get documents with raw_text
+        ids_list = "', '".join(doc_ids)
+        sql = f"""
+        SELECT 
+            id,
+            file_name,
+            raw_text
+        FROM {raw_table}
+        WHERE id IN ('{ids_list}')
+        """
+        
+        result = await execute_sql(config, warehouse_id, sql, request_id)
+        
+        preview_results = []
+        
+        if result and result.get("data_array"):
+            for row in result["data_array"]:
+                doc_id = row[0]
+                file_name = row[1]
+                raw_text = row[2] or ""
+                
+                # Apply chunking
+                chunks = apply_chunking(
+                    raw_text, 
+                    request.strategy, 
+                    request.chunkSize, 
+                    request.chunkOverlap
+                )
+                
+                print(f"✅ [{request_id}] {file_name}: {len(chunks)} chunks")
+                
+                preview_results.append({
+                    "id": doc_id,
+                    "fileName": file_name,
+                    "totalChunks": len(chunks),
+                    "chunks": [
+                        {
+                            "index": i,
+                            "content": chunk[:500] + "..." if len(chunk) > 500 else chunk,
+                            "length": len(chunk)
+                        }
+                        for i, chunk in enumerate(chunks[:10])  # Limit to first 10 chunks per doc
+                    ],
+                    "textLength": len(raw_text)
+                })
+        
+        return {
+            "success": True,
+            "strategy": request.strategy,
+            "chunkSize": request.chunkSize,
+            "chunkOverlap": request.chunkOverlap,
+            "documents": preview_results,
+            "totalDocuments": len(preview_results)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"💥 [{request_id}] Exception: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/process/init")
 async def init_processing(
     request: ProcessRequest,
@@ -758,8 +1130,8 @@ async def init_processing(
         schema = table_config.get("schema", "")
         table_name = table_config.get("tableName", "")
         
-        # Documents table stores raw extracted text
-        documents_table = f"{catalog}.{schema}.{table_name}_documents"
+        # Raw documents table (created in Module 1) - we just verify it exists
+        raw_table = f"{catalog}.{schema}.{table_name}_raw"
         # Chunks table stores chunked content
         chunks_table = f"{catalog}.{schema}.{table_name}_chunks"
         
@@ -767,30 +1139,27 @@ async def init_processing(
         if not warehouse_id:
             raise HTTPException(status_code=500, detail="Warehouse ID not configured")
         
-        # Step 1: If mode is 'clean', drop existing tables
+        # Step 1: Verify _raw table exists (created in Module 1)
+        print(f"\n📋 [{request_id}] Verifying raw table exists: {raw_table}")
+        verify_sql = f"SELECT COUNT(*) FROM {raw_table} LIMIT 1"
+        try:
+            await execute_sql(config, warehouse_id, verify_sql, request_id)
+            print(f"✅ [{request_id}] Raw table exists")
+        except Exception as e:
+            error_str = str(e)
+            if "TABLE_OR_VIEW_NOT_FOUND" in error_str:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Tabela _raw não encontrada. Importe documentos primeiro no Módulo 1."
+                )
+            raise
+        
+        # Step 2: If mode is 'clean', drop existing chunks table
         if mode == "clean":
-            print(f"\n🗑️ [{request_id}] Cleaning existing tables...")
-            await execute_sql(config, warehouse_id, f"DROP TABLE IF EXISTS {documents_table}", request_id)
+            print(f"\n🗑️ [{request_id}] Cleaning existing chunks table...")
             await execute_sql(config, warehouse_id, f"DROP TABLE IF EXISTS {chunks_table}", request_id)
         
-        # Step 2: Create documents table
-        create_docs_sql = f"""
-        CREATE TABLE IF NOT EXISTS {documents_table} (
-            id STRING,
-            file_name STRING,
-            file_path STRING,
-            raw_text STRING,
-            text_length INT,
-            page_count INT,
-            created_at TIMESTAMP,
-            metadata STRING
-        )
-        USING DELTA
-        """
-        print(f"\n📊 [{request_id}] Creating documents table: {documents_table}")
-        await execute_sql(config, warehouse_id, create_docs_sql, request_id)
-        
-        # Step 3: Create chunks table
+        # Step 3: Create chunks table (if not exists)
         create_chunks_sql = f"""
         CREATE TABLE IF NOT EXISTS {chunks_table} (
             id STRING,
@@ -809,31 +1178,19 @@ async def init_processing(
         print(f"\n📊 [{request_id}] Creating chunks table: {chunks_table}")
         await execute_sql(config, warehouse_id, create_chunks_sql, request_id)
         
-        # Step 4: Get list of already processed files
-        existing_files = set()
-        if mode == "append":
-            check_sql = f"SELECT DISTINCT file_name FROM {documents_table}"
-            result = await execute_sql(config, warehouse_id, check_sql, request_id)
-            if result and result.get("data_array"):
-                existing_files = set(row[0] for row in result.get("data_array", []))
-            print(f"📁 [{request_id}] Already processed: {len(existing_files)} files")
-        
-        # Filter files
-        files_to_process = []
+        # Step 4: For chunking, we always process all selected files
+        # The chunks will be deleted and recreated in process_single_file
+        # No need to skip files - we want to regenerate chunks with new strategy
+        files_to_process = files
         skipped_files = []
-        for file_name in files:
-            if mode == "append" and file_name in existing_files:
-                skipped_files.append(file_name)
-            else:
-                files_to_process.append(file_name)
         
         print(f"\n✅ [{request_id}] Init complete!")
         print(f"  - Files to process: {len(files_to_process)}")
-        print(f"  - Files skipped: {len(skipped_files)}")
+        print(f"  - Mode: {mode} (chunks will be regenerated)")
         
         return {
             "success": True,
-            "documentsTable": documents_table,
+            "rawTable": raw_table,
             "chunksTable": chunks_table,
             "filesToProcess": files_to_process,
             "skippedFiles": skipped_files
@@ -877,9 +1234,7 @@ async def process_single_file(
         schema = table_config.get("schema", "")
         table_name = table_config.get("tableName", "")
         
-        documents_table = f"{catalog}.{schema}.{table_name}_documents"
         chunks_table = f"{catalog}.{schema}.{table_name}_chunks"
-        volume_path = get_volume_base_path(config)
         
         warehouse_id = os.getenv("DATABRICKS_WAREHOUSE_ID")
         if not warehouse_id:
@@ -888,112 +1243,57 @@ async def process_single_file(
         chunk_size = params.get("chunkSize", 1000)
         chunk_overlap = params.get("chunkOverlap", 200)
         
-        # Step 1: If overwrite mode, delete existing data for this file
-        if mode == "overwrite":
-            print(f"🗑️ [{request_id}] Deleting existing data for: {file_name}")
-            escaped_name = file_name.replace("'", "''")
-            await execute_sql(config, warehouse_id, 
-                f"DELETE FROM {documents_table} WHERE file_name = '{escaped_name}'", request_id)
+        # Step 1: Always delete existing chunks for this file before creating new ones
+        # This ensures the new chunking strategy is applied fresh
+        print(f"🗑️ [{request_id}] Deleting existing chunks for: {file_name}")
+        escaped_name = file_name.replace("'", "''")
+        try:
             await execute_sql(config, warehouse_id, 
                 f"DELETE FROM {chunks_table} WHERE file_name = '{escaped_name}'", request_id)
+        except Exception as e:
+            # Table might not exist yet, that's OK
+            print(f"⚠️ [{request_id}] Could not delete from chunks table (might not exist): {str(e)}")
         
-        # Step 2: Extract text using ai_parse_document
-        print(f"\n🤖 [{request_id}] Extracting text with ai_parse_document...")
-        
+        # Step 2: Get text from _raw table (already extracted in Module 1)
         escaped_file_name = file_name.replace("'", "''")
-        file_path = f"{volume_path}/{file_name}"
+        raw_table = f"{catalog}.{schema}.{table_name}_raw"
         
-        # Use ai_parse_document to extract text from this single file
-        extract_sql = f"""
-        WITH source_file AS (
-            SELECT path, content
-            FROM READ_FILES('{volume_path}', format => 'binaryFile')
-            WHERE path LIKE '%/{escaped_file_name}'
-            LIMIT 1
-        ),
-        parsed AS (
-            SELECT 
-                path,
-                ai_parse_document(content) as parsed
-            FROM source_file
-        ),
-        extracted AS (
-            SELECT
-                path,
-                element:content AS content,
-                idx
-            FROM (
-                SELECT
-                    path,
-                    posexplode(
-                        CASE
-                            WHEN try_cast(parsed:metadata:version AS STRING) = '1.0' 
-                            THEN try_cast(parsed:document:pages AS ARRAY<VARIANT>)
-                            ELSE try_cast(parsed:document:elements AS ARRAY<VARIANT>)
-                        END
-                    ) AS (idx, element)
-                FROM parsed
-                WHERE try_cast(parsed:error_status AS STRING) IS NULL
-            )
-        )
-        SELECT
-            path,
-            concat_ws('\\n\\n', collect_list(content)) AS full_text,
-            COUNT(*) as page_count
-        FROM extracted
-        WHERE content IS NOT NULL
-        GROUP BY path
+        print(f"\n📖 [{request_id}] Fetching text from _raw table: {raw_table}")
+        
+        fetch_sql = f"""
+        SELECT id, file_path, raw_text, text_length, page_count
+        FROM {raw_table}
+        WHERE file_name = '{escaped_file_name}'
+        LIMIT 1
         """
         
-        # Execute with polling for AI processing
-        result = await execute_sql_long(config, warehouse_id, extract_sql, request_id, timeout_minutes=5)
+        result = await execute_sql(config, warehouse_id, fetch_sql, request_id)
         
         if not result or not result.get("data_array") or len(result.get("data_array", [])) == 0:
-            print(f"❌ [{request_id}] No text extracted from {file_name}")
+            print(f"❌ [{request_id}] Document not found in _raw table: {file_name}")
             return {
                 "success": False,
                 "fileName": file_name,
-                "error": "No text could be extracted from this file",
+                "error": "Document not found. Please import documents first in Module 1.",
                 "chunksCreated": 0
             }
         
         row = result["data_array"][0]
-        extracted_path = row[0]
-        raw_text = row[1] or ""
-        page_count = int(row[2]) if row[2] else 0
+        doc_id = row[0]
+        extracted_path = row[1] or ""
+        raw_text = row[2] or ""
+        text_length = int(row[3]) if row[3] else 0
+        page_count = int(row[4]) if row[4] else 0
         
-        print(f"✅ [{request_id}] Extracted {len(raw_text)} characters from {page_count} pages")
+        print(f"✅ [{request_id}] Found document: {text_length} characters, {page_count} pages")
         
         if not raw_text.strip():
             return {
                 "success": False,
                 "fileName": file_name,
-                "error": "Extracted text is empty",
+                "error": "Document has no text content",
                 "chunksCreated": 0
             }
-        
-        # Step 3: Save raw text to documents table
-        print(f"\n💾 [{request_id}] Saving to documents table...")
-        doc_id = str(uuid.uuid4())
-        escaped_raw_text = raw_text.replace("'", "''").replace("\\", "\\\\")
-        escaped_path = extracted_path.replace("'", "''")
-        
-        insert_doc_sql = f"""
-        INSERT INTO {documents_table}
-        (id, file_name, file_path, raw_text, text_length, page_count, created_at, metadata)
-        VALUES (
-            '{doc_id}',
-            '{escaped_file_name}',
-            '{escaped_path}',
-            '{escaped_raw_text}',
-            {len(raw_text)},
-            {page_count},
-            current_timestamp(),
-            '{{}}'
-        )
-        """
-        await execute_sql(config, warehouse_id, insert_doc_sql, request_id)
-        print(f"✅ [{request_id}] Document saved with ID: {doc_id}")
         
         # Step 4: Create chunks
         print(f"\n✂️ [{request_id}] Creating chunks with '{strategy}' strategy...")
@@ -1108,7 +1408,7 @@ async def preview_chunks(
     request: ChunkPreviewRequest,
     x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
 ):
-    """Get preview of chunks from the Delta table"""
+    """Get preview of chunks from the Delta table, optionally filtered by file names"""
     request_id = str(uuid.uuid4())[:8]
     print(f"\n{'=' * 80}")
     print(f"👁️ [{request_id}] Preview chunks request at {datetime.now().isoformat()}")
@@ -1119,6 +1419,7 @@ async def preview_chunks(
         
         table_config = request.tableConfig
         limit = request.limit
+        file_names = request.fileNames
         
         catalog = table_config.get("catalog", "")
         schema = table_config.get("schema", "")
@@ -1131,9 +1432,18 @@ async def preview_chunks(
         if not warehouse_id:
             raise HTTPException(status_code=500, detail="Warehouse ID not configured")
         
+        # Build SQL with optional file name filter
+        where_clause = ""
+        if file_names and len(file_names) > 0:
+            # Escape and quote file names
+            escaped_names = [f"'{name.replace(chr(39), chr(39)+chr(39))}'" for name in file_names]
+            where_clause = f"WHERE file_name IN ({', '.join(escaped_names)})"
+            print(f"📁 [{request_id}] Filtering by {len(file_names)} file(s)")
+        
         sql = f"""
         SELECT file_name, chunk_index, total_chunks, chunk_content
         FROM {chunks_table}
+        {where_clause}
         ORDER BY file_name, chunk_index
         LIMIT {limit}
         """
@@ -1147,7 +1457,7 @@ async def preview_chunks(
                     "documentName": row[0],
                     "chunkIndex": int(row[1]),
                     "totalChunks": int(row[2]),
-                    "content": row[3][:1000] if row[3] else "",  # Limit content for preview
+                    "content": row[3] if row[3] else "",  # Full content for processed files
                     "metadata": {}
                 })
         
