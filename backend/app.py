@@ -167,7 +167,8 @@ async def upload_to_volume(
         
         print(f"\n📡 [UPLOAD-{upload_id}] Response: {response.status_code}")
         
-        if response.status_code not in [200, 201]:
+        # 200 = OK, 201 = Created, 204 = No Content (all are success codes)
+        if response.status_code not in [200, 201, 204]:
             error_text = response.text
             print(f"\n❌ [UPLOAD-{upload_id}] Upload failed!")
             print(f"  - Status: {response.status_code}")
