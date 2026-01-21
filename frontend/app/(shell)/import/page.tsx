@@ -21,7 +21,7 @@ const FILES_PER_PAGE = 5
 // Extend Window interface for overwrite decision callback
 declare global {
   interface Window {
-    __overwriteResolve?: (decision: "overwrite" | "overwrite_all" | "skip") => void
+    __overwriteResolve?: (decision: "overwrite" | "overwrite_all" | "skip" | "cancel") => void
   }
 }
 
@@ -257,7 +257,7 @@ export default function ImportPage() {
         setShowOverwriteDialog(true)
 
         // Wait for user decision
-        const decision = await new Promise<"overwrite" | "overwrite_all" | "skip">((resolve) => {
+        const decision = await new Promise<"overwrite" | "overwrite_all" | "skip" | "cancel">((resolve) => {
           const checkDecision = setInterval(() => {
             if (!showOverwriteDialog) {
               clearInterval(checkDecision)
@@ -270,6 +270,25 @@ export default function ImportPage() {
 
         setShowOverwriteDialog(false)
         setCurrentConflictFile(null)
+
+        if (decision === "cancel") {
+          // Cancel entire import process
+          console.log("🚫 Import cancelled by user")
+          setIsUploading(false)
+          
+          // Reset all pending files to their original state
+          setFiles(prev =>
+            prev.map(f =>
+              f.status === "uploading" ? { ...f, status: "pending", progress: 0 } : f
+            )
+          )
+          
+          toast.error("Importação cancelada", {
+            description: "Nenhum arquivo foi importado",
+            duration: 5000
+          })
+          return // Exit the function early
+        }
 
         if (decision === "overwrite" || decision === "overwrite_all") {
           if (decision === "overwrite_all") {
@@ -334,7 +353,7 @@ export default function ImportPage() {
     console.log(`📊 Upload complete: ${successCount} success, ${errorCount} errors, ${skippedCount} skipped`)
   }
 
-  function handleOverwriteDecision(decision: "overwrite" | "overwrite_all" | "skip") {
+  function handleOverwriteDecision(decision: "overwrite" | "overwrite_all" | "skip" | "cancel") {
     if (window.__overwriteResolve) {
       window.__overwriteResolve(decision)
       delete window.__overwriteResolve
@@ -379,6 +398,14 @@ export default function ImportPage() {
               >
                 Pular este arquivo
               </button>
+              <div className="mt-4 pt-4 border-t border-gray-200">
+                <button
+                  onClick={() => handleOverwriteDecision("cancel")}
+                  className="w-full px-4 py-2.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                >
+                  Cancelar importação
+                </button>
+              </div>
             </div>
           </div>
         </div>
