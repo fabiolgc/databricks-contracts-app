@@ -4,7 +4,9 @@ alwaysApply: true
 # Databricks Contracts App - Documentation
 
 ## Project Overview
-A Next.js application deployed on Databricks Apps for managing PDF contracts, with integration to Unity Catalog, SQL Warehouse, and Databricks services. 
+A React/Next.js application with FastAPI backend deployed on Databricks Apps for managing PDF contracts, with integration to Unity Catalog, SQL Warehouse, and Databricks services. 
+
+**Architecture**: Static Next.js frontend served by FastAPI backend (following official Databricks Apps best practices for React applications). 
 
 ## Reference
 - Reference the following files to stay on track with the project alignments:
@@ -159,17 +161,75 @@ Databricks uses **DM Sans** and **DM Mono** as official typefaces:
 ## Architecture
 
 ### Stack
-- **Frontend**: Next.js 16 (App Router), React, TypeScript
+- **Frontend**: Next.js 16 (Static Export), React, TypeScript
+- **Backend**: FastAPI (Python) serving static files + API endpoints
 - **Styling**: Tailwind CSS
-- **Deployment**: Databricks Apps
+- **Deployment**: Databricks Apps (Python runtime)
 - **Database**: Databricks SQL Warehouse
 - **Storage**: Unity Catalog Volumes
 
+### Project Structure
+
+```
+databricks-contracts-app/
+├── frontend/                    # Next.js application
+│   ├── app/                    # Next.js App Router
+│   │   ├── (shell)/           # Shell layout
+│   │   │   ├── import/        # Import page
+│   │   │   └── layout.tsx     # Shell layout with TopNav
+│   │   ├── assets/            # Static assets (images)
+│   │   ├── globals.css        # Global styles
+│   │   └── layout.tsx         # Root layout
+│   ├── components/            # React components
+│   │   └── nav/              # Navigation components
+│   ├── lib/                   # Utilities (no longer used in static export)
+│   ├── public/                # Public assets
+│   ├── package.json           # Frontend dependencies
+│   ├── next.config.ts         # Next.js config (output: 'export')
+│   └── tsconfig.json          # TypeScript config
+│
+├── backend/                     # FastAPI backend
+│   ├── app.py                 # FastAPI application
+│   │   ├── Static file server (mounts /static)
+│   │   ├── /api/upload        # File upload endpoint
+│   │   └── /health            # Health check
+│   ├── requirements.txt       # Python dependencies
+│   └── app.yaml              # Databricks Apps config
+│
+└── deploy.sh                   # Deployment automation script
+```
+
+### How It Works
+
+**Development Flow:**
+1. **Frontend Development**: Develop React/Next.js app in `/frontend` with hot reload
+2. **Backend Development**: Test FastAPI endpoints independently
+3. **Build**: Next.js builds static files to `/frontend/out`
+4. **Deploy**: Script uploads static files to `/static` and backend to root
+
+**Runtime Flow:**
+1. **Databricks Apps** starts FastAPI (uvicorn) on port 8000
+2. **FastAPI** serves:
+   - Static Next.js files from `/static` directory (HTML, JS, CSS)
+   - API endpoints at `/api/*` (e.g., `/api/upload`)
+   - Health check at `/health`
+3. **User requests**:
+   - HTML/assets: Served from static files
+   - API calls: Handled by FastAPI (Python)
+   - File uploads: FastAPI → Databricks Unity Catalog Volume
+
+**Why FastAPI + Static Next.js?**
+- ✅ **Officially supported** by Databricks Apps (Python runtime)
+- ✅ **Stable and documented** approach
+- ✅ **Separation of concerns**: Frontend (React/Next.js) + Backend (Python)
+- ✅ **Best of both worlds**: React's UI capabilities + Python's data integration
+- ✅ **OBO Support**: FastAPI can access user tokens via `x-forwarded-access-token` header
+
 ### Key Components
-1. **Contract Import**: Upload PDF files to Unity Catalog Volume
-2. **Chunking**: Process documents using Databricks Jobs
-3. **Vector Search**: Index and search through contract content
-4. **Agent Interface**: AI-powered contract analysis
+1. **Contract Import**: Upload PDF files to Unity Catalog Volume via FastAPI
+2. **Chunking**: Process documents using Databricks Jobs (planned)
+3. **Vector Search**: Index and search through contract content (planned)
+4. **Agent Interface**: AI-powered contract analysis (planned)
 
 ## Databricks Configuration
 
@@ -189,75 +249,387 @@ Databricks uses **DM Sans** and **DM Mono** as official typefaces:
 ## Development
 
 ### Local Development
+
+**Frontend (Next.js):**
 ```bash
+cd frontend
+npm install
 npm run dev
+# Runs on http://localhost:3000
 ```
+
+**Backend (FastAPI):**
+```bash
+cd backend
+pip install -r requirements.txt
+uvicorn app:app --reload --host 0.0.0.0 --port 8000
+# Runs on http://localhost:8000
+```
+
+**Note**: For local development, you need to:
+1. Create `.env.local` in `/frontend` with Databricks credentials
+2. Set environment variables for FastAPI (or use `.env` file)
+3. Test API endpoints independently before integration
 
 ### Build
+
+**Frontend (Static Export):**
 ```bash
+cd frontend
 npm run build
+# Generates static files in /frontend/out
 ```
 
+The build must succeed before deployment. Verify that `/frontend/out` directory is created.
+
 ### Deploy to Databricks
+
+**Automated Deployment (Recommended):**
 ```bash
-databricks apps deploy databricks-contracts-app --source-code-path "/Workspace/Users/<user>@databricks.com/databricks-contracts-app"
+# From project root
+./deploy.sh
 ```
+
+The `deploy.sh` script:
+1. ✅ Builds Next.js frontend (static export)
+2. ✅ Prepares FastAPI backend
+3. ✅ Uploads frontend to `/static` in workspace
+4. ✅ Uploads backend to workspace root
+5. ✅ Deploys app via Databricks CLI
+6. ✅ Shows app URL and logs
+
+**Manual Deployment (if needed):**
+```bash
+# 1. Build frontend
+cd frontend && npm run build
+
+# 2. Upload static files
+databricks workspace import-dir \
+  frontend/out \
+  "/Workspace/Users/<user>@databricks.com/databricks-contracts-app/static" \
+  --overwrite
+
+# 3. Upload backend
+cd backend
+databricks workspace import-dir \
+  . \
+  "/Workspace/Users/<user>@databricks.com/databricks-contracts-app" \
+  --overwrite
+
+# 4. Deploy app
+databricks apps deploy databricks-contracts-app \
+  --source-code-path "/Workspace/Users/<user>@databricks.com/databricks-contracts-app"
+```
+
+### Deployment Checklist
+
+Before deploying, ensure:
+- ✅ Frontend builds successfully (`npm run build`)
+- ✅ Backend dependencies are correct (`requirements.txt`)
+- ✅ `app.yaml` has correct command: `uvicorn app:app --host 0.0.0.0 --port 8000`
+- ✅ Environment variables are set in `app.yaml`
+- ✅ Databricks CLI is authenticated
+- ✅ Unity Catalog Volume exists and has correct permissions
 
 ## Best Practices
 
 ### Authentication
-- Use service principal authentication (no OBO)
-- Store credentials in environment variables
-- Never hardcode tokens or secrets
+
+**OBO (On-Behalf-Of) - Recommended:**
+- FastAPI automatically receives user token via `x-forwarded-access-token` header
+- API calls respect user's Unity Catalog permissions
+- Users must have appropriate grants (READ_VOLUME, WRITE_VOLUME)
+
+**Service Principal (Fallback):**
+- Databricks Apps injects `DATABRICKS_CLIENT_SECRET` automatically
+- Used when user token is not available
+- Requires Service Principal to have necessary permissions
+
+**Implementation:**
+```python
+# In FastAPI endpoint
+user_token = request.headers.get("x-forwarded-access-token")
+# Priority: user_token > DATABRICKS_CLIENT_SECRET > DATABRICKS_TOKEN
+```
+
+**Never:**
+- ❌ Hardcode tokens or secrets in code
+- ❌ Commit credentials to git
+- ❌ Share tokens between environments
 
 ### Error Handling
-- Always handle Databricks API errors gracefully
-- Provide user-friendly error messages
-- Log errors for debugging
+
+**FastAPI Error Handling:**
+```python
+try:
+    result = await upload_to_volume(...)
+    if not result["success"]:
+        if result["error"] == "FILE_EXISTS":
+            return JSONResponse(status_code=409, content={...})
+        raise HTTPException(status_code=500, detail=result["error"])
+except Exception as e:
+    raise HTTPException(status_code=500, detail=str(e))
+```
+
+**Frontend Error Handling:**
+```typescript
+try {
+  const response = await fetch("/api/upload", {...});
+  if (response.status === 409) {
+    // Handle file exists
+  } else if (!response.ok) {
+    // Handle other errors
+  }
+} catch (error) {
+  toast.error("Upload failed");
+}
+```
+
+**Best Practices:**
+- ✅ Return appropriate HTTP status codes (409, 404, 403, 401, 500)
+- ✅ Provide detailed error messages in logs
+- ✅ Show user-friendly messages in UI
+- ✅ Log full stack traces for debugging
 
 ### Performance
-- Minimize client-side JavaScript
-- Use Server Components when possible
-- Optimize images and assets
+
+**Frontend (Static Next.js):**
+- ✅ All pages pre-rendered at build time
+- ✅ Optimized bundle sizes (code splitting)
+- ✅ Images optimized (but `unoptimized: true` for static export)
+- ✅ No runtime server required
+
+**Backend (FastAPI):**
+- ✅ Async/await for I/O operations
+- ✅ Streaming large file uploads
+- ✅ Connection pooling (httpx.AsyncClient)
+- ✅ Timeout configurations (httpx timeout=300s)
+
+**Databricks Integration:**
+- ✅ Use Workspace Files API (not REST API v1.0)
+- ✅ Upload files as `application/octet-stream`
+- ✅ Check file existence with HEAD requests
+- ✅ Batch operations when possible
 
 ## Common Issues
 
-### App Not Available
-- Check service principal permissions on SQL Warehouse
-- Verify Unity Catalog Volume access
-- Review app deployment logs
+### App Not Loading / 502 Bad Gateway
 
-### Build Failures
-- Clear `.next` cache: `rm -rf .next`
-- Reinstall dependencies: `npm ci`
-- Check TypeScript errors: `npm run build`
+**Symptoms:** App URL returns 502 or doesn't load
 
-## API Routes
+**Common Causes:**
+1. **FastAPI not starting**: Check logs at `/apps/<app-name>/logz`
+2. **Port mismatch**: Ensure `app.yaml` uses `--port 8000`
+3. **Missing static files**: Verify `/static` directory exists in workspace
+4. **Python dependencies**: Check `requirements.txt` is complete
 
-### `/api/upload`
+**Solutions:**
+```bash
+# Check app status
+databricks apps get databricks-contracts-app
+
+# View logs
+databricks apps get databricks-contracts-app | jq '.compute.log_urls'
+
+# Redeploy
+./deploy.sh
+```
+
+### Frontend Build Failures
+
+**Symptoms:** `npm run build` fails
+
+**Common Causes:**
+1. TypeScript errors
+2. Missing dependencies
+3. Invalid Next.js configuration
+4. Import errors (API routes in static export)
+
+**Solutions:**
+```bash
+# Clear cache and rebuild
+cd frontend
+rm -rf .next out node_modules
+npm ci
+npm run build
+
+# Check TypeScript
+npx tsc --noEmit
+```
+
+### Upload Failures (403 Forbidden)
+
+**Symptoms:** File upload returns 403 error
+
+**Common Causes:**
+1. Missing Volume permissions
+2. Invalid authentication token
+3. Volume doesn't exist
+
+**Solutions:**
+```sql
+-- Grant permissions to Service Principal
+GRANT USE CATALOG ON CATALOG fabio_goncalves TO `<service-principal-id>`;
+GRANT USE SCHEMA ON SCHEMA fabio_goncalves.customer_cielo TO `<service-principal-id>`;
+GRANT WRITE VOLUME ON VOLUME fabio_goncalves.customer_cielo.pdf TO `<service-principal-id>`;
+GRANT READ VOLUME ON VOLUME fabio_goncalves.customer_cielo.pdf TO `<service-principal-id>`;
+
+-- Verify Volume exists
+SHOW VOLUMES IN fabio_goncalves.customer_cielo;
+```
+
+### Deployment Script Fails
+
+**Symptoms:** `./deploy.sh` fails
+
+**Common Causes:**
+1. Databricks CLI not authenticated
+2. Workspace path doesn't exist
+3. Permission issues
+
+**Solutions:**
+```bash
+# Verify CLI authentication
+databricks auth profiles
+
+# Create workspace directory manually
+databricks workspace mkdirs "/Workspace/Users/<user>@databricks.com/databricks-contracts-app"
+
+# Check app exists
+databricks apps list
+```
+
+### Static Files Not Found (404)
+
+**Symptoms:** CSS/JS files return 404
+
+**Common Causes:**
+1. Static files not uploaded to `/static`
+2. FastAPI not mounting static directory
+3. Build output in wrong directory
+
+**Solutions:**
+```bash
+# Verify static files exist in workspace
+databricks workspace ls "/Workspace/Users/<user>@databricks.com/databricks-contracts-app/static"
+
+# Check FastAPI logs for mount errors
+# Should see: "✅ Static files mounted from 'static' directory"
+```
+
+## API Routes (FastAPI Backend)
+
+### `POST /api/upload`
 Upload PDF files to Unity Catalog Volume
 
-**Parameters:**
-- `file` (FormData): PDF file to upload
-- `overwrite` (FormData, optional): "true" to overwrite existing files
+**Implementation:** FastAPI endpoint in `backend/app.py`
+
+**Authentication:**
+- Supports OBO (On-Behalf-Of) via `x-forwarded-access-token` header
+- Falls back to Service Principal (`DATABRICKS_CLIENT_SECRET`)
+
+**Request:**
+```http
+POST /api/upload
+Content-Type: multipart/form-data
+
+file: <PDF file>
+overwrite: "true" | "false" (optional, default: "false")
+```
+
+**Headers (automatically set by Databricks Apps):**
+```http
+x-forwarded-access-token: <user-token>  # For OBO authentication
+```
 
 **Response:**
-- Success (200): `{ success: true, fileName: string, path: string, size: number }`
-- File exists (409): `{ fileExists: true, fileName: string, path: string }`
-- Error (400/500): `{ error: string, fileName?: string }`
+
+Success (200):
+```json
+{
+  "success": true,
+  "fileName": "contract.pdf",
+  "path": "/Volumes/catalog/schema/volume/contract.pdf",
+  "size": 1024000
+}
+```
+
+File exists (409):
+```json
+{
+  "fileExists": true,
+  "fileName": "contract.pdf",
+  "path": "/Volumes/catalog/schema/volume/contract.pdf"
+}
+```
+
+Error (400/500):
+```json
+{
+  "error": "Only PDF files are allowed",
+  "fileName": "document.docx"
+}
+```
+
+**Validation:**
+- ✅ File type: Only `application/pdf` accepted
+- ✅ File size: Maximum 100MB
+- ✅ File existence: Checked before upload (unless overwrite=true)
 
 **Features:**
-- Validates file type (PDF only)
-- Validates file size (max 100MB)
-- Checks for existing files before upload
-- Supports overwrite mode
-- Logs all operations to console
+- Comprehensive logging (request ID, timing, environment check)
+- OBO support (respects user permissions)
+- Service Principal fallback
+- Detailed error messages with HTTP status codes
+- Async file upload (non-blocking)
 
-### `/api/chunk`
-Process documents and create chunks
+**Usage Example (Frontend):**
+```typescript
+const formData = new FormData();
+formData.append("file", pdfFile);
+formData.append("overwrite", "false");
 
-### `/api/jobs/[runId]`
-Check status of Databricks job runs
+const response = await fetch("/api/upload", {
+  method: "POST",
+  body: formData,
+});
+
+if (response.status === 409) {
+  // File exists - show overwrite dialog
+  const { fileExists, fileName, path } = await response.json();
+} else if (response.ok) {
+  // Success
+  const { success, fileName, path, size } = await response.json();
+} else {
+  // Error
+  const { error } = await response.json();
+}
+```
+
+### `GET /health`
+Health check endpoint
+
+**Response:**
+```json
+{
+  "status": "healthy",
+  "timestamp": "2026-01-21T00:00:00Z",
+  "environment": {
+    "host_configured": true,
+    "token_configured": true,
+    "catalog": "fabio_goncalves",
+    "schema": "customer_cielo",
+    "volume": "pdf"
+  }
+}
+```
+
+### Future Endpoints (Planned)
+
+- `POST /api/chunk` - Process documents and create chunks
+- `GET /api/jobs/{runId}` - Check status of Databricks job runs
+- `POST /api/search` - Vector search through contract content
+- `POST /api/agent` - AI-powered contract analysis
 
 ## Features
 
@@ -305,6 +677,156 @@ When there are many files to import, the list is paginated for better usability:
 - Compact design with icon buttons
 - Clear visual feedback for disabled state
 - Shows current page and total pages
+
+## Technology Stack & Decisions
+
+### Why FastAPI + Static Next.js?
+
+**Official Databricks Recommendation:**
+> "Databricks Apps does not currently natively support React development on the platform. That said, Databricks Apps does support deploying static React apps." 
+> — [Databricks Apps for React (August 2024)](https://databricks.com)
+
+**Architectural Decision:**
+We use **FastAPI (Python)** to serve **static Next.js files** because:
+
+1. ✅ **Officially Supported**: Python runtime is fully supported by Databricks Apps
+2. ✅ **Stable**: No "hacky" workarounds required
+3. ✅ **Documentation**: Well-documented approach with examples
+4. ✅ **Python Integration**: Easy access to Databricks APIs, SQL, ML libraries
+5. ✅ **OBO Support**: Automatic user token forwarding via headers
+6. ✅ **Best of Both**: React UI + Python backend capabilities
+
+**Alternative (Not Used):**
+- ❌ Next.js SSR with Node.js runtime: "hacky", not officially supported
+- ❌ Pure Python UI (Streamlit/Dash): Limited UI customization
+- ❌ Pure static SPA: No secure backend for Databricks APIs
+
+### Frontend: Next.js Static Export
+
+**Configuration (`next.config.ts`):**
+```typescript
+{
+  output: 'export',           // Static HTML/JS/CSS generation
+  images: { unoptimized: true }, // No image optimization server
+  trailingSlash: true,        // Proper static routing
+}
+```
+
+**What This Means:**
+- All pages pre-rendered at build time to `/out` directory
+- No Node.js server required at runtime
+- No API routes in Next.js (moved to FastAPI)
+- No server-side rendering (SSR) or incremental static regeneration (ISR)
+- Pure static files served by FastAPI
+
+**Build Output:**
+```
+frontend/out/
+├── index.html              # Root page
+├── import/
+│   └── index.html         # Import page
+├── _next/
+│   ├── static/
+│   │   ├── chunks/        # JavaScript bundles
+│   │   └── media/         # Fonts, images
+└── *.svg, *.ico           # Public assets
+```
+
+### Backend: FastAPI
+
+**Why FastAPI?**
+- ⚡ **Async/Await**: Native async support for I/O operations
+- 🔒 **Type Safety**: Pydantic models for validation
+- 📚 **Auto Docs**: OpenAPI/Swagger documentation
+- 🚀 **Performance**: One of the fastest Python frameworks
+- 🔧 **Easy Testing**: Simple to test endpoints independently
+
+**Key Components:**
+
+1. **Static File Server**:
+```python
+app.mount("/", StaticFiles(directory="static", html=True), name="static")
+```
+Serves Next.js files from `/static` directory
+
+2. **API Endpoints**:
+```python
+@app.post("/api/upload")
+async def upload_file(...):
+    # Handle file uploads to Unity Catalog
+```
+
+3. **OBO Authentication**:
+```python
+user_token = request.headers.get("x-forwarded-access-token")
+# Use user's token to respect their permissions
+```
+
+### Deployment: Automated Script
+
+**`deploy.sh` Flow:**
+```bash
+1. Build Frontend (Next.js)    → frontend/out/
+2. Prepare Backend (FastAPI)   → backend/build/
+3. Upload Frontend             → /workspace/.../static/
+4. Upload Backend              → /workspace/.../
+5. Deploy App                  → databricks apps deploy
+```
+
+**Why Automated?**
+- ✅ Consistent deployments
+- ✅ Parallel builds (frontend + backend)
+- ✅ Error detection early
+- ✅ Cleanup of temporary files
+- ✅ Clear output with status indicators
+
+### Runtime: Databricks Apps
+
+**What Databricks Provides:**
+- 🐍 **Python Runtime**: Uvicorn + FastAPI
+- 🔐 **Authentication**: Automatic token injection
+- 🌐 **Networking**: Public URL with SSL
+- 📊 **Logging**: Centralized logs at `/logz`
+- 🔄 **Auto-restart**: Health checks and recovery
+- 🏷️ **Resource Tagging**: Automatic tagging for billing
+
+**Environment Variables (Auto-injected):**
+- `DATABRICKS_CLIENT_SECRET`: Service Principal token
+- `PORT`: Always 8000 (don't override)
+- `x-forwarded-access-token`: User token (in request headers)
+
+**Commands in `app.yaml`:**
+```yaml
+command: ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+### Dependencies
+
+**Frontend (`frontend/package.json`):**
+```json
+{
+  "dependencies": {
+    "next": "16.1.4",          // React framework
+    "react": "19.2.3",         // UI library
+    "lucide-react": "^0.562",  // Icons
+    "sonner": "^2.0.7"         // Toast notifications
+  }
+}
+```
+
+**Backend (`backend/requirements.txt`):**
+```txt
+fastapi                  # Web framework
+uvicorn[standard]        # ASGI server
+httpx                    # Async HTTP client
+python-multipart         # File upload support
+```
+
+**Why These?**
+- Minimal dependencies for faster builds
+- Well-maintained libraries with active communities
+- Type-safe (TypeScript + Pydantic)
+- Production-ready
 
 ## Component Library
 
