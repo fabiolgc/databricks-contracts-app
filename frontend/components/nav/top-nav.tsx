@@ -31,17 +31,20 @@ export function TopNav() {
                 Contracts App
               </span>
             </div>
-            <div className="hidden sm:ml-8 sm:flex sm:space-x-8">
+            <div className="hidden sm:ml-8 sm:flex sm:space-x-2">
               {navItems.map((item) => {
-                const isActive = pathname === item.href
+                // Check if current path matches or starts with the nav item href
+                const isActive = pathname === item.href || 
+                                 pathname === `${item.href}/` || 
+                                 pathname?.startsWith(`${item.href}/`)
                 return (
                   <Link
                     key={item.href}
                     href={item.href}
-                    className={`inline-flex items-center px-1 pt-1 text-sm font-medium border-b-2 transition-colors ${
+                    className={`inline-flex items-center px-4 py-2 text-sm font-medium rounded-lg transition-all duration-200 ${
                       isActive
-                        ? "border-[#FF3621] text-[#FF3621]"
-                        : "border-transparent text-gray-700 hover:border-gray-300 hover:text-gray-900"
+                        ? "bg-[#FF3621] text-white shadow-sm"
+                        : "text-gray-700 hover:bg-gray-100 hover:text-[#FF3621]"
                     }`}
                   >
                     {item.label}

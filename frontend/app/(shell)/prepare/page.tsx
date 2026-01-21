@@ -212,21 +212,20 @@ export default function PreparePage() {
   const [isLoadingExistingPreview, setIsLoadingExistingPreview] = useState(false)
   const CHUNKS_PER_PAGE = 5
 
-  // Load environment config on mount and derive chunks table name from raw table
+  // Load environment config on mount - use base table name (without _raw or _chunks suffix)
   useEffect(() => {
     const loadConfig = async () => {
       try {
         const response = await fetch("/api/config")
         if (response.ok) {
           const config = await response.json()
-          // Derive chunks table name from raw table (replace _raw with _chunks)
-          const rawTableName = "contracts_raw"
-          const chunksTableName = rawTableName.replace("_raw", "_chunks")
+          // Use base table name - backend will add _raw or _chunks suffix as needed
+          const baseTableName = "contracts"
           
           const newConfig = {
             catalog: config.catalog || "",
             schema: config.schema || "",
-            tableName: chunksTableName
+            tableName: baseTableName
           }
           setTableConfig(newConfig)
           
