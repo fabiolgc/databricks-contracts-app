@@ -1,19 +1,50 @@
 """
 FastAPI backend for Databricks Contracts App
-Serves static Next.js files and provides API endpoints for file upload
+Serves static Next.js files and provides API endpoints for:
+- Module 1: File upload to Unity Catalog Volumes
+- Module 2: Data preparation, chunking, and Delta table management
 """
 
 import os
+import re
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List, Dict, Any
 from fastapi import FastAPI, File, UploadFile, Form, Header, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 import httpx
 
 app = FastAPI(title="Databricks Contracts App")
+
+# ============================================================================
+# Pydantic Models for Module 2
+# ============================================================================
+
+class TableConfig(BaseModel):
+    catalog: str
+    schema_: str = None  # 'schema' is reserved in Pydantic
+    schema_name: str = None  # alias
+    tableName: str
+    
+    def get_schema(self) -> str:
+        return self.schema_ or self.schema_name or ""
+    
+    class Config:
+        populate_by_name = True
+
+class ProcessRequest(BaseModel):
+    tableConfig: Dict[str, str]
+    files: List[str]
+    strategy: str
+    params: Dict[str, Any]
+    mode: str  # append, overwrite, clean
+
+class ChunkPreviewRequest(BaseModel):
+    tableConfig: Dict[str, str]
+    limit: int = 50
 
 # CORS middleware (adjust origins as needed for your environment)
 app.add_middleware(
@@ -325,6 +356,579 @@ async def health_check():
             "volume": os.getenv("DATABRICKS_VOLUME"),
         }
     }
+
+
+# ============================================================================
+# Module 2: Data Preparation API Routes
+# ============================================================================
+
+@app.get("/api/config")
+async def get_config():
+    """Get default configuration from environment"""
+    return {
+        "catalog": os.getenv("DATABRICKS_CATALOG", ""),
+        "schema": os.getenv("DATABRICKS_SCHEMA", ""),
+        "volume": os.getenv("DATABRICKS_VOLUME", ""),
+        "host": os.getenv("DATABRICKS_SERVER_HOSTNAME", ""),
+    }
+
+
+@app.get("/api/documents")
+async def list_documents(
+    x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
+):
+    """List PDF files from the Unity Catalog Volume"""
+    request_id = str(uuid.uuid4())[:8]
+    print(f"\n{'=' * 80}")
+    print(f"📄 [{request_id}] List documents request at {datetime.now().isoformat()}")
+    print(f"{'=' * 80}")
+    
+    try:
+        config = get_databricks_config(x_forwarded_access_token)
+        volume_path = get_volume_base_path(config)
+        
+        print(f"📁 [{request_id}] Listing files in: {volume_path}")
+        
+        # Use Databricks Workspace Files API to list directory
+        url = f"https://{config['host']}/api/2.0/fs/directories{volume_path}"
+        
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.get(
+                url,
+                headers={"Authorization": f"Bearer {config['token']}"}
+            )
+        
+        if response.status_code != 200:
+            print(f"❌ [{request_id}] Error listing files: {response.status_code}")
+            print(f"  Response: {response.text}")
+            raise HTTPException(status_code=response.status_code, detail="Failed to list files")
+        
+        data = response.json()
+        files = []
+        
+        for item in data.get("contents", []):
+            if item.get("is_directory", False):
+                continue
+            
+            name = item.get("name", "")
+            if name.lower().endswith(".pdf"):
+                files.append({
+                    "name": name,
+                    "path": item.get("path", ""),
+                    "size": item.get("file_size", 0),
+                    "lastModified": item.get("modification_time", ""),
+                    "isImported": False  # Will be updated when we check the Delta table
+                })
+        
+        print(f"✅ [{request_id}] Found {len(files)} PDF files")
+        print(f"{'=' * 80}\n")
+        
+        return {"files": files}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"💥 [{request_id}] Exception: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/table/check")
+async def check_table(
+    request: Dict[str, str],
+    x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
+):
+    """Check if Delta table exists and get record count"""
+    request_id = str(uuid.uuid4())[:8]
+    print(f"\n{'=' * 80}")
+    print(f"🔍 [{request_id}] Check table request at {datetime.now().isoformat()}")
+    print(f"{'=' * 80}")
+    
+    catalog = request.get("catalog", "")
+    schema = request.get("schema", "")
+    table_name = request.get("tableName", "")
+    
+    print(f"📋 [{request_id}] Checking table: {catalog}.{schema}.{table_name}")
+    
+    try:
+        config = get_databricks_config(x_forwarded_access_token)
+        
+        # Use Databricks SQL Statement API to check table existence
+        url = f"https://{config['host']}/api/2.0/sql/statements"
+        warehouse_id = os.getenv("DATABRICKS_WAREHOUSE_ID")
+        
+        if not warehouse_id:
+            print(f"⚠️ [{request_id}] No warehouse ID configured")
+            return {"exists": False, "recordCount": 0, "message": "Warehouse not configured"}
+        
+        sql = f"""
+        SELECT COUNT(*) as count FROM {catalog}.{schema}.{table_name}
+        """
+        
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.post(
+                url,
+                headers={
+                    "Authorization": f"Bearer {config['token']}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "warehouse_id": warehouse_id,
+                    "statement": sql,
+                    "wait_timeout": "30s"
+                }
+            )
+        
+        if response.status_code == 200:
+            result = response.json()
+            status = result.get("status", {}).get("state", "")
+            
+            if status == "SUCCEEDED":
+                data = result.get("result", {}).get("data_array", [[0]])
+                count = int(data[0][0]) if data else 0
+                print(f"✅ [{request_id}] Table exists with {count} records")
+                return {"exists": True, "recordCount": count}
+            elif "TABLE_OR_VIEW_NOT_FOUND" in str(result) or "SCHEMA_NOT_FOUND" in str(result):
+                print(f"ℹ️ [{request_id}] Table does not exist")
+                return {"exists": False, "recordCount": 0}
+            else:
+                error_msg = result.get("status", {}).get("error", {}).get("message", "Unknown error")
+                if "TABLE_OR_VIEW_NOT_FOUND" in error_msg or "SCHEMA_NOT_FOUND" in error_msg:
+                    print(f"ℹ️ [{request_id}] Table does not exist")
+                    return {"exists": False, "recordCount": 0}
+                print(f"⚠️ [{request_id}] Query status: {status}, error: {error_msg}")
+                return {"exists": False, "recordCount": 0, "message": error_msg}
+        else:
+            error_text = response.text
+            if "TABLE_OR_VIEW_NOT_FOUND" in error_text or "SCHEMA_NOT_FOUND" in error_text:
+                print(f"ℹ️ [{request_id}] Table does not exist")
+                return {"exists": False, "recordCount": 0}
+            print(f"❌ [{request_id}] API error: {response.status_code}")
+            return {"exists": False, "recordCount": 0, "message": f"API error: {response.status_code}"}
+            
+    except Exception as e:
+        print(f"💥 [{request_id}] Exception: {str(e)}")
+        if "TABLE_OR_VIEW_NOT_FOUND" in str(e) or "SCHEMA_NOT_FOUND" in str(e):
+            return {"exists": False, "recordCount": 0}
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/process")
+async def process_documents(
+    request: ProcessRequest,
+    x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
+):
+    """Process PDF files, extract text, create chunks and save to Delta table"""
+    request_id = str(uuid.uuid4())[:8]
+    print(f"\n{'=' * 80}")
+    print(f"⚙️ [{request_id}] Process documents request at {datetime.now().isoformat()}")
+    print(f"{'=' * 80}")
+    
+    try:
+        config = get_databricks_config(x_forwarded_access_token)
+        
+        table_config = request.tableConfig
+        files = request.files
+        strategy = request.strategy
+        params = request.params
+        mode = request.mode
+        
+        catalog = table_config.get("catalog", "")
+        schema = table_config.get("schema", "")
+        table_name = table_config.get("tableName", "")
+        full_table_name = f"{catalog}.{schema}.{table_name}"
+        
+        print(f"📋 [{request_id}] Processing configuration:")
+        print(f"  - Table: {full_table_name}")
+        print(f"  - Files: {len(files)}")
+        print(f"  - Strategy: {strategy}")
+        print(f"  - Mode: {mode}")
+        print(f"  - Params: {params}")
+        
+        warehouse_id = os.getenv("DATABRICKS_WAREHOUSE_ID")
+        if not warehouse_id:
+            raise HTTPException(status_code=500, detail="Warehouse ID not configured")
+        
+        # Step 1: If mode is 'clean', drop existing data
+        if mode == "clean":
+            print(f"\n🗑️ [{request_id}] Cleaning existing data...")
+            drop_sql = f"DROP TABLE IF EXISTS {full_table_name}"
+            await execute_sql(config, warehouse_id, drop_sql, request_id)
+        
+        # Step 2: Create table if not exists
+        create_table_sql = f"""
+        CREATE TABLE IF NOT EXISTS {full_table_name} (
+            id STRING,
+            file_name STRING,
+            file_path STRING,
+            chunk_index INT,
+            total_chunks INT,
+            content STRING,
+            chunk_content STRING,
+            strategy STRING,
+            chunk_size INT,
+            chunk_overlap INT,
+            created_at TIMESTAMP,
+            metadata STRING
+        )
+        USING DELTA
+        """
+        print(f"\n📊 [{request_id}] Ensuring table exists...")
+        await execute_sql(config, warehouse_id, create_table_sql, request_id)
+        
+        # Step 3: Get list of already imported files if mode is 'append'
+        existing_files = set()
+        if mode == "append":
+            check_sql = f"SELECT DISTINCT file_name FROM {full_table_name}"
+            result = await execute_sql(config, warehouse_id, check_sql, request_id)
+            if result and result.get("data_array"):
+                existing_files = set(row[0] for row in result.get("data_array", []))
+            print(f"📁 [{request_id}] Already imported: {len(existing_files)} files")
+        
+        # Step 4: Process each file
+        total_chunks = 0
+        files_processed = 0
+        volume_path = get_volume_base_path(config)
+        
+        chunk_size = params.get("chunkSize", 1000)
+        chunk_overlap = params.get("chunkOverlap", 200)
+        
+        for file_name in files:
+            # Skip if already imported (in append mode)
+            if mode == "append" and file_name in existing_files:
+                print(f"⏭️ [{request_id}] Skipping already imported: {file_name}")
+                continue
+            
+            # If overwrite mode, delete existing chunks for this file
+            if mode == "overwrite":
+                delete_sql = f"DELETE FROM {full_table_name} WHERE file_name = '{file_name}'"
+                await execute_sql(config, warehouse_id, delete_sql, request_id)
+            
+            print(f"\n📄 [{request_id}] Processing: {file_name}")
+            
+            # Read file content from volume
+            file_path = f"{volume_path}/{file_name}"
+            file_content = await read_file_from_volume(config, file_path, request_id)
+            
+            if not file_content:
+                print(f"⚠️ [{request_id}] Could not read file: {file_name}")
+                continue
+            
+            # Extract text from PDF (simplified - in production use PyPDF2 or similar)
+            # For now, we'll store the raw content and note that real PDF extraction 
+            # should be done with proper libraries
+            text_content = extract_text_placeholder(file_content, file_name)
+            
+            # Create chunks based on strategy
+            chunks = create_chunks(text_content, strategy, chunk_size, chunk_overlap)
+            
+            print(f"  ✂️ Created {len(chunks)} chunks using '{strategy}' strategy")
+            
+            # Insert chunks into Delta table
+            for idx, chunk in enumerate(chunks):
+                chunk_id = str(uuid.uuid4())
+                insert_sql = f"""
+                INSERT INTO {full_table_name} 
+                (id, file_name, file_path, chunk_index, total_chunks, content, chunk_content, 
+                 strategy, chunk_size, chunk_overlap, created_at, metadata)
+                VALUES (
+                    '{chunk_id}',
+                    '{file_name.replace("'", "''")}',
+                    '{file_path.replace("'", "''")}',
+                    {idx},
+                    {len(chunks)},
+                    '{text_content[:500].replace("'", "''") if idx == 0 else ""}',
+                    '{chunk.replace("'", "''")}',
+                    '{strategy}',
+                    {chunk_size},
+                    {chunk_overlap},
+                    current_timestamp(),
+                    '{{}}'
+                )
+                """
+                await execute_sql(config, warehouse_id, insert_sql, request_id)
+            
+            total_chunks += len(chunks)
+            files_processed += 1
+        
+        print(f"\n✅ [{request_id}] Processing complete!")
+        print(f"  - Files processed: {files_processed}")
+        print(f"  - Total chunks: {total_chunks}")
+        print(f"{'=' * 80}\n")
+        
+        return {
+            "success": True,
+            "filesProcessed": files_processed,
+            "chunksCreated": total_chunks,
+            "table": full_table_name
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"💥 [{request_id}] Exception: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/chunks/preview")
+async def preview_chunks(
+    request: ChunkPreviewRequest,
+    x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
+):
+    """Get preview of chunks from the Delta table"""
+    request_id = str(uuid.uuid4())[:8]
+    print(f"\n{'=' * 80}")
+    print(f"👁️ [{request_id}] Preview chunks request at {datetime.now().isoformat()}")
+    print(f"{'=' * 80}")
+    
+    try:
+        config = get_databricks_config(x_forwarded_access_token)
+        
+        table_config = request.tableConfig
+        limit = request.limit
+        
+        catalog = table_config.get("catalog", "")
+        schema = table_config.get("schema", "")
+        table_name = table_config.get("tableName", "")
+        full_table_name = f"{catalog}.{schema}.{table_name}"
+        
+        warehouse_id = os.getenv("DATABRICKS_WAREHOUSE_ID")
+        if not warehouse_id:
+            raise HTTPException(status_code=500, detail="Warehouse ID not configured")
+        
+        sql = f"""
+        SELECT file_name, chunk_index, total_chunks, chunk_content
+        FROM {full_table_name}
+        ORDER BY file_name, chunk_index
+        LIMIT {limit}
+        """
+        
+        result = await execute_sql(config, warehouse_id, sql, request_id)
+        
+        chunks = []
+        if result and result.get("data_array"):
+            for row in result.get("data_array", []):
+                chunks.append({
+                    "documentName": row[0],
+                    "chunkIndex": int(row[1]),
+                    "totalChunks": int(row[2]),
+                    "content": row[3][:1000] if row[3] else "",  # Limit content for preview
+                    "metadata": {}
+                })
+        
+        print(f"✅ [{request_id}] Returning {len(chunks)} chunk previews")
+        return {"chunks": chunks}
+        
+    except Exception as e:
+        print(f"💥 [{request_id}] Exception: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# Helper Functions for Module 2
+# ============================================================================
+
+async def execute_sql(config: dict, warehouse_id: str, sql: str, request_id: str) -> dict:
+    """Execute SQL statement via Databricks SQL Statement API"""
+    url = f"https://{config['host']}/api/2.0/sql/statements"
+    
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        response = await client.post(
+            url,
+            headers={
+                "Authorization": f"Bearer {config['token']}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "warehouse_id": warehouse_id,
+                "statement": sql,
+                "wait_timeout": "60s"
+            }
+        )
+    
+    if response.status_code != 200:
+        print(f"❌ [{request_id}] SQL execution failed: {response.status_code}")
+        print(f"  SQL: {sql[:100]}...")
+        print(f"  Response: {response.text[:500]}")
+        return None
+    
+    result = response.json()
+    status = result.get("status", {}).get("state", "")
+    
+    if status == "SUCCEEDED":
+        return result.get("result", {})
+    else:
+        error_msg = result.get("status", {}).get("error", {}).get("message", "Unknown error")
+        print(f"⚠️ [{request_id}] SQL status: {status}, error: {error_msg}")
+        return None
+
+
+async def read_file_from_volume(config: dict, file_path: str, request_id: str) -> bytes:
+    """Read file content from Databricks Volume"""
+    url = f"https://{config['host']}/api/2.0/fs/files{file_path}"
+    
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.get(
+                url,
+                headers={"Authorization": f"Bearer {config['token']}"}
+            )
+        
+        if response.status_code == 200:
+            return response.content
+        else:
+            print(f"❌ [{request_id}] Failed to read file: {response.status_code}")
+            return None
+    except Exception as e:
+        print(f"💥 [{request_id}] Error reading file: {str(e)}")
+        return None
+
+
+def extract_text_placeholder(file_content: bytes, file_name: str) -> str:
+    """
+    Placeholder for PDF text extraction.
+    In production, use PyPDF2 or pdfplumber.
+    For now, returns a placeholder with file info.
+    """
+    # NOTE: Real implementation would use:
+    # from pypdf import PdfReader
+    # reader = PdfReader(io.BytesIO(file_content))
+    # text = ""
+    # for page in reader.pages:
+    #     text += page.extract_text() + "\n"
+    
+    return f"""
+[Document: {file_name}]
+[Size: {len(file_content)} bytes]
+
+Este é um placeholder para o conteúdo extraído do PDF.
+Em produção, use PyPDF2 ou pdfplumber para extrair o texto real do documento.
+
+O arquivo contém {len(file_content)} bytes de dados binários PDF.
+Para implementar a extração real, adicione 'pypdf' ao requirements.txt e
+use PdfReader para extrair o texto de cada página.
+
+Exemplo de implementação:
+```python
+from pypdf import PdfReader
+import io
+
+reader = PdfReader(io.BytesIO(file_content))
+text = ""
+for page in reader.pages:
+    text += page.extract_text() + "\\n"
+```
+
+[Fim do documento]
+"""
+
+
+def create_chunks(text: str, strategy: str, chunk_size: int, chunk_overlap: int) -> List[str]:
+    """
+    Create text chunks based on the selected strategy.
+    Based on: https://community.databricks.com/t5/technical-blog/the-ultimate-guide-to-chunking-strategies-for-rag-applications/ba-p/113089
+    """
+    if not text:
+        return []
+    
+    if strategy == "fixed_size":
+        return chunk_fixed_size(text, chunk_size, chunk_overlap)
+    
+    elif strategy == "recursive":
+        return chunk_recursive(text, chunk_size, chunk_overlap)
+    
+    elif strategy == "by_page":
+        # For placeholder, simulate page breaks
+        pages = text.split("[Page Break]") if "[Page Break]" in text else [text]
+        return [page.strip() for page in pages if page.strip()]
+    
+    elif strategy == "by_sentence":
+        return chunk_by_sentence(text, chunk_size, chunk_overlap)
+    
+    elif strategy == "semantic":
+        # Semantic chunking would require embeddings - use recursive as fallback
+        return chunk_recursive(text, chunk_size, chunk_overlap)
+    
+    else:
+        # Default to fixed size
+        return chunk_fixed_size(text, chunk_size, chunk_overlap)
+
+
+def chunk_fixed_size(text: str, chunk_size: int, overlap: int) -> List[str]:
+    """Fixed-size chunking with overlap"""
+    chunks = []
+    start = 0
+    
+    while start < len(text):
+        end = start + chunk_size
+        chunk = text[start:end]
+        
+        if chunk.strip():
+            chunks.append(chunk.strip())
+        
+        # Move start, accounting for overlap
+        start = end - overlap if overlap > 0 else end
+        
+        # Avoid infinite loop
+        if start >= len(text) - overlap:
+            break
+    
+    return chunks
+
+
+def chunk_recursive(text: str, chunk_size: int, overlap: int) -> List[str]:
+    """Recursive character text splitting"""
+    separators = ["\n\n", "\n", ". ", " ", ""]
+    
+    def split_text(text: str, separators: List[str]) -> List[str]:
+        if len(text) <= chunk_size:
+            return [text] if text.strip() else []
+        
+        for sep in separators:
+            if sep in text:
+                parts = text.split(sep)
+                chunks = []
+                current_chunk = ""
+                
+                for part in parts:
+                    if len(current_chunk) + len(part) + len(sep) <= chunk_size:
+                        current_chunk = current_chunk + sep + part if current_chunk else part
+                    else:
+                        if current_chunk.strip():
+                            chunks.append(current_chunk.strip())
+                        current_chunk = part
+                
+                if current_chunk.strip():
+                    chunks.append(current_chunk.strip())
+                
+                return chunks
+        
+        # No separator found, use fixed size
+        return chunk_fixed_size(text, chunk_size, overlap)
+    
+    return split_text(text, separators)
+
+
+def chunk_by_sentence(text: str, chunk_size: int, overlap: int) -> List[str]:
+    """Chunk by complete sentences"""
+    # Simple sentence splitting
+    sentence_endings = re.compile(r'(?<=[.!?])\s+')
+    sentences = sentence_endings.split(text)
+    
+    chunks = []
+    current_chunk = ""
+    
+    for sentence in sentences:
+        if len(current_chunk) + len(sentence) <= chunk_size:
+            current_chunk = current_chunk + " " + sentence if current_chunk else sentence
+        else:
+            if current_chunk.strip():
+                chunks.append(current_chunk.strip())
+            current_chunk = sentence
+    
+    if current_chunk.strip():
+        chunks.append(current_chunk.strip())
+    
+    return chunks
 
 
 # ============================================================================

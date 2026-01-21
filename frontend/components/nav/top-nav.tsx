@@ -10,6 +10,7 @@ export function TopNav() {
   
   const navItems = [
     { href: "/import", label: "Importar Documentos" },
+    { href: "/prepare", label: "Preparar dados para busca" },
   ]
   
   return (
