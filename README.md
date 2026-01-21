@@ -353,6 +353,6 @@ Internal Databricks project.
 
 ---
 
-**Version**: 2.1.2  
+**Version**: 2.2.0  
 **Last Updated**: January 2026  
 **Architecture**: FastAPI + Static Next.js (Official Databricks Apps pattern)
