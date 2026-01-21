@@ -1,10 +1,14 @@
 # Databricks Apps Configuration
 # Next.js App running on Node.js runtime
-# Databricks injects PORT=8000 automatically, so we don't set it here
+# Reference: https://docs.databricks.com/dev-tools/databricks-apps/
 
 command: ["npm", "run", "start"]
 
 env:
+  # Node.js environment
+  - name: NODE_ENV
+    value: "production"
+  
   # Unity Catalog configuration
   - name: DATABRICKS_CATALOG
     value: "fabio_goncalves"
@@ -26,5 +30,8 @@ env:
   - name: DATABRICKS_HTTP_PATH
     value: "/sql/1.0/warehouses/09231fd5489fc752"
   
-  # Databricks Token (uses CLIENT_SECRET injected by Databricks)
-  # Databricks automatically injects DATABRICKS_CLIENT_SECRET for service principal auth
+  # Databricks automatically injects:
+  # - PORT (usually 8000)
+  # - DATABRICKS_CLIENT_SECRET (service principal token)
+  # - DATABRICKS_CLIENT_ID (service principal ID)
+  # - DATABRICKS_HOST (workspace hostname)
