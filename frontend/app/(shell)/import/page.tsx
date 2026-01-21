@@ -4,7 +4,7 @@ import { useState } from "react"
 import { Upload, CheckCircle2, XCircle, Loader2, ChevronLeft, ChevronRight } from "lucide-react"
 import { toast } from "sonner"
 
-type FileStatus = "pending" | "uploading" | "success" | "error"
+type FileStatus = "pending" | "uploading" | "success" | "error" | "skipped"
 
 interface FileWithStatus {
   id: string
@@ -233,12 +233,13 @@ export default function ImportPage() {
     let localOverwriteAll = false
     let successCount = 0
     let errorCount = 0
+    let skippedCount = 0
 
     console.log(`🚀 Starting upload of ${files.length} file(s)`)
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i]
-      if (file.status === "success") continue
+      if (file.status === "success" || file.status === "skipped") continue
 
       // Navigate to the page where this file is located
       const filePageNumber = Math.floor(i / FILES_PER_PAGE) + 1
@@ -284,9 +285,10 @@ export default function ImportPage() {
           console.log(`⏭️ Skipping file: ${file.name}`)
           setFiles(prev =>
             prev.map(f =>
-              f.id === file.id ? { ...f, status: "pending" } : f
+              f.id === file.id ? { ...f, status: "skipped" } : f
             )
           )
+          skippedCount++
         }
       } else if (result === "success") {
         successCount++
@@ -297,25 +299,39 @@ export default function ImportPage() {
 
     setIsUploading(false)
 
+    // Sort files: success/error/skipped at end, pending at start
+    setFiles(prev => {
+      const sorted = [...prev].sort((a, b) => {
+        const order = { pending: 0, uploading: 1, success: 2, error: 3, skipped: 4 }
+        return order[a.status] - order[b.status]
+      })
+      return sorted
+    })
+
     // Show summary toast
-    if (errorCount === 0 && successCount > 0) {
+    if (errorCount === 0 && skippedCount === 0 && successCount > 0) {
       toast.success(`${successCount} arquivo(s) importado(s) com sucesso!`, {
         duration: 6000,
       })
     } else if (successCount > 0) {
-      toast.warning(
-        `${successCount} arquivo(s) importado(s), ${errorCount} com erro`,
-        {
-          duration: 8000,
-        }
-      )
-    } else if (errorCount > 0) {
-      toast.error(`Erro ao importar arquivos`, {
+      const parts = [`${successCount} importado(s)`]
+      if (skippedCount > 0) parts.push(`${skippedCount} ignorado(s)`)
+      if (errorCount > 0) parts.push(`${errorCount} com erro`)
+      
+      toast.warning(parts.join(', '), {
+        duration: 8000,
+      })
+    } else if (errorCount > 0 || skippedCount > 0) {
+      const parts = []
+      if (errorCount > 0) parts.push(`${errorCount} com erro`)
+      if (skippedCount > 0) parts.push(`${skippedCount} ignorado(s)`)
+      
+      toast.warning(parts.join(', '), {
         duration: 7000,
       })
     }
 
-    console.log(`📊 Upload complete: ${successCount} success, ${errorCount} errors`)
+    console.log(`📊 Upload complete: ${successCount} success, ${errorCount} errors, ${skippedCount} skipped`)
   }
 
   function handleOverwriteDecision(decision: "overwrite" | "overwrite_all" | "skip") {
@@ -496,6 +512,11 @@ export default function ImportPage() {
                       {file.status === "error" && (
                         <XCircle className="h-5 w-5 text-red-600" />
                       )}
+                      {file.status === "skipped" && (
+                        <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                        </svg>
+                      )}
                     </div>
 
                     {/* File Info */}
@@ -522,12 +543,17 @@ export default function ImportPage() {
                             ✕ {file.error || "Erro"}
                           </span>
                         )}
+                        {file.status === "skipped" && (
+                          <span className="text-xs text-gray-400">
+                            Ignorado
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
 
                   {/* Action Button */}
-                  {(file.status === "pending" || file.status === "error") && !isUploading && (
+                  {(file.status === "pending" || file.status === "error" || file.status === "skipped") && !isUploading && (
                     <button
                       onClick={() => {
                         setFiles(prev => {
@@ -550,7 +576,7 @@ export default function ImportPage() {
               ))}
             </ul>
             <div className="px-4 py-4 bg-gray-50 border-t border-gray-200 flex justify-end gap-3">
-              {files.every(f => f.status === "success") ? (
+              {files.every(f => f.status === "success" || f.status === "error" || f.status === "skipped") && files.length > 0 ? (
                 <button
                   onClick={() => {
                     setFiles([])
