@@ -21,6 +21,24 @@ import httpx
 app = FastAPI(title="Databricks Contracts App")
 
 # ============================================================================
+# Helper Functions
+# ============================================================================
+
+def sanitize_table_name(table_name: str) -> str:
+    """
+    Remove _raw and _chunks suffixes from table name if present.
+    This prevents duplicate suffixes like contracts_raw_raw.
+    """
+    if not table_name:
+        return table_name
+    # Remove suffixes in order (handle cases like contracts_raw_chunks)
+    if table_name.endswith("_chunks"):
+        table_name = table_name[:-7]
+    if table_name.endswith("_raw"):
+        table_name = table_name[:-4]
+    return table_name
+
+# ============================================================================
 # Pydantic Models for Module 2
 # ============================================================================
 
@@ -618,7 +636,7 @@ async def extract_text_from_file(
         table_config = request.tableConfig
         catalog = table_config.get("catalog", "")
         schema = table_config.get("schema", "")
-        table_name = table_config.get("tableName", "")
+        table_name = sanitize_table_name(table_config.get("tableName", ""))
         
         # Use _raw suffix for raw documents table (Module 1)
         raw_table = f"{catalog}.{schema}.{table_name}_raw"
@@ -880,7 +898,7 @@ async def check_table(
     
     catalog = request.get("catalog", "")
     schema = request.get("schema", "")
-    table_name = request.get("tableName", "")
+    table_name = sanitize_table_name(request.get("tableName", ""))
     
     # Table names: _raw (from Module 1) and _chunks (Module 2)
     raw_table = f"{catalog}.{schema}.{table_name}_raw"
@@ -957,8 +975,9 @@ async def get_raw_documents(
     print(f"📄 [{request_id}] Get raw documents at {datetime.now().isoformat()}")
     print(f"{'=' * 80}")
     
-    # Build full table name - use _raw suffix
-    raw_table = f"{request.catalog}.{request.schema_name}.{request.tableName}_raw"
+    # Build full table name - use _raw suffix (sanitize to prevent double suffix)
+    table_name = sanitize_table_name(request.tableName)
+    raw_table = f"{request.catalog}.{request.schema_name}.{table_name}_raw"
     
     print(f"📋 [{request_id}] Table: {raw_table}")
     print(f"📋 [{request_id}] Offset: {request.offset}, Limit: {request.limit}")
@@ -1045,7 +1064,8 @@ async def get_raw_document_text(
     print(f"📝 [{request_id}] Get document text at {datetime.now().isoformat()}")
     print(f"{'=' * 80}")
     
-    raw_table = f"{request.catalog}.{request.schema_name}.{request.tableName}_raw"
+    table_name = sanitize_table_name(request.tableName)
+    raw_table = f"{request.catalog}.{request.schema_name}.{table_name}_raw"
     
     print(f"📋 [{request_id}] Table: {raw_table}")
     print(f"📋 [{request_id}] Document ID: {request.documentId}")
@@ -1106,7 +1126,8 @@ async def get_chunking_preview(
     print(f"🔍 [{request_id}] Chunking preview at {datetime.now().isoformat()}")
     print(f"{'=' * 80}")
     
-    raw_table = f"{request.catalog}.{request.schema_name}.{request.tableName}_raw"
+    table_name = sanitize_table_name(request.tableName)
+    raw_table = f"{request.catalog}.{request.schema_name}.{table_name}_raw"
     
     print(f"📋 [{request_id}] Table: {raw_table}")
     print(f"📋 [{request_id}] Documents: {len(request.documentIds)}")
@@ -1210,7 +1231,7 @@ async def init_processing(
         
         catalog = table_config.get("catalog", "")
         schema = table_config.get("schema", "")
-        table_name = table_config.get("tableName", "")
+        table_name = sanitize_table_name(table_config.get("tableName", ""))
         
         # Raw documents table (created in Module 1) - we just verify it exists
         raw_table = f"{catalog}.{schema}.{table_name}_raw"
@@ -1317,7 +1338,7 @@ async def process_single_file(
         
         catalog = table_config.get("catalog", "")
         schema = table_config.get("schema", "")
-        table_name = table_config.get("tableName", "")
+        table_name = sanitize_table_name(table_config.get("tableName", ""))
         
         chunks_table = f"{catalog}.{schema}.{table_name}_chunks"
         
@@ -1505,7 +1526,7 @@ async def preview_chunks(
         
         catalog = table_config.get("catalog", "")
         schema = table_config.get("schema", "")
-        table_name = table_config.get("tableName", "")
+        table_name = sanitize_table_name(table_config.get("tableName", ""))
         
         # Use the chunks table (with _chunks suffix)
         chunks_table = f"{catalog}.{schema}.{table_name}_chunks"
