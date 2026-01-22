@@ -199,11 +199,9 @@ export default function PreparePage() {
   // State for tracking processed files (to filter "Ver Chunks" view)
   const [lastProcessedFiles, setLastProcessedFiles] = useState<string[]>([])
   
-  // State for table existence check
+  // State for table configuration validation
   const [tableExists, setTableExists] = useState<boolean | null>(null)
   const [existingRecords, setExistingRecords] = useState<number>(0)
-  const [showImportDialog, setShowImportDialog] = useState(false)
-  const [importMode, setImportMode] = useState<"append" | "overwrite" | "clean" | null>(null)
   
   // State for existing chunk preview (from database)
   const [showExistingPreview, setShowExistingPreview] = useState(false)
@@ -565,20 +563,13 @@ export default function PreparePage() {
       return
     }
     
-    // Check if table exists and has data
-    if (tableExists && existingRecords > 0) {
-      setShowImportDialog(true)
-      return
-    }
-    
-    // If table doesn't exist or is empty, proceed directly
-    await executeProcessing("append")
+    // Always proceed with processing - will delete existing chunks and create new ones
+    await executeProcessing()
   }
 
   // Execute the actual processing - file by file
-  async function executeProcessing(mode: "append" | "overwrite" | "clean") {
-    setShowImportDialog(false)
-    setImportMode(mode)
+  // Always deletes existing chunks for selected documents and creates new ones
+  async function executeProcessing() {
     
     const strategy = CHUNKING_STRATEGIES.find(s => s.id === selectedStrategy)
     // Get file names from selected document IDs
@@ -601,7 +592,7 @@ export default function PreparePage() {
     })
     
     try {
-      // Step 1: Initialize tables
+      // Step 1: Initialize tables (always overwrite mode - delete existing chunks and create new)
       const initResponse = await fetch("/api/process/init", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -609,8 +600,7 @@ export default function PreparePage() {
           tableConfig,
           files: filesToProcess,
           strategy: selectedStrategy,
-          params: { ...strategy?.params, ...chunkingParams },
-          mode
+          params: { ...strategy?.params, ...chunkingParams }
         })
       })
       
@@ -670,8 +660,7 @@ export default function PreparePage() {
               tableConfig,
               fileName,
               strategy: selectedStrategy,
-              params: { ...strategy?.params, ...chunkingParams },
-              mode: mode === "clean" ? "overwrite" : mode // For individual files, 'clean' acts as 'overwrite'
+              params: { ...strategy?.params, ...chunkingParams }
             })
           })
           
@@ -765,8 +754,8 @@ export default function PreparePage() {
       // Refresh file list to show imported status
       await loadVolumeFiles()
       
-      // Update table info
-      setExistingRecords(prev => mode === "clean" ? totalChunks : prev + totalChunks)
+      // Update table info with total chunks created
+      setExistingRecords(totalChunks)
       
     } catch (error) {
       console.error("Processing error:", error)
@@ -830,70 +819,6 @@ export default function PreparePage() {
     <>
       <Toaster position="top-right" richColors closeButton />
       
-      {/* Import Mode Dialog */}
-      {showImportDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-xl shadow-2xl p-6 max-w-lg w-full">
-            <div className="flex items-center gap-3 mb-4">
-              <AlertCircle className="h-6 w-6 text-[#FF3621]" />
-              <h3 className="text-xl font-bold text-[#1B1B1D]">
-                Tabela já contém dados
-              </h3>
-            </div>
-            <p className="text-base text-gray-600 mb-2">
-              A tabela <span className="font-mono text-sm bg-gray-100 px-2 py-0.5 rounded">{tableConfig.tableName}</span> já possui <strong>{existingRecords}</strong> registros.
-            </p>
-            <p className="text-base text-gray-600 mb-6">
-              Como deseja proceder com a importação?
-            </p>
-            
-            <div className="flex flex-col gap-3">
-              <button
-                onClick={() => executeProcessing("append")}
-                className="w-full px-4 py-3 text-sm font-medium text-white bg-[#00A972] rounded-lg hover:bg-[#00A972]/90 transition-colors flex items-center gap-3"
-              >
-                <Plus className="h-5 w-5" />
-                <div className="text-left">
-                  <div className="font-semibold">Adicionar novos</div>
-                  <div className="text-xs opacity-80">Mantém dados existentes, adiciona apenas arquivos novos</div>
-                </div>
-              </button>
-              
-              <button
-                onClick={() => executeProcessing("overwrite")}
-                className="w-full px-4 py-3 text-sm font-medium text-[#FF3621] bg-red-50 rounded-lg hover:bg-red-100 transition-colors flex items-center gap-3"
-              >
-                <RefreshCw className="h-5 w-5" />
-                <div className="text-left">
-                  <div className="font-semibold">Sobrescrever existentes</div>
-                  <div className="text-xs opacity-80">Atualiza arquivos que já existem, adiciona novos</div>
-                </div>
-              </button>
-              
-              <button
-                onClick={() => executeProcessing("clean")}
-                className="w-full px-4 py-3 text-sm font-medium text-white bg-[#FF3621] rounded-lg hover:bg-[#FF3621]/90 transition-colors flex items-center gap-3"
-              >
-                <Trash2 className="h-5 w-5" />
-                <div className="text-left">
-                  <div className="font-semibold">Limpar e reimportar tudo</div>
-                  <div className="text-xs opacity-80">Remove todos os dados e processa do zero</div>
-                </div>
-              </button>
-              
-              <div className="mt-2 pt-4 border-t border-gray-200">
-                <button
-                  onClick={() => setShowImportDialog(false)}
-                  className="w-full px-4 py-2.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-                >
-                  Cancelar
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Chunking Preview Modal */}
       {showChunkingPreview && chunkPreviewData.length > 0 && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">

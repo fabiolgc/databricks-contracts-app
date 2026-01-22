@@ -41,14 +41,14 @@ class ProcessRequest(BaseModel):
     files: List[str]
     strategy: str
     params: Dict[str, Any]
-    mode: str  # append, overwrite, clean
+    # Note: mode removed - always delete existing chunks and create new ones
 
 class ProcessSingleFileRequest(BaseModel):
     tableConfig: Dict[str, str]
     fileName: str
     strategy: str
     params: Dict[str, Any]
-    mode: str  # append, overwrite, skip
+    # Note: mode removed - always delete existing chunks for this file and create new ones
 
 class ExtractTextRequest(BaseModel):
     tableConfig: Dict[str, str]
@@ -1125,7 +1125,6 @@ async def init_processing(
         
         table_config = request.tableConfig
         files = request.files
-        mode = request.mode
         
         catalog = table_config.get("catalog", "")
         schema = table_config.get("schema", "")
@@ -1155,12 +1154,8 @@ async def init_processing(
                 )
             raise
         
-        # Step 2: If mode is 'clean', drop existing chunks table
-        if mode == "clean":
-            print(f"\n🗑️ [{request_id}] Cleaning existing chunks table...")
-            await execute_sql(config, warehouse_id, f"DROP TABLE IF EXISTS {chunks_table}", request_id)
-        
-        # Step 3: Create chunks table (if not exists)
+        # Step 2: Create chunks table (if not exists)
+        # Note: Existing chunks for selected files will be deleted in process_single_file
         create_chunks_sql = f"""
         CREATE TABLE IF NOT EXISTS {chunks_table} (
             id STRING,
@@ -1179,15 +1174,14 @@ async def init_processing(
         print(f"\n📊 [{request_id}] Creating chunks table: {chunks_table}")
         await execute_sql(config, warehouse_id, create_chunks_sql, request_id)
         
-        # Step 4: For chunking, we always process all selected files
-        # The chunks will be deleted and recreated in process_single_file
-        # No need to skip files - we want to regenerate chunks with new strategy
+        # All selected files will be processed
+        # Existing chunks will be deleted and new ones created with new strategy
         files_to_process = files
         skipped_files = []
         
         print(f"\n✅ [{request_id}] Init complete!")
         print(f"  - Files to process: {len(files_to_process)}")
-        print(f"  - Mode: {mode} (chunks will be regenerated)")
+        print(f"  - Mode: overwrite (chunks will be deleted and regenerated)")
         
         return {
             "success": True,
@@ -1229,7 +1223,7 @@ async def process_single_file(
         table_config = request.tableConfig
         strategy = request.strategy
         params = request.params
-        mode = request.mode
+        # Note: mode removed - always delete existing chunks and create new ones
         
         catalog = table_config.get("catalog", "")
         schema = table_config.get("schema", "")
@@ -1382,8 +1376,7 @@ async def process_documents(
             tableConfig=request.tableConfig,
             fileName=file_name,
             strategy=request.strategy,
-            params=request.params,
-            mode=request.mode
+            params=request.params
         )
         
         result = await process_single_file(file_request, x_forwarded_access_token)
