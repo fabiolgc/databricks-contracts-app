@@ -801,12 +801,12 @@ async def check_table(
     schema = request.get("schema", "")
     table_name = request.get("tableName", "")
     
-    # New table names with suffixes
-    documents_table = f"{catalog}.{schema}.{table_name}_documents"
+    # Table names: _raw (from Module 1) and _chunks (Module 2)
+    raw_table = f"{catalog}.{schema}.{table_name}_raw"
     chunks_table = f"{catalog}.{schema}.{table_name}_chunks"
     
     print(f"📋 [{request_id}] Checking tables:")
-    print(f"  - Documents: {documents_table}")
+    print(f"  - Raw: {raw_table}")
     print(f"  - Chunks: {chunks_table}")
     
     try:
@@ -817,36 +817,36 @@ async def check_table(
             print(f"⚠️ [{request_id}] No warehouse ID configured")
             return {"exists": False, "recordCount": 0, "message": "Warehouse not configured"}
         
-        # Check chunks table (main table we care about)
-        chunks_result = await execute_sql(config, warehouse_id, 
-            f"SELECT COUNT(*) as count FROM {chunks_table}", request_id)
+        # Check chunks table (main table for Module 2)
+        try:
+            chunks_result = await execute_sql(config, warehouse_id, 
+                f"SELECT COUNT(*) as count FROM {chunks_table}", request_id)
+            
+            if chunks_result and chunks_result.get("data_array"):
+                count = int(chunks_result["data_array"][0][0]) if chunks_result["data_array"] else 0
+                print(f"✅ [{request_id}] Chunks table exists with {count} records")
+                
+                return {
+                    "exists": True, 
+                    "recordCount": count,
+                    "rawTable": raw_table,
+                    "chunksTable": chunks_table
+                }
+        except Exception as e:
+            error_str = str(e)
+            if "TABLE_OR_VIEW_NOT_FOUND" in error_str:
+                print(f"ℹ️ [{request_id}] Chunks table does not exist yet")
+            else:
+                print(f"⚠️ [{request_id}] Error checking chunks table: {error_str}")
         
-        if chunks_result and chunks_result.get("data_array"):
-            count = int(chunks_result["data_array"][0][0]) if chunks_result["data_array"] else 0
-            print(f"✅ [{request_id}] Chunks table exists with {count} records")
-            
-            # Also check documents table
-            docs_result = await execute_sql(config, warehouse_id,
-                f"SELECT COUNT(*) as count FROM {documents_table}", request_id)
-            docs_count = 0
-            if docs_result and docs_result.get("data_array"):
-                docs_count = int(docs_result["data_array"][0][0]) if docs_result["data_array"] else 0
-            
-            return {
-                "exists": True, 
-                "recordCount": count,
-                "documentsCount": docs_count,
-                "documentsTable": documents_table,
-                "chunksTable": chunks_table
-            }
-        else:
-            print(f"ℹ️ [{request_id}] Tables do not exist yet")
-            return {
-                "exists": False, 
-                "recordCount": 0,
-                "documentsTable": documents_table,
-                "chunksTable": chunks_table
-            }
+        # Table doesn't exist
+        print(f"ℹ️ [{request_id}] Tables do not exist yet")
+        return {
+            "exists": False, 
+            "recordCount": 0,
+            "rawTable": raw_table,
+            "chunksTable": chunks_table
+        }
             
     except Exception as e:
         error_str = str(e)

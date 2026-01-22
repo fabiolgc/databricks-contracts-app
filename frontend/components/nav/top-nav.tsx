@@ -31,7 +31,7 @@ export function TopNav() {
                 Contracts App
               </span>
             </div>
-            <div className="hidden sm:ml-8 sm:flex sm:space-x-2">
+            <div className="hidden sm:ml-8 sm:flex sm:space-x-6">
               {navItems.map((item) => {
                 // Check if current path matches or starts with the nav item href
                 const isActive = pathname === item.href || 
@@ -41,10 +41,10 @@ export function TopNav() {
                   <Link
                     key={item.href}
                     href={item.href}
-                    className={`inline-flex items-center px-4 py-2 text-sm font-medium rounded-lg transition-all duration-200 ${
+                    className={`inline-flex items-center px-2 py-2 text-sm transition-all duration-200 ${
                       isActive
-                        ? "bg-[#FF3621] text-white shadow-sm"
-                        : "text-gray-700 hover:bg-gray-100 hover:text-[#FF3621]"
+                        ? "text-[#FF3621] font-bold"
+                        : "text-gray-600 font-medium hover:text-[#FF3621]"
                     }`}
                   >
                     {item.label}
