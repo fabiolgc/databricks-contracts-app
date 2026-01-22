@@ -229,6 +229,12 @@ export default function PreparePage() {
   const [existingChunkIndex, setExistingChunkIndex] = useState(0)
   const [isLoadingExistingPreview, setIsLoadingExistingPreview] = useState(false)
   const CHUNKS_PER_PAGE = 5
+  
+  // State for delete documents modal
+  const [showDeleteModal, setShowDeleteModal] = useState(false)
+  const [deleteAllDocuments, setDeleteAllDocuments] = useState(false)
+  const [deleteFromVolume, setDeleteFromVolume] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
 
   // Load environment config on mount - use base table name (without _raw or _chunks suffix)
   useEffect(() => {
@@ -490,6 +496,65 @@ export default function PreparePage() {
     } else {
       setSelectedDocuments(new Set(rawDocuments.map(d => d.id)))
     }
+  }
+
+  // Delete documents
+  async function deleteDocuments() {
+    setIsDeleting(true)
+    
+    try {
+      const documentIds = deleteAllDocuments ? [] : Array.from(selectedDocuments)
+      
+      const response = await fetch("/api/raw-documents/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          catalog: tableConfig.catalog,
+          schema_name: tableConfig.schema,
+          tableName: tableConfig.tableName,
+          documentIds,
+          deleteFromVolume
+        })
+      })
+      
+      const data = await response.json()
+      
+      if (data.success) {
+        const count = deleteAllDocuments ? documentsTotal : selectedDocuments.size
+        toast.success(`${count} documento(s) removido(s)`, {
+          description: deleteFromVolume 
+            ? `Removidos da tabela e do volume (${data.deletedFilesCount} arquivos)`
+            : "Removidos das tabelas _raw e _chunks",
+          duration: 5000
+        })
+        
+        // Reset selection and reload
+        setSelectedDocuments(new Set())
+        setShowDeleteModal(false)
+        setDeleteFromVolume(false)
+        setDeleteAllDocuments(false)
+        
+        // Reload documents
+        await loadRawDocuments()
+      } else {
+        throw new Error(data.errors?.join(", ") || "Erro ao deletar documentos")
+      }
+    } catch (error) {
+      console.error("Error deleting documents:", error)
+      toast.error("Erro ao deletar documentos", {
+        description: error instanceof Error ? error.message : "Erro desconhecido",
+        duration: 5000
+      })
+    } finally {
+      setIsDeleting(false)
+    }
+  }
+
+  // Open delete modal
+  function openDeleteModal(all: boolean) {
+    setDeleteAllDocuments(all)
+    setDeleteFromVolume(false)
+    setShowDeleteModal(true)
   }
 
   // Load chunking preview from backend

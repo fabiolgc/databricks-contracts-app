@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Upload, CheckCircle2, XCircle, Loader2, ChevronLeft, ChevronRight, Database, Settings } from "lucide-react"
+import { Upload, CheckCircle2, XCircle, Loader2, ChevronLeft, ChevronRight, Database, Settings, Trash2, FolderOpen, RefreshCw } from "lucide-react"
 import { toast } from "sonner"
 
 type FileStatus = "pending" | "uploading" | "extracting" | "success" | "error" | "skipped"
@@ -30,6 +30,13 @@ interface TableConfig {
   tableName: string
 }
 
+interface VolumeFile {
+  name: string
+  path: string
+  size: number
+  lastModified: string
+}
+
 const FILES_PER_PAGE = 5
 
 // Extend Window interface for overwrite decision callback
@@ -55,6 +62,18 @@ export default function ImportPage() {
   })
   const [isConfigSaved, setIsConfigSaved] = useState(false)
   const [showConfig, setShowConfig] = useState(false)
+  
+  // Volume management state
+  const [showVolumeManager, setShowVolumeManager] = useState(false)
+  const [volumeFiles, setVolumeFiles] = useState<VolumeFile[]>([])
+  const [volumeFilesTotal, setVolumeFilesTotal] = useState(0)
+  const [volumeFilesPage, setVolumeFilesPage] = useState(1)
+  const [volumeFilesLoading, setVolumeFilesLoading] = useState(false)
+  const [selectedVolumeFiles, setSelectedVolumeFiles] = useState<Set<string>>(new Set())
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [deleteMode, setDeleteMode] = useState<"all" | "selected">("selected")
+  const [isDeleting, setIsDeleting] = useState(false)
+  const VOLUME_FILES_PER_PAGE = 10
   
   // Timer for processing
   const [processingStartTime, setProcessingStartTime] = useState<number | null>(null)
@@ -590,6 +609,82 @@ export default function ImportPage() {
     })
   }
 
+  // Volume management functions
+  async function loadVolumeFiles(page: number = 1) {
+    setVolumeFilesLoading(true)
+    try {
+      const offset = (page - 1) * VOLUME_FILES_PER_PAGE
+      const response = await fetch(`/api/volume/files?offset=${offset}&limit=${VOLUME_FILES_PER_PAGE}`)
+      
+      if (!response.ok) {
+        throw new Error("Failed to load files")
+      }
+      
+      const data = await response.json()
+      setVolumeFiles(data.files || [])
+      setVolumeFilesTotal(data.total || 0)
+      setVolumeFilesPage(page)
+      setSelectedVolumeFiles(new Set())
+    } catch (error) {
+      console.error("Error loading volume files:", error)
+      toast.error("Erro ao carregar arquivos do volume")
+    } finally {
+      setVolumeFilesLoading(false)
+    }
+  }
+
+  function toggleVolumeFileSelection(fileName: string) {
+    setSelectedVolumeFiles(prev => {
+      const newSet = new Set(prev)
+      if (newSet.has(fileName)) {
+        newSet.delete(fileName)
+      } else {
+        newSet.add(fileName)
+      }
+      return newSet
+    })
+  }
+
+  function toggleAllVolumeFiles() {
+    if (selectedVolumeFiles.size === volumeFiles.length) {
+      setSelectedVolumeFiles(new Set())
+    } else {
+      setSelectedVolumeFiles(new Set(volumeFiles.map(f => f.name)))
+    }
+  }
+
+  async function deleteVolumeFiles() {
+    setIsDeleting(true)
+    try {
+      const filesToDelete = deleteMode === "all" ? [] : Array.from(selectedVolumeFiles)
+      
+      const response = await fetch("/api/volume/files/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fileNames: filesToDelete })
+      })
+      
+      const result = await response.json()
+      
+      if (result.success) {
+        toast.success(`${result.deletedCount} arquivo(s) removido(s)`, { duration: 5000 })
+        await loadVolumeFiles(1)
+      } else {
+        toast.error("Erro ao remover alguns arquivos", {
+          description: result.errors?.map((e: { fileName: string }) => e.fileName).join(", "),
+          duration: 7000
+        })
+      }
+    } catch (error) {
+      console.error("Error deleting files:", error)
+      toast.error("Erro ao remover arquivos")
+    } finally {
+      setIsDeleting(false)
+      setShowDeleteConfirm(false)
+      setDeleteMode("selected")
+    }
+  }
+
   function handleOverwriteDecision(decision: "overwrite" | "overwrite_all" | "skip" | "cancel") {
     if (window.__overwriteResolve) {
       window.__overwriteResolve(decision)
@@ -643,6 +738,69 @@ export default function ImportPage() {
                   Cancelar importação
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Dialog */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl p-6 max-w-md w-full">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-2 bg-red-100 rounded-full">
+                <Trash2 className="h-6 w-6 text-red-600" />
+              </div>
+              <h3 className="text-xl font-bold text-[#1B1B1D]">
+                Confirmar Remoção
+              </h3>
+            </div>
+            
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4">
+              <p className="text-sm text-amber-800 font-medium">
+                ⚠️ Atenção: Esta ação não pode ser desfeita!
+              </p>
+              <p className="text-sm text-amber-700 mt-1">
+                Os arquivos serão removidos permanentemente do volume. Não existe backup.
+              </p>
+            </div>
+            
+            <p className="text-base text-gray-600 mb-2">
+              {deleteMode === "all" 
+                ? `Você está prestes a remover TODOS os ${volumeFilesTotal} arquivo(s) do volume.`
+                : `Você está prestes a remover ${selectedVolumeFiles.size} arquivo(s) selecionado(s).`
+              }
+            </p>
+            
+            <p className="text-sm text-gray-500 mb-6">
+              Os dados extraídos ainda existirão nas tabelas Delta.
+            </p>
+            
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={deleteVolumeFiles}
+                disabled={isDeleting}
+                className="w-full px-4 py-2.5 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {isDeleting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Removendo...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="h-4 w-4" />
+                    Confirmar Remoção
+                  </>
+                )}
+              </button>
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                disabled={isDeleting}
+                className="w-full px-4 py-2.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+              >
+                Cancelar
+              </button>
             </div>
           </div>
         </div>
@@ -752,6 +910,184 @@ export default function ImportPage() {
                 </code>
               </span>
             </div>
+          </div>
+        )}
+      </div>
+
+      {/* Volume Management Section */}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <button
+          onClick={() => setShowVolumeManager(!showVolumeManager)}
+          className="w-full px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between hover:bg-gray-100 transition-colors"
+        >
+          <div className="flex items-center gap-2">
+            <FolderOpen className="h-5 w-5 text-gray-600" />
+            <h2 className="text-lg font-semibold text-[#1B1B1D]">Gerenciar Volume</h2>
+          </div>
+          <div className="flex items-center gap-2">
+            {volumeFilesTotal > 0 && (
+              <span className="text-sm text-gray-500">
+                {volumeFilesTotal} arquivo(s)
+              </span>
+            )}
+            <ChevronRight className={`h-5 w-5 text-gray-400 transition-transform ${showVolumeManager ? 'rotate-90' : ''}`} />
+          </div>
+        </button>
+        
+        {showVolumeManager && (
+          <div className="p-4">
+            <p className="text-sm text-gray-600 mb-4">
+              Visualize e gerencie os arquivos PDF armazenados no volume do Unity Catalog.
+            </p>
+            
+            {/* Load Files Button */}
+            {volumeFiles.length === 0 && !volumeFilesLoading && (
+              <button
+                onClick={() => loadVolumeFiles(1)}
+                className="px-4 py-2 text-sm font-medium text-[#FF3621] bg-red-50 border border-[#FF3621]/30 rounded-lg hover:bg-red-100 transition-colors flex items-center gap-2"
+              >
+                <RefreshCw className="h-4 w-4" />
+                Carregar arquivos existentes
+              </button>
+            )}
+            
+            {/* Loading State */}
+            {volumeFilesLoading && (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-6 w-6 text-[#FF3621] animate-spin" />
+                <span className="ml-2 text-sm text-gray-600">Carregando arquivos...</span>
+              </div>
+            )}
+            
+            {/* Files List */}
+            {!volumeFilesLoading && volumeFiles.length > 0 && (
+              <div className="space-y-4">
+                {/* Action Buttons */}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => loadVolumeFiles(volumeFilesPage)}
+                      className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                      title="Recarregar"
+                    >
+                      <RefreshCw className="h-4 w-4" />
+                    </button>
+                    <span className="text-sm text-gray-500">
+                      {selectedVolumeFiles.size > 0 && `${selectedVolumeFiles.size} selecionado(s)`}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        setDeleteMode("selected")
+                        setShowDeleteConfirm(true)
+                      }}
+                      disabled={selectedVolumeFiles.size === 0}
+                      className="px-3 py-1.5 text-sm font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      Remover Selecionados
+                    </button>
+                    <button
+                      onClick={() => {
+                        setDeleteMode("all")
+                        setShowDeleteConfirm(true)
+                      }}
+                      className="px-3 py-1.5 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors flex items-center gap-1"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      Remover Todos
+                    </button>
+                  </div>
+                </div>
+                
+                {/* Files Table */}
+                <div className="border border-gray-200 rounded-lg overflow-hidden">
+                  <table className="w-full">
+                    <thead className="bg-gray-50 border-b border-gray-200">
+                      <tr>
+                        <th className="px-4 py-2 text-left">
+                          <input
+                            type="checkbox"
+                            checked={selectedVolumeFiles.size === volumeFiles.length && volumeFiles.length > 0}
+                            onChange={toggleAllVolumeFiles}
+                            className="rounded border-gray-300 text-[#FF3621] focus:ring-[#FF3621]"
+                          />
+                        </th>
+                        <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">Nome do Arquivo</th>
+                        <th className="px-4 py-2 text-right text-sm font-medium text-gray-700">Tamanho</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200">
+                      {volumeFiles.map((file) => (
+                        <tr 
+                          key={file.name} 
+                          className={`hover:bg-gray-50 transition-colors ${selectedVolumeFiles.has(file.name) ? 'bg-red-50' : ''}`}
+                        >
+                          <td className="px-4 py-3">
+                            <input
+                              type="checkbox"
+                              checked={selectedVolumeFiles.has(file.name)}
+                              onChange={() => toggleVolumeFileSelection(file.name)}
+                              className="rounded border-gray-300 text-[#FF3621] focus:ring-[#FF3621]"
+                            />
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-2">
+                              <svg className="h-4 w-4 text-[#FF3621]" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" />
+                              </svg>
+                              <span className="text-sm text-[#1B1B1D] truncate max-w-md" title={file.name}>
+                                {file.name}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-right text-sm text-gray-500">
+                            {(file.size / 1024 / 1024).toFixed(2)} MB
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                
+                {/* Pagination */}
+                {volumeFilesTotal > VOLUME_FILES_PER_PAGE && (
+                  <div className="flex items-center justify-between pt-2">
+                    <span className="text-sm text-gray-500">
+                      Mostrando {((volumeFilesPage - 1) * VOLUME_FILES_PER_PAGE) + 1} - {Math.min(volumeFilesPage * VOLUME_FILES_PER_PAGE, volumeFilesTotal)} de {volumeFilesTotal}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => loadVolumeFiles(volumeFilesPage - 1)}
+                        disabled={volumeFilesPage === 1}
+                        className="p-1.5 rounded-md text-gray-600 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </button>
+                      <span className="text-sm text-gray-600 font-medium">
+                        Página {volumeFilesPage} de {Math.ceil(volumeFilesTotal / VOLUME_FILES_PER_PAGE)}
+                      </span>
+                      <button
+                        onClick={() => loadVolumeFiles(volumeFilesPage + 1)}
+                        disabled={volumeFilesPage >= Math.ceil(volumeFilesTotal / VOLUME_FILES_PER_PAGE)}
+                        className="p-1.5 rounded-md text-gray-600 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+            
+            {/* Empty State */}
+            {!volumeFilesLoading && volumeFiles.length === 0 && volumeFilesTotal === 0 && volumeFilesPage > 0 && (
+              <div className="text-center py-8 text-gray-500">
+                <FolderOpen className="h-12 w-12 mx-auto mb-2 text-gray-300" />
+                <p className="text-sm">Nenhum arquivo encontrado no volume</p>
+              </div>
+            )}
           </div>
         )}
       </div>

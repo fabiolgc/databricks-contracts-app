@@ -91,6 +91,13 @@ class RawDocumentTextRequest(BaseModel):
     tableName: str
     documentId: str
 
+class DeleteDocumentsRequest(BaseModel):
+    catalog: str
+    schema_name: str
+    tableName: str
+    documentIds: List[str]  # List of document IDs to delete, or empty for all
+    deleteFromVolume: bool = False  # Also delete PDF files from volume
+
 class ChunkingPreviewRequest(BaseModel):
     catalog: str
     schema_name: str
@@ -1115,6 +1122,167 @@ async def get_raw_document_text(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/raw-documents/delete")
+async def delete_documents(
+    request: DeleteDocumentsRequest,
+    x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
+):
+    """
+    Delete documents from _raw and _chunks tables.
+    If documentIds is empty, deletes ALL documents.
+    Optionally also deletes PDF files from volume.
+    """
+    request_id = str(uuid.uuid4())[:8]
+    print(f"\n{'=' * 80}")
+    print(f"🗑️ [{request_id}] Delete documents at {datetime.now().isoformat()}")
+    print(f"{'=' * 80}")
+    
+    table_name = sanitize_table_name(request.tableName)
+    raw_table = f"{request.catalog}.{request.schema_name}.{table_name}_raw"
+    chunks_table = f"{request.catalog}.{request.schema_name}.{table_name}_chunks"
+    
+    document_ids = request.documentIds
+    delete_all = len(document_ids) == 0
+    
+    print(f"📋 [{request_id}] Raw table: {raw_table}")
+    print(f"📋 [{request_id}] Chunks table: {chunks_table}")
+    print(f"📋 [{request_id}] Delete all: {delete_all}")
+    print(f"📋 [{request_id}] Document IDs: {len(document_ids) if document_ids else 'ALL'}")
+    print(f"📋 [{request_id}] Delete from volume: {request.deleteFromVolume}")
+    
+    try:
+        config = get_databricks_config(x_forwarded_access_token)
+        warehouse_id = os.getenv("DATABRICKS_WAREHOUSE_ID")
+        
+        if not warehouse_id:
+            raise HTTPException(status_code=500, detail="Warehouse not configured")
+        
+        deleted_raw = 0
+        deleted_chunks = 0
+        deleted_files = []
+        errors = []
+        
+        # If deleting all, we need to get file names first (for volume deletion)
+        file_names_to_delete = []
+        if request.deleteFromVolume:
+            if delete_all:
+                # Get all file names
+                get_files_sql = f"SELECT file_name FROM {raw_table}"
+            else:
+                ids_str = ", ".join([f"'{id}'" for id in document_ids])
+                get_files_sql = f"SELECT file_name FROM {raw_table} WHERE id IN ({ids_str})"
+            
+            try:
+                files_result = await execute_sql(config, warehouse_id, get_files_sql, request_id)
+                if files_result and files_result.get("data_array"):
+                    file_names_to_delete = [row[0] for row in files_result["data_array"] if row[0]]
+                print(f"📁 [{request_id}] Files to delete from volume: {len(file_names_to_delete)}")
+            except Exception as e:
+                print(f"⚠️ [{request_id}] Could not get file names: {str(e)}")
+        
+        # Delete from _chunks table first (referential integrity)
+        print(f"\n🗑️ [{request_id}] Deleting from chunks table...")
+        try:
+            if delete_all:
+                delete_chunks_sql = f"DELETE FROM {chunks_table}"
+            else:
+                ids_str = ", ".join([f"'{id}'" for id in document_ids])
+                delete_chunks_sql = f"DELETE FROM {chunks_table} WHERE document_id IN ({ids_str})"
+            
+            await execute_sql(config, warehouse_id, delete_chunks_sql, request_id)
+            
+            # Get count of remaining (to calculate deleted)
+            count_result = await execute_sql(config, warehouse_id, f"SELECT COUNT(*) FROM {chunks_table}", request_id)
+            remaining_chunks = int(count_result["data_array"][0][0]) if count_result and count_result.get("data_array") else 0
+            print(f"✅ [{request_id}] Chunks table cleaned, {remaining_chunks} records remaining")
+            deleted_chunks = -1  # Indicates success but unknown count
+        except Exception as e:
+            error_str = str(e)
+            if "TABLE_OR_VIEW_NOT_FOUND" not in error_str:
+                print(f"⚠️ [{request_id}] Error deleting chunks: {error_str}")
+                errors.append(f"Chunks: {error_str}")
+            else:
+                print(f"ℹ️ [{request_id}] Chunks table does not exist (OK)")
+        
+        # Delete from _raw table
+        print(f"\n🗑️ [{request_id}] Deleting from raw table...")
+        try:
+            # Get count before
+            count_before = await execute_sql(config, warehouse_id, f"SELECT COUNT(*) FROM {raw_table}", request_id)
+            before_count = int(count_before["data_array"][0][0]) if count_before and count_before.get("data_array") else 0
+            
+            if delete_all:
+                delete_raw_sql = f"DELETE FROM {raw_table}"
+            else:
+                ids_str = ", ".join([f"'{id}'" for id in document_ids])
+                delete_raw_sql = f"DELETE FROM {raw_table} WHERE id IN ({ids_str})"
+            
+            await execute_sql(config, warehouse_id, delete_raw_sql, request_id)
+            
+            # Get count after
+            count_after = await execute_sql(config, warehouse_id, f"SELECT COUNT(*) FROM {raw_table}", request_id)
+            after_count = int(count_after["data_array"][0][0]) if count_after and count_after.get("data_array") else 0
+            
+            deleted_raw = before_count - after_count
+            print(f"✅ [{request_id}] Deleted {deleted_raw} records from raw table")
+        except Exception as e:
+            error_str = str(e)
+            if "TABLE_OR_VIEW_NOT_FOUND" not in error_str:
+                print(f"❌ [{request_id}] Error deleting from raw table: {error_str}")
+                errors.append(f"Raw: {error_str}")
+            else:
+                print(f"⚠️ [{request_id}] Raw table does not exist")
+                errors.append("Raw table not found")
+        
+        # Delete files from volume (if requested)
+        if request.deleteFromVolume and file_names_to_delete:
+            print(f"\n📁 [{request_id}] Deleting {len(file_names_to_delete)} files from volume...")
+            volume_path = get_volume_base_path(config)
+            
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                for file_name in file_names_to_delete:
+                    file_path = f"{volume_path}/{file_name}"
+                    url = f"https://{config['host']}/api/2.0/fs/files{file_path}"
+                    
+                    try:
+                        response = await client.delete(
+                            url,
+                            headers={"Authorization": f"Bearer {config['token']}"}
+                        )
+                        
+                        if response.status_code in [200, 204, 404]:
+                            deleted_files.append(file_name)
+                            print(f"  ✅ Deleted: {file_name}")
+                        else:
+                            print(f"  ⚠️ Could not delete: {file_name} (HTTP {response.status_code})")
+                    except Exception as e:
+                        print(f"  ❌ Error deleting {file_name}: {str(e)}")
+            
+            print(f"✅ [{request_id}] Deleted {len(deleted_files)} files from volume")
+        
+        print(f"\n{'=' * 80}")
+        print(f"✅ [{request_id}] Deletion complete!")
+        print(f"  - Raw records deleted: {deleted_raw}")
+        print(f"  - Chunks deleted: {'Yes' if deleted_chunks != 0 else 'No'}")
+        print(f"  - Volume files deleted: {len(deleted_files)}")
+        print(f"{'=' * 80}\n")
+        
+        return {
+            "success": len(errors) == 0,
+            "deletedRaw": deleted_raw,
+            "deletedChunks": deleted_chunks != 0,
+            "deletedFiles": deleted_files,
+            "deletedFilesCount": len(deleted_files),
+            "errors": errors if errors else None
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"💥 [{request_id}] Exception: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/chunking/preview")
 async def get_chunking_preview(
     request: ChunkingPreviewRequest,
@@ -1504,6 +1672,184 @@ async def process_documents(
         "chunksTable": init_result.get("chunksTable"),
         "errors": errors if errors else None
     }
+
+
+# ============================================================================
+# Volume Management API (Module 1)
+# ============================================================================
+
+@app.get("/api/volume/files")
+async def list_volume_files(
+    offset: int = 0,
+    limit: int = 10,
+    x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
+):
+    """List PDF files from Unity Catalog Volume with pagination"""
+    request_id = str(uuid.uuid4())[:8]
+    print(f"\n{'=' * 80}")
+    print(f"📁 [{request_id}] List volume files at {datetime.now().isoformat()}")
+    print(f"{'=' * 80}")
+    
+    try:
+        config = get_databricks_config(x_forwarded_access_token)
+        volume_path = get_volume_base_path(config)
+        
+        print(f"📁 [{request_id}] Listing files in: {volume_path}")
+        print(f"📋 [{request_id}] Offset: {offset}, Limit: {limit}")
+        
+        url = f"https://{config['host']}/api/2.0/fs/directories{volume_path}"
+        
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.get(
+                url,
+                headers={"Authorization": f"Bearer {config['token']}"}
+            )
+        
+        if response.status_code == 404:
+            print(f"⚠️ [{request_id}] Volume not found or empty")
+            return {
+                "success": True,
+                "files": [],
+                "total": 0,
+                "offset": offset,
+                "limit": limit,
+                "hasMore": False,
+                "volumePath": volume_path
+            }
+        
+        if response.status_code != 200:
+            print(f"❌ [{request_id}] Error listing files: {response.status_code}")
+            raise HTTPException(status_code=response.status_code, detail="Failed to list files")
+        
+        data = response.json()
+        all_files = []
+        
+        for item in data.get("contents", []):
+            if item.get("is_directory", False):
+                continue
+            
+            name = item.get("name", "")
+            if name.lower().endswith(".pdf"):
+                all_files.append({
+                    "name": name,
+                    "path": item.get("path", ""),
+                    "size": item.get("file_size", 0),
+                    "lastModified": item.get("modification_time", "")
+                })
+        
+        # Sort by name
+        all_files.sort(key=lambda x: x["name"].lower())
+        
+        # Apply pagination
+        total = len(all_files)
+        paginated_files = all_files[offset:offset + limit]
+        
+        print(f"✅ [{request_id}] Found {total} PDF files, returning {len(paginated_files)}")
+        print(f"{'=' * 80}\n")
+        
+        return {
+            "success": True,
+            "files": paginated_files,
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+            "hasMore": offset + len(paginated_files) < total,
+            "volumePath": volume_path
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"💥 [{request_id}] Exception: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class DeleteVolumeFilesRequest(BaseModel):
+    fileNames: List[str]  # List of file names to delete, or empty for all
+
+
+@app.post("/api/volume/files/delete")
+async def delete_volume_files(
+    request: DeleteVolumeFilesRequest,
+    x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
+):
+    """
+    Delete files from Unity Catalog Volume.
+    If fileNames is empty, deletes ALL files.
+    """
+    request_id = str(uuid.uuid4())[:8]
+    print(f"\n{'=' * 80}")
+    print(f"🗑️ [{request_id}] Delete volume files at {datetime.now().isoformat()}")
+    print(f"{'=' * 80}")
+    
+    try:
+        config = get_databricks_config(x_forwarded_access_token)
+        volume_path = get_volume_base_path(config)
+        
+        file_names = request.fileNames
+        
+        # If no specific files, get all files
+        if not file_names:
+            print(f"⚠️ [{request_id}] No files specified - will delete ALL files")
+            
+            url = f"https://{config['host']}/api/2.0/fs/directories{volume_path}"
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.get(
+                    url,
+                    headers={"Authorization": f"Bearer {config['token']}"}
+                )
+            
+            if response.status_code == 200:
+                data = response.json()
+                for item in data.get("contents", []):
+                    if not item.get("is_directory", False):
+                        name = item.get("name", "")
+                        if name.lower().endswith(".pdf"):
+                            file_names.append(name)
+        
+        print(f"📋 [{request_id}] Files to delete: {len(file_names)}")
+        
+        deleted = []
+        errors = []
+        
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            for file_name in file_names:
+                file_path = f"{volume_path}/{file_name}"
+                url = f"https://{config['host']}/api/2.0/fs/files{file_path}"
+                
+                print(f"  🗑️ [{request_id}] Deleting: {file_name}")
+                
+                response = await client.delete(
+                    url,
+                    headers={"Authorization": f"Bearer {config['token']}"}
+                )
+                
+                if response.status_code in [200, 204]:
+                    deleted.append(file_name)
+                    print(f"    ✅ Deleted: {file_name}")
+                elif response.status_code == 404:
+                    print(f"    ⚠️ Not found (already deleted?): {file_name}")
+                    deleted.append(file_name)  # Count as success
+                else:
+                    error_msg = f"HTTP {response.status_code}"
+                    errors.append({"fileName": file_name, "error": error_msg})
+                    print(f"    ❌ Error: {file_name} - {error_msg}")
+        
+        print(f"\n✅ [{request_id}] Deletion complete: {len(deleted)} deleted, {len(errors)} errors")
+        print(f"{'=' * 80}\n")
+        
+        return {
+            "success": len(errors) == 0,
+            "deleted": deleted,
+            "deletedCount": len(deleted),
+            "errors": errors if errors else None
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"💥 [{request_id}] Exception: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/chunks/preview")
