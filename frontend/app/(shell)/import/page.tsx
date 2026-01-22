@@ -51,7 +51,7 @@ export default function ImportPage() {
   const [tableConfig, setTableConfig] = useState<TableConfig>({
     catalog: "",
     schema: "",
-    tableName: "contracts_raw"
+    tableName: "contracts"  // Base name only - backend adds _raw suffix
   })
   const [isConfigSaved, setIsConfigSaved] = useState(false)
   const [showConfig, setShowConfig] = useState(false)
@@ -70,7 +70,7 @@ export default function ImportPage() {
           const newConfig = {
             catalog: config.catalog || "",
             schema: config.schema || "",
-            tableName: "contracts_raw"
+            tableName: "contracts"  // Base name only - backend adds _raw suffix
           }
           setTableConfig(newConfig)
           
