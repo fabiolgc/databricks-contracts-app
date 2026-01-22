@@ -59,6 +59,8 @@ interface ChunkingStrategy {
     chunkSize?: number
     chunkOverlap?: number
     separator?: string
+    separatorType?: string
+    customSeparator?: string
   }
 }
 
@@ -106,6 +108,12 @@ const CHUNKING_STRATEGIES: ChunkingStrategy[] = [
     params: { chunkSize: 1000, chunkOverlap: 200, separator: "\\n\\n" }
   },
   {
+    id: "by_separator",
+    name: "Por Separador",
+    description: "Divide por delimitadores personalizados (parágrafo, linha, ponto). Usa fallback se não encontrar.",
+    params: { chunkSize: 800, separatorType: "paragraph", customSeparator: "" }
+  },
+  {
     id: "by_page",
     name: "Por Página",
     description: "Cada página do PDF se torna um chunk. Ideal para documentos estruturados por página.",
@@ -123,6 +131,14 @@ const CHUNKING_STRATEGIES: ChunkingStrategy[] = [
     description: "Usa embeddings para identificar quebras naturais de tópico. Maior precisão, mais lento.",
     params: { chunkSize: 1500 }
   }
+]
+
+// Separator types for the "by_separator" strategy
+const SEPARATOR_TYPES = [
+  { id: "paragraph", name: "Parágrafo (linha dupla)", separator: "\\n\\n" },
+  { id: "line", name: "Linha (Enter)", separator: "\\n" },
+  { id: "sentence", name: "Sentença (ponto final)", separator: ". " },
+  { id: "custom", name: "Personalizado", separator: "" }
 ]
 
 export default function PreparePage() {
@@ -171,7 +187,9 @@ export default function PreparePage() {
   const [selectedStrategy, setSelectedStrategy] = useState<string>("recursive")
   const [chunkingParams, setChunkingParams] = useState({
     chunkSize: 1000,
-    chunkOverlap: 200
+    chunkOverlap: 200,
+    separatorType: "paragraph",  // For by_separator strategy
+    customSeparator: ""          // For custom separator
   })
   
   // State for chunking preview
@@ -499,7 +517,9 @@ export default function PreparePage() {
           documentIds: docIds,
           strategy: selectedStrategy,
           chunkSize: chunkingParams.chunkSize,
-          chunkOverlap: chunkingParams.chunkOverlap
+          chunkOverlap: chunkingParams.chunkOverlap,
+          separatorType: chunkingParams.separatorType,
+          customSeparator: chunkingParams.customSeparator
         })
       })
       
@@ -1576,10 +1596,62 @@ export default function PreparePage() {
             {selectedStrategy !== "by_page" && (
               <div className="mt-4 pt-4 border-t border-gray-200">
                 <h3 className="text-sm font-medium text-gray-700 mb-3">Parâmetros</h3>
+                
+                {/* Separator controls for by_separator strategy */}
+                {selectedStrategy === "by_separator" && (
+                  <div className="mb-4 p-3 bg-gray-50 rounded-lg">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Tipo de Separador
+                    </label>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
+                      {SEPARATOR_TYPES.map((sep) => (
+                        <button
+                          key={sep.id}
+                          onClick={() => setChunkingParams(prev => ({ 
+                            ...prev, 
+                            separatorType: sep.id,
+                            customSeparator: sep.id === "custom" ? prev.customSeparator : ""
+                          }))}
+                          className={`px-3 py-2 text-xs font-medium rounded-lg border transition-colors ${
+                            chunkingParams.separatorType === sep.id
+                              ? "border-[#FF3621] bg-red-50 text-[#FF3621]"
+                              : "border-gray-300 bg-white text-gray-700 hover:border-gray-400"
+                          }`}
+                        >
+                          {sep.name}
+                        </button>
+                      ))}
+                    </div>
+                    
+                    {/* Custom separator input */}
+                    {chunkingParams.separatorType === "custom" && (
+                      <div>
+                        <label className="block text-sm text-gray-600 mb-1">
+                          Separador personalizado
+                        </label>
+                        <input
+                          type="text"
+                          value={chunkingParams.customSeparator}
+                          onChange={(e) => setChunkingParams(prev => ({ ...prev, customSeparator: e.target.value }))}
+                          placeholder="Ex: --- ou ### ou ;"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#FF3621]/20 focus:border-[#FF3621]"
+                        />
+                        <p className="mt-1 text-xs text-gray-500">
+                          Dica: Use \n para linha, \n\n para parágrafo, ou qualquer texto
+                        </p>
+                      </div>
+                    )}
+                    
+                    <p className="mt-2 text-xs text-gray-500">
+                      ⚡ Fallback automático: se não encontrar o separador, tentará: parágrafo → linha → ponto → espaço
+                    </p>
+                  </div>
+                )}
+                
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm text-gray-600 mb-1">
-                      Tamanho do Chunk (caracteres)
+                      Tamanho máximo do Chunk (caracteres)
                     </label>
                     <input
                       type="number"
@@ -1590,8 +1662,13 @@ export default function PreparePage() {
                       step={100}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#FF3621]/20 focus:border-[#FF3621]"
                     />
+                    {selectedStrategy === "by_separator" && (
+                      <p className="mt-1 text-xs text-gray-500">
+                        Se um bloco ultrapassar este limite, será subdividido
+                      </p>
+                    )}
                   </div>
-                  {selectedStrategy !== "semantic" && (
+                  {selectedStrategy !== "semantic" && selectedStrategy !== "by_separator" && (
                     <div>
                       <label className="block text-sm text-gray-600 mb-1">
                         Overlap (caracteres)

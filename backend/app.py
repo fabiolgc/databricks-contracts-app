@@ -78,9 +78,11 @@ class ChunkingPreviewRequest(BaseModel):
     schema_name: str
     tableName: str
     documentIds: List[str]  # IDs of documents to preview (max 3)
-    strategy: str  # fixed_size, recursive, by_sentence, by_page, semantic
+    strategy: str  # fixed_size, recursive, by_sentence, by_separator, by_page, semantic
     chunkSize: int = 1000
     chunkOverlap: int = 200
+    separatorType: str = "paragraph"  # For by_separator: paragraph, line, sentence, custom
+    customSeparator: str = ""  # For custom separator
 
 # CORS middleware (adjust origins as needed for your environment)
 app.add_middleware(
@@ -207,7 +209,82 @@ def chunk_by_page(text: str) -> List[str]:
     return [p.strip() for p in pages if p.strip()]
 
 
-def apply_chunking(text: str, strategy: str, chunk_size: int = 1000, overlap: int = 200) -> List[str]:
+def chunk_by_separator(text: str, chunk_size: int, separator_type: str = "paragraph", custom_separator: str = "") -> tuple[List[str], List[str]]:
+    """
+    Divide text by custom separators with fallback chain.
+    Returns (chunks, separators_used) tuple.
+    """
+    # Define separator hierarchy for fallback
+    SEPARATORS = {
+        "paragraph": "\n\n",
+        "line": "\n",
+        "sentence": ". ",
+        "space": " "
+    }
+    
+    # Determine primary separator
+    if separator_type == "custom" and custom_separator:
+        # Handle escape sequences
+        primary_sep = custom_separator.replace("\\n\\n", "\n\n").replace("\\n", "\n").replace("\\t", "\t")
+    else:
+        primary_sep = SEPARATORS.get(separator_type, "\n\n")
+    
+    # Fallback order
+    fallback_order = ["paragraph", "line", "sentence", "space"]
+    separators_tried = []
+    
+    # Try primary separator first
+    if primary_sep in text:
+        parts = text.split(primary_sep)
+        parts = [p.strip() for p in parts if p.strip()]
+        if len(parts) > 1:
+            # Success with primary separator
+            chunks = []
+            sep_name = separator_type if separator_type != "custom" else f"custom ({custom_separator})"
+            separators_tried.append(sep_name)
+            
+            # Apply max size constraint
+            for part in parts:
+                if len(part) <= chunk_size:
+                    chunks.append(part)
+                else:
+                    # Part too large, subdivide by next separator or fixed size
+                    sub_chunks = chunk_by_fixed_size(part, chunk_size, 0)
+                    chunks.extend(sub_chunks)
+            
+            return chunks, separators_tried
+    
+    # Fallback chain
+    sep_name = separator_type if separator_type != "custom" else f"custom ({custom_separator})"
+    separators_tried.append(f"{sep_name} (não encontrado)")
+    
+    for fallback_type in fallback_order:
+        fallback_sep = SEPARATORS[fallback_type]
+        if fallback_sep in text and fallback_sep != primary_sep:
+            parts = text.split(fallback_sep)
+            parts = [p.strip() for p in parts if p.strip()]
+            if len(parts) > 1:
+                separators_tried.append(f"{fallback_type} (fallback)")
+                
+                chunks = []
+                for part in parts:
+                    if len(part) <= chunk_size:
+                        chunks.append(part)
+                    else:
+                        sub_chunks = chunk_by_fixed_size(part, chunk_size, 0)
+                        chunks.extend(sub_chunks)
+                
+                return chunks, separators_tried
+            else:
+                separators_tried.append(f"{fallback_type} (não encontrado)")
+    
+    # Last resort: fixed size
+    separators_tried.append("tamanho fixo (fallback final)")
+    return chunk_by_fixed_size(text, chunk_size, 0), separators_tried
+
+
+def apply_chunking(text: str, strategy: str, chunk_size: int = 1000, overlap: int = 200, 
+                   separator_type: str = "paragraph", custom_separator: str = "") -> List[str]:
     """Apply chunking strategy to text"""
     if not text or not text.strip():
         return []
@@ -218,6 +295,9 @@ def apply_chunking(text: str, strategy: str, chunk_size: int = 1000, overlap: in
         return chunk_by_recursive(text, chunk_size, overlap)
     elif strategy == 'by_sentence':
         return chunk_by_sentence(text, chunk_size, overlap)
+    elif strategy == 'by_separator':
+        chunks, _ = chunk_by_separator(text, chunk_size, separator_type, custom_separator)
+        return chunks
     elif strategy == 'by_page':
         return chunk_by_page(text)
     elif strategy == 'semantic':
@@ -1069,7 +1149,9 @@ async def get_chunking_preview(
                     raw_text, 
                     request.strategy, 
                     request.chunkSize, 
-                    request.chunkOverlap
+                    request.chunkOverlap,
+                    request.separatorType,
+                    request.customSeparator
                 )
                 
                 print(f"✅ [{request_id}] {file_name}: {len(chunks)} chunks")
@@ -1154,10 +1236,18 @@ async def init_processing(
                 )
             raise
         
-        # Step 2: Create chunks table (if not exists)
-        # Note: Existing chunks for selected files will be deleted in process_single_file
+        # Step 2: DROP existing chunks table and recreate
+        # This ensures only chunks from selected documents will exist
+        print(f"\n🗑️ [{request_id}] Dropping existing chunks table: {chunks_table}")
+        try:
+            await execute_sql(config, warehouse_id, f"DROP TABLE IF EXISTS {chunks_table}", request_id)
+            print(f"✅ [{request_id}] Chunks table dropped")
+        except Exception as e:
+            print(f"⚠️ [{request_id}] Could not drop chunks table: {str(e)}")
+        
+        # Step 3: Create fresh chunks table
         create_chunks_sql = f"""
-        CREATE TABLE IF NOT EXISTS {chunks_table} (
+        CREATE TABLE {chunks_table} (
             id STRING,
             document_id STRING,
             file_name STRING,
@@ -1171,7 +1261,7 @@ async def init_processing(
         )
         USING DELTA
         """
-        print(f"\n📊 [{request_id}] Creating chunks table: {chunks_table}")
+        print(f"\n📊 [{request_id}] Creating fresh chunks table: {chunks_table}")
         await execute_sql(config, warehouse_id, create_chunks_sql, request_id)
         
         # All selected files will be processed
@@ -1238,18 +1328,10 @@ async def process_single_file(
         chunk_size = params.get("chunkSize", 1000)
         chunk_overlap = params.get("chunkOverlap", 200)
         
-        # Step 1: Always delete existing chunks for this file before creating new ones
-        # This ensures the new chunking strategy is applied fresh
-        print(f"🗑️ [{request_id}] Deleting existing chunks for: {file_name}")
-        escaped_name = file_name.replace("'", "''")
-        try:
-            await execute_sql(config, warehouse_id, 
-                f"DELETE FROM {chunks_table} WHERE file_name = '{escaped_name}'", request_id)
-        except Exception as e:
-            # Table might not exist yet, that's OK
-            print(f"⚠️ [{request_id}] Could not delete from chunks table (might not exist): {str(e)}")
+        # Note: Chunks table was already dropped and recreated in init_processing
+        # No need to delete individual file chunks here
         
-        # Step 2: Get text from _raw table (already extracted in Module 1)
+        # Step 1: Get text from _raw table (already extracted in Module 1)
         escaped_file_name = file_name.replace("'", "''")
         raw_table = f"{catalog}.{schema}.{table_name}_raw"
         
@@ -1291,8 +1373,14 @@ async def process_single_file(
             }
         
         # Step 4: Create chunks
+        separator_type = params.get("separatorType", "paragraph")
+        custom_separator = params.get("customSeparator", "")
+        
         print(f"\n✂️ [{request_id}] Creating chunks with '{strategy}' strategy...")
-        chunks = create_chunks(raw_text, strategy, chunk_size, chunk_overlap)
+        if strategy == "by_separator":
+            print(f"  Separator type: {separator_type}, Custom: '{custom_separator}'")
+        
+        chunks = create_chunks(raw_text, strategy, chunk_size, chunk_overlap, separator_type, custom_separator)
         print(f"✅ [{request_id}] Created {len(chunks)} chunks")
         
         # Step 5: Save chunks to chunks table
@@ -1686,7 +1774,8 @@ for page in reader.pages:
 """
 
 
-def create_chunks(text: str, strategy: str, chunk_size: int, chunk_overlap: int) -> List[str]:
+def create_chunks(text: str, strategy: str, chunk_size: int, chunk_overlap: int,
+                  separator_type: str = "paragraph", custom_separator: str = "") -> List[str]:
     """
     Create text chunks based on the selected strategy.
     Based on: https://community.databricks.com/t5/technical-blog/the-ultimate-guide-to-chunking-strategies-for-rag-applications/ba-p/113089
@@ -1699,6 +1788,11 @@ def create_chunks(text: str, strategy: str, chunk_size: int, chunk_overlap: int)
     
     elif strategy == "recursive":
         return chunk_recursive(text, chunk_size, chunk_overlap)
+    
+    elif strategy == "by_separator":
+        chunks, separators_used = chunk_by_separator(text, chunk_size, separator_type, custom_separator)
+        print(f"  Separators used: {' → '.join(separators_used)}")
+        return chunks
     
     elif strategy == "by_page":
         # For placeholder, simulate page breaks
