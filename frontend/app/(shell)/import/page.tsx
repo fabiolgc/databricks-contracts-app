@@ -921,7 +921,7 @@ export default function ImportPage() {
           className="w-full px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between hover:bg-gray-100 transition-colors"
         >
           <div className="flex items-center gap-2">
-            <FolderOpen className="h-5 w-5 text-gray-600" />
+            <FolderOpen className="h-5 w-5 text-[#FF3621]" />
             <h2 className="text-lg font-semibold text-[#1B1B1D]">Gerenciar Volume</h2>
           </div>
           <div className="flex items-center gap-2">
