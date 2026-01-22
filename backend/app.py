@@ -540,7 +540,8 @@ async def extract_text_from_file(
         schema = table_config.get("schema", "")
         table_name = table_config.get("tableName", "")
         
-        documents_table = f"{catalog}.{schema}.{table_name}"
+        # Use _raw suffix for raw documents table (Module 1)
+        raw_table = f"{catalog}.{schema}.{table_name}_raw"
         volume_path = get_volume_base_path(config)
         
         warehouse_id = os.getenv("DATABRICKS_WAREHOUSE_ID")
@@ -548,14 +549,14 @@ async def extract_text_from_file(
             raise HTTPException(status_code=500, detail="Warehouse ID not configured")
         
         print(f"📋 [{request_id}] Configuration:")
-        print(f"  - Table: {documents_table}")
+        print(f"  - Table: {raw_table}")
         print(f"  - Volume: {volume_path}")
         print(f"  - File: {file_name}")
         print(f"  - Mode: {mode}")
         
-        # Step 1: Create documents table if not exists
+        # Step 1: Create raw documents table if not exists
         create_table_sql = f"""
-        CREATE TABLE IF NOT EXISTS {documents_table} (
+        CREATE TABLE IF NOT EXISTS {raw_table} (
             id STRING,
             file_name STRING,
             file_path STRING,
@@ -568,12 +569,12 @@ async def extract_text_from_file(
         )
         USING DELTA
         """
-        print(f"\n📊 [{request_id}] Ensuring documents table exists...")
+        print(f"\n📊 [{request_id}] Ensuring raw table exists...")
         await execute_sql(config, warehouse_id, create_table_sql, request_id)
         
         # Step 2: Check if document already exists
         escaped_file_name = file_name.replace("'", "''")
-        check_sql = f"SELECT id FROM {documents_table} WHERE file_name = '{escaped_file_name}'"
+        check_sql = f"SELECT id FROM {raw_table} WHERE file_name = '{escaped_file_name}'"
         check_result = await execute_sql(config, warehouse_id, check_sql, request_id)
         
         existing_doc_id = None
@@ -659,8 +660,8 @@ async def extract_text_from_file(
                 "error": "Extracted text is empty"
             }
         
-        # Step 4: Save to documents table (INSERT or UPDATE)
-        print(f"\n💾 [{request_id}] Saving to documents table...")
+        # Step 4: Save to raw table (INSERT or UPDATE)
+        print(f"\n💾 [{request_id}] Saving to raw table...")
         
         escaped_raw_text = raw_text.replace("'", "''").replace("\\", "\\\\")
         escaped_path = file_path.replace("'", "''")
@@ -668,7 +669,7 @@ async def extract_text_from_file(
         if existing_doc_id:
             # Update existing document
             update_sql = f"""
-            UPDATE {documents_table}
+            UPDATE {raw_table}
             SET raw_text = '{escaped_raw_text}',
                 text_length = {len(raw_text)},
                 page_count = {page_count},
@@ -682,7 +683,7 @@ async def extract_text_from_file(
             # Insert new document
             doc_id = str(uuid.uuid4())
             insert_sql = f"""
-            INSERT INTO {documents_table}
+            INSERT INTO {raw_table}
             (id, file_name, file_path, raw_text, text_length, page_count, created_at, updated_at, metadata)
             VALUES (
                 '{doc_id}',
@@ -855,7 +856,7 @@ async def check_table(
             return {
                 "exists": False, 
                 "recordCount": 0,
-                "documentsTable": documents_table,
+                "rawTable": raw_table,
                 "chunksTable": chunks_table
             }
         raise HTTPException(status_code=500, detail=str(e))
@@ -1397,7 +1398,7 @@ async def process_documents(
         "success": len(errors) == 0,
         "filesProcessed": files_processed,
         "chunksCreated": total_chunks,
-        "documentsTable": init_result.get("documentsTable"),
+        "rawTable": init_result.get("rawTable"),
         "chunksTable": init_result.get("chunksTable"),
         "errors": errors if errors else None
     }
