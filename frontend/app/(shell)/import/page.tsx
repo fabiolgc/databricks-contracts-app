@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Upload, CheckCircle2, XCircle, Loader2, ChevronLeft, ChevronRight, Database, Settings, Trash2, FolderOpen, RefreshCw } from "lucide-react"
+import { Upload, CheckCircle2, XCircle, Loader2, ChevronLeft, ChevronRight, Database, Settings, Trash2, FolderOpen, RefreshCw, FileStack } from "lucide-react"
 import { toast } from "sonner"
 
 type FileStatus = "pending" | "uploading" | "extracting" | "success" | "error" | "skipped"
@@ -1159,9 +1159,12 @@ export default function ImportPage() {
 
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
               <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-[#1B1B1D]">
-                Arquivos Selecionados ({files.length})
-              </h3>
+              <div className="flex items-center gap-2">
+                <FileStack className="h-5 w-5 text-[#FF3621]" />
+                <h3 className="text-lg font-semibold text-[#1B1B1D]">
+                  Arquivos Selecionados ({files.length})
+                </h3>
+              </div>
               {totalPages > 1 && (
                 <div className="flex items-center gap-2">
                   <button
