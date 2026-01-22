@@ -235,6 +235,9 @@ export default function PreparePage() {
   const [deleteAllDocuments, setDeleteAllDocuments] = useState(false)
   const [deleteFromVolume, setDeleteFromVolume] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
+  
+  // State for process confirmation modal
+  const [showProcessConfirmModal, setShowProcessConfirmModal] = useState(false)
 
   // Load environment config on mount - use base table name (without _raw or _chunks suffix)
   useEffect(() => {
@@ -1083,9 +1086,7 @@ export default function PreparePage() {
                 <button
                   onClick={() => {
                     setShowChunkingPreview(false)
-                    setCompletedSteps(prev => new Set([...prev, 3]))
-                    setActiveStep(null) // Fecha o grupo ao processar
-                    startProcessing()
+                    setShowProcessConfirmModal(true)
                   }}
                   disabled={processingStatus.status === "processing"}
                   className="px-6 py-2 text-sm font-medium text-white bg-[#FF3621] rounded-lg hover:bg-[#FF3621]/90 transition-colors shadow-sm disabled:opacity-50 flex items-center gap-2"
@@ -1659,6 +1660,55 @@ export default function PreparePage() {
           </div>
         )}
 
+        {/* Process Confirmation Modal */}
+        {showProcessConfirmModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+            <div className="bg-white rounded-xl shadow-2xl p-6 max-w-md w-full">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="p-2 bg-amber-100 rounded-full">
+                  <AlertCircle className="h-6 w-6 text-amber-600" />
+                </div>
+                <h3 className="text-xl font-bold text-[#1B1B1D]">
+                  Confirmar processamento
+                </h3>
+              </div>
+              
+              <p className="text-base text-gray-600 mb-4">
+                Você está prestes a processar <strong>{selectedDocuments.size}</strong> documento(s) 
+                com a estratégia <strong>{CHUNKING_STRATEGIES.find(s => s.id === selectedStrategy)?.name}</strong>.
+              </p>
+              
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-6">
+                <p className="text-sm text-amber-800">
+                  <strong>Atenção:</strong> Todos os chunks existentes na tabela <code className="bg-amber-100 px-1 rounded">_chunks</code> serão 
+                  <strong> apagados</strong> e novos chunks serão gerados com a estratégia selecionada.
+                </p>
+              </div>
+              
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowProcessConfirmModal(false)}
+                  className="flex-1 px-4 py-2.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={() => {
+                    setShowProcessConfirmModal(false)
+                    setCompletedSteps(prev => new Set([...prev, 3]))
+                    setActiveStep(null)
+                    startProcessing()
+                  }}
+                  className="flex-1 px-4 py-2.5 text-sm font-medium text-white bg-[#FF3621] rounded-lg hover:bg-[#FF3621]/90 transition-colors flex items-center justify-center gap-2"
+                >
+                  <Play className="h-4 w-4" />
+                  Sim, Processar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Text Preview Modal */}
         {showTextModal && selectedDocumentText && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
@@ -1874,11 +1924,7 @@ export default function PreparePage() {
                 </span>
               </div>
               <button
-                onClick={() => {
-                  setCompletedSteps(prev => new Set([...prev, 3]))
-                  setActiveStep(null) // Fecha o grupo ao processar
-                  startProcessing()
-                }}
+                onClick={() => setShowProcessConfirmModal(true)}
                 disabled={processingStatus.status === "processing" || selectedDocuments.size === 0}
                 className="px-6 py-2.5 text-sm font-medium text-white bg-[#FF3621] rounded-lg hover:bg-[#FF3621]/90 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
               >
