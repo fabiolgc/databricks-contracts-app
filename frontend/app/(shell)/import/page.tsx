@@ -627,7 +627,7 @@ export default function ImportPage() {
                 onClick={() => handleOverwriteDecision("overwrite")}
                 className="w-full px-4 py-2.5 text-sm font-medium text-[#FF3621] bg-red-50 rounded-lg hover:bg-red-100 transition-colors"
               >
-                Sobrescrever apenas este
+                Sobrescrever este arquivo
               </button>
               <button
                 onClick={() => handleOverwriteDecision("skip")}
