@@ -59,6 +59,10 @@ export default function ImportPage() {
   // Timer for processing
   const [processingStartTime, setProcessingStartTime] = useState<number | null>(null)
   const [elapsedTime, setElapsedTime] = useState<number>(0)
+  
+  // Track current file being processed
+  const [currentFileIndex, setCurrentFileIndex] = useState<number>(0)
+  const [totalFilesToProcess, setTotalFilesToProcess] = useState<number>(0)
 
   // Load environment config on mount and auto-save if all fields are present
   useEffect(() => {
@@ -400,19 +404,31 @@ export default function ImportPage() {
       return
     }
 
+    // Calculate files to process (pending, error - not success or skipped)
+    const filesToProcess = files.filter(f => f.status === "pending" || f.status === "error")
+    if (filesToProcess.length === 0) return
+    
     setIsUploading(true)
     setProcessingStartTime(Date.now())
     setElapsedTime(0)
+    setCurrentFileIndex(0)
+    setTotalFilesToProcess(filesToProcess.length)
+    
     let localOverwriteAll = false
     let successCount = 0
     let errorCount = 0
     let skippedCount = 0
+    let processedIndex = 0
 
-    console.log(`🚀 Starting upload of ${files.length} file(s)`)
+    console.log(`🚀 Starting upload of ${filesToProcess.length} file(s) (${files.length} total)`)
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i]
       if (file.status === "success" || file.status === "skipped") continue
+
+      // Update current file index for UI
+      processedIndex++
+      setCurrentFileIndex(processedIndex)
 
       // Navigate to the page where this file is located
       const filePageNumber = Math.floor(i / FILES_PER_PAGE) + 1
@@ -519,6 +535,8 @@ export default function ImportPage() {
     const totalTime = processingStartTime ? Math.floor((Date.now() - processingStartTime) / 1000) : 0
     setIsUploading(false)
     setProcessingStartTime(null)
+    setCurrentFileIndex(0)
+    setTotalFilesToProcess(0)
 
     // Sort files: success/error/skipped at end, pending at start
     setFiles(prev => {
@@ -1031,17 +1049,26 @@ export default function ImportPage() {
                   >
                     Cancelar
                   </button>
-                  <button
-                    onClick={handleImport}
-                    disabled={isUploading}
-                    className="px-4 py-2 text-sm font-medium text-white bg-[#FF3621] rounded-lg hover:bg-[#FF3621]/90 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                  >
-                    {isUploading && <Loader2 className="h-4 w-4 animate-spin" />}
-                    {isUploading
-                      ? `Importando... ${formatElapsedTime(elapsedTime)}`
-                      : `Importar ${files.length} ${files.length === 1 ? "arquivo" : "arquivos"}`
-                    }
-                  </button>
+                  {(() => {
+                    const pendingCount = files.filter(f => f.status === "pending" || f.status === "error").length
+                    const hasNoPending = pendingCount === 0
+                    
+                    return (
+                      <button
+                        onClick={handleImport}
+                        disabled={isUploading || hasNoPending}
+                        className="px-4 py-2 text-sm font-medium text-white bg-[#FF3621] rounded-lg hover:bg-[#FF3621]/90 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                      >
+                        {isUploading && <Loader2 className="h-4 w-4 animate-spin" />}
+                        {isUploading
+                          ? `Importando ${currentFileIndex}/${totalFilesToProcess} ${formatElapsedTime(elapsedTime)}`
+                          : pendingCount === files.length
+                            ? `Importar ${files.length} ${files.length === 1 ? "arquivo" : "arquivos"}`
+                            : `Importar ${pendingCount} de ${files.length}`
+                        }
+                      </button>
+                    )
+                  })()}
                 </>
               )}
               </div>
