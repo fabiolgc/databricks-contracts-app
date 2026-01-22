@@ -1428,10 +1428,35 @@ export default function PreparePage() {
                         Selecionar todos ({rawDocuments.length})
                       </span>
                     </label>
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2">
                       <span className="text-sm text-gray-500">
                         {selectedDocuments.size} de {documentsTotal} selecionado(s)
                       </span>
+                      
+                      {/* Delete selected button */}
+                      {selectedDocuments.size > 0 && (
+                        <button
+                          onClick={() => openDeleteModal(false)}
+                          className="px-2 py-1 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded hover:bg-red-100 transition-colors flex items-center gap-1"
+                          title={`Remover ${selectedDocuments.size} selecionado(s)`}
+                        >
+                          <Trash2 className="h-3 w-3" />
+                          Remover selecionados
+                        </button>
+                      )}
+                      
+                      {/* Delete all button */}
+                      {rawDocuments.length > 0 && selectedDocuments.size === 0 && (
+                        <button
+                          onClick={() => openDeleteModal(true)}
+                          className="px-2 py-1 text-xs font-medium text-gray-600 bg-gray-100 border border-gray-200 rounded hover:bg-gray-200 transition-colors flex items-center gap-1"
+                          title="Remover todos os documentos"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                          Remover todos
+                        </button>
+                      )}
+                      
                       <button
                         onClick={() => loadRawDocuments()}
                         disabled={isLoadingDocuments}
@@ -1561,6 +1586,79 @@ export default function PreparePage() {
           )}
         </div>
         
+        {/* Delete Confirmation Modal */}
+        {showDeleteModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+            <div className="bg-white rounded-xl shadow-2xl p-6 max-w-md w-full">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="p-2 bg-red-100 rounded-full">
+                  <Trash2 className="h-6 w-6 text-red-600" />
+                </div>
+                <h3 className="text-xl font-bold text-[#1B1B1D]">
+                  {deleteAllDocuments ? "Remover todos os documentos?" : "Remover documentos selecionados?"}
+                </h3>
+              </div>
+              
+              <p className="text-base text-gray-600 mb-4">
+                {deleteAllDocuments 
+                  ? `Você está prestes a remover todos os ${documentsTotal} documento(s) das tabelas.`
+                  : `Você está prestes a remover ${selectedDocuments.size} documento(s) selecionado(s).`
+                }
+              </p>
+              
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4">
+                <p className="text-sm text-amber-800">
+                  <strong>Atenção:</strong> Esta ação irá remover os documentos da tabela <code className="bg-amber-100 px-1 rounded">_raw</code> e 
+                  os chunks correspondentes da tabela <code className="bg-amber-100 px-1 rounded">_chunks</code>.
+                </p>
+              </div>
+              
+              <label className="flex items-center gap-2 mb-6 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={deleteFromVolume}
+                  onChange={(e) => setDeleteFromVolume(e.target.checked)}
+                  className="w-4 h-4 text-red-600 border-gray-300 rounded focus:ring-red-500"
+                />
+                <span className="text-sm text-gray-700">
+                  Também remover os arquivos PDF do volume
+                </span>
+              </label>
+              
+              <div className="flex gap-3">
+                <button
+                  onClick={() => {
+                    setShowDeleteModal(false)
+                    setDeleteFromVolume(false)
+                    setDeleteAllDocuments(false)
+                  }}
+                  disabled={isDeleting}
+                  className="flex-1 px-4 py-2.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={deleteDocuments}
+                  disabled={isDeleting}
+                  className="flex-1 px-4 py-2.5 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {isDeleting ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Removendo...
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 className="h-4 w-4" />
+                      Remover {deleteAllDocuments ? "todos" : selectedDocuments.size}
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Text Preview Modal */}
         {showTextModal && selectedDocumentText && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
