@@ -73,7 +73,7 @@ export default function ImportPage() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [deleteMode, setDeleteMode] = useState<"all" | "selected">("selected")
   const [isDeleting, setIsDeleting] = useState(false)
-  const VOLUME_FILES_PER_PAGE = 10
+  const VOLUME_FILES_PER_PAGE = 5
   
   // Timer for processing
   const [processingStartTime, setProcessingStartTime] = useState<number | null>(null)
