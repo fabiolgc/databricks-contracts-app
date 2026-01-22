@@ -127,10 +127,12 @@ const CHUNKING_STRATEGIES: ChunkingStrategy[] = [
 
 export default function PreparePage() {
   // State for table configuration
+  // Note: tableName should be the BASE name (e.g., "contracts")
+  // Backend will add _raw and _chunks suffixes automatically
   const [tableConfig, setTableConfig] = useState<TableConfig>({
     catalog: "",
     schema: "",
-    tableName: "contracts_chunks"
+    tableName: "contracts"  // Base name only - backend adds _raw/_chunks
   })
   const [isConfigSaved, setIsConfigSaved] = useState(false)
   
@@ -353,16 +355,13 @@ export default function PreparePage() {
     const newOffset = loadMore ? documentsOffset + DOCUMENTS_PER_PAGE : 0
     
     try {
-      // Use the base table name (without _chunks suffix) to get _raw table
-      const baseTableName = tableConfig.tableName.replace("_chunks", "")
-      
       const response = await fetch("/api/raw-documents", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           catalog: tableConfig.catalog,
           schema_name: tableConfig.schema,
-          tableName: baseTableName,
+          tableName: tableConfig.tableName,
           offset: newOffset,
           limit: DOCUMENTS_PER_PAGE
         })
@@ -418,15 +417,13 @@ export default function PreparePage() {
     setIsLoadingText(true)
     
     try {
-      const baseTableName = tableConfig.tableName.replace("_chunks", "")
-      
       const response = await fetch("/api/raw-documents/text", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           catalog: tableConfig.catalog,
           schema_name: tableConfig.schema,
-          tableName: baseTableName,
+          tableName: tableConfig.tableName,
           documentId
         })
       })
@@ -491,7 +488,6 @@ export default function PreparePage() {
     setPreviewChunkIndex(0)
     
     try {
-      const baseTableName = tableConfig.tableName.replace("_chunks", "")
       // Get up to 3 document IDs for preview
       const docIds = Array.from(selectedDocuments).slice(0, 3)
       
@@ -501,7 +497,7 @@ export default function PreparePage() {
         body: JSON.stringify({
           catalog: tableConfig.catalog,
           schema_name: tableConfig.schema,
-          tableName: baseTableName,
+          tableName: tableConfig.tableName,
           documentIds: docIds,
           strategy: selectedStrategy,
           chunkSize: chunkingParams.chunkSize,
