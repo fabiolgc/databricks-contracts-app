@@ -1239,7 +1239,7 @@ export default function PreparePage() {
               ) : (
                 <Database className="h-5 w-5 text-[#FF3621]" />
               )}
-              <h2 className="text-lg font-semibold text-[#1B1B1D]">1. Onde salvar os segmentos</h2>
+              <h2 className="text-lg font-semibold text-[#1B1B1D]">1. Onde salvar os documentos</h2>
             </div>
             <div className="flex items-center gap-2">
               {completedSteps.has(1) && (
