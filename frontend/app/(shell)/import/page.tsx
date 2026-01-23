@@ -1,8 +1,9 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Upload, CheckCircle2, XCircle, Loader2, ChevronLeft, ChevronRight, Database, Settings, Trash2, FolderOpen, RefreshCw, FileStack, X, Check } from "lucide-react"
+import { Upload, CheckCircle2, XCircle, Loader2, ChevronLeft, ChevronRight, Database, Trash2, FolderOpen, RefreshCw, FileStack, X, Check } from "lucide-react"
 import { toast } from "sonner"
+import { useTranslation } from "@/lib/i18n"
 
 type FileStatus = "pending" | "uploading" | "extracting" | "success" | "error" | "skipped"
 
@@ -16,12 +17,11 @@ interface FileWithStatus {
   error?: string
   textLength?: number
   pageCount?: number
-  // Timing for each phase
   uploadStartTime?: number
-  uploadDuration?: number      // Time spent uploading (red)
+  uploadDuration?: number
   extractStartTime?: number
-  extractDuration?: number     // Time spent extracting (blue)
-  totalDuration?: number       // Total time (green)
+  extractDuration?: number
+  totalDuration?: number
 }
 
 interface TableConfig {
@@ -39,7 +39,6 @@ interface VolumeFile {
 
 const FILES_PER_PAGE = 5
 
-// Extend Window interface for overwrite decision callback
 declare global {
   interface Window {
     __overwriteResolve?: (decision: "overwrite" | "overwrite_all" | "skip" | "cancel") => void
@@ -47,6 +46,7 @@ declare global {
 }
 
 export default function ImportPage() {
+  const { t } = useTranslation()
   const [isDragging, setIsDragging] = useState(false)
   const [files, setFiles] = useState<FileWithStatus[]>([])
   const [isUploading, setIsUploading] = useState(false)
@@ -54,11 +54,10 @@ export default function ImportPage() {
   const [currentConflictFile, setCurrentConflictFile] = useState<string | null>(null)
   const [currentPage, setCurrentPage] = useState(1)
   
-  // Table configuration for documents
   const [tableConfig, setTableConfig] = useState<TableConfig>({
     catalog: "",
     schema: "",
-    tableName: "contracts"  // Base name only - backend adds _raw suffix
+    tableName: "contracts"
   })
   const [initialTableConfig, setInitialTableConfig] = useState<TableConfig>({
     catalog: "",
@@ -68,7 +67,6 @@ export default function ImportPage() {
   const [isConfigSaved, setIsConfigSaved] = useState(false)
   const [showConfig, setShowConfig] = useState(false)
   
-  // Volume management state
   const [showVolumeManager, setShowVolumeManager] = useState(false)
   const [volumeFiles, setVolumeFiles] = useState<VolumeFile[]>([])
   const [volumeFilesTotal, setVolumeFilesTotal] = useState(0)
@@ -80,15 +78,11 @@ export default function ImportPage() {
   const [isDeleting, setIsDeleting] = useState(false)
   const VOLUME_FILES_PER_PAGE = 5
   
-  // Timer for processing
   const [processingStartTime, setProcessingStartTime] = useState<number | null>(null)
   const [elapsedTime, setElapsedTime] = useState<number>(0)
-  
-  // Track current file being processed
   const [currentFileIndex, setCurrentFileIndex] = useState<number>(0)
   const [totalFilesToProcess, setTotalFilesToProcess] = useState<number>(0)
 
-  // Load environment config on mount and auto-save if all fields are present
   useEffect(() => {
     const loadConfig = async () => {
       try {
@@ -98,12 +92,11 @@ export default function ImportPage() {
           const newConfig = {
             catalog: config.catalog || "",
             schema: config.schema || "",
-            tableName: "contracts"  // Base name only - backend adds _raw suffix
+            tableName: "contracts"
           }
           setTableConfig(newConfig)
-          setInitialTableConfig(newConfig) // Store initial config for cancel
+          setInitialTableConfig(newConfig)
           
-          // Auto-save if all fields are filled from environment
           if (newConfig.catalog && newConfig.schema && newConfig.tableName) {
             setIsConfigSaved(true)
           }
@@ -115,16 +108,13 @@ export default function ImportPage() {
     loadConfig()
   }, [])
 
-  // Timer effect for processing (global and per-file)
   useEffect(() => {
     let intervalId: NodeJS.Timeout | null = null
     
     if (isUploading && processingStartTime) {
       intervalId = setInterval(() => {
-        // Update global elapsed time
         setElapsedTime(Math.floor((Date.now() - processingStartTime) / 1000))
         
-        // Update per-file elapsed time for files being processed
         setFiles(prev => prev.map(f => {
           if (f.status === "uploading" && f.uploadStartTime) {
             return { ...f, uploadDuration: Math.floor((Date.now() - f.uploadStartTime) / 1000) }
@@ -144,7 +134,6 @@ export default function ImportPage() {
     }
   }, [isUploading, processingStartTime])
 
-  // Format elapsed time as mm:ss
   function formatElapsedTime(seconds: number): string {
     const mins = Math.floor(seconds / 60)
     const secs = seconds % 60
@@ -187,16 +176,15 @@ export default function ImportPage() {
       }
     })
 
-    // Show notification for duplicates
     if (duplicates.length > 0) {
       if (duplicates.length === 1) {
-        toast.warning(`Arquivo já está na lista: ${duplicates[0]}`, {
+        toast.warning(`${t("import.toast.fileExists")}: ${duplicates[0]}`, {
           duration: 7000,
         })
       } else if (duplicates.length <= 3) {
         toast.warning(
           <div>
-            <p className="font-medium mb-1">Arquivos já estão na lista:</p>
+            <p className="font-medium mb-1">{t("import.toast.fileExists")}:</p>
             <ul className="text-sm space-y-0.5">
               {duplicates.map((name, i) => (
                 <li key={i}>• {name}</li>
@@ -207,16 +195,14 @@ export default function ImportPage() {
         )
       } else {
         toast.warning(
-          `${duplicates.length} arquivos duplicados não foram adicionados`,
+          `${duplicates.length} ${t("common.files")} ${t("import.toast.fileExists").toLowerCase()}`,
           {
-            description: `Arquivos já existentes: ${duplicates.slice(0, 2).join(", ")}...`,
             duration: 7000,
           }
         )
       }
     }
 
-    // Add only non-duplicate files
     if (filesToAdd.length > 0) {
       const filesWithStatus: FileWithStatus[] = filesToAdd.map(file => ({
         id: crypto.randomUUID(),
@@ -229,7 +215,6 @@ export default function ImportPage() {
 
       setFiles(prev => {
         const newFiles = [...prev, ...filesWithStatus]
-        // Reset to page 1 if adding files would make current page empty
         const totalPages = Math.ceil(newFiles.length / FILES_PER_PAGE)
         if (currentPage > totalPages) {
           setCurrentPage(totalPages)
@@ -237,18 +222,11 @@ export default function ImportPage() {
         return newFiles
       })
 
-      // Show success message
-      if (filesToAdd.length === 1) {
-        toast.success(`1 arquivo adicionado à lista`, {
-          duration: 5000,
-        })
-      } else {
-        toast.success(`${filesToAdd.length} arquivos adicionados à lista`, {
-          duration: 5000,
-        })
-      }
+      toast.success(
+        `${filesToAdd.length} ${t("common.files")} ${t("common.success").toLowerCase()}`,
+        { duration: 5000 }
+      )
 
-      // Highlight newly added files temporarily
       if (filesWithStatus.length > 0) {
         setTimeout(() => {
           filesWithStatus.forEach(file => {
@@ -262,9 +240,6 @@ export default function ImportPage() {
           })
         }, 100)
       }
-    } else if (duplicates.length > 0) {
-      // All files were duplicates
-      console.log(`⚠️ All ${duplicates.length} file(s) were duplicates`)
     }
   }
 
@@ -278,12 +253,10 @@ export default function ImportPage() {
         addFilesToList(pdfFiles)
       }
     }
-    // Reset input to allow selecting the same files again
     e.target.value = ""
   }
 
   async function uploadFile(file: FileWithStatus, shouldOverwrite: boolean = false) {
-    // Update status to uploading with start time
     const uploadStartTime = Date.now()
     setFiles(prev =>
       prev.map(f =>
@@ -296,8 +269,6 @@ export default function ImportPage() {
       formData.append("file", file.file)
       formData.append("overwrite", shouldOverwrite.toString())
 
-      console.log(`📤 Uploading: ${file.name}${shouldOverwrite ? " [OVERWRITE]" : ""}`)
-
       const response = await fetch("/api/upload", {
         method: "POST",
         body: formData,
@@ -305,9 +276,7 @@ export default function ImportPage() {
 
       const result = await response.json()
 
-      // File exists - need confirmation
       if (response.status === 409 && result.fileExists) {
-        console.log(`⚠️ File exists: ${file.name}`)
         setFiles(prev =>
           prev.map(f =>
             f.id === file.id ? { ...f, status: "pending", progress: 0 } : f
@@ -317,7 +286,6 @@ export default function ImportPage() {
       }
 
       if (response.ok && result.success) {
-        console.log(`✅ Upload successful: ${file.name}`)
         setFiles(prev =>
           prev.map(f =>
             f.id === file.id
@@ -327,12 +295,11 @@ export default function ImportPage() {
         )
         return "success"
       } else {
-        throw new Error(result.error || "Upload failed")
+        throw new Error(result.error || t("import.toast.uploadError"))
       }
     } catch (error) {
       const errorMessage =
-        error instanceof Error ? error.message : "Upload failed"
-      console.error(`❌ Error uploading ${file.name}:`, errorMessage)
+        error instanceof Error ? error.message : t("import.toast.uploadError")
 
       setFiles(prev =>
         prev.map(f =>
@@ -345,9 +312,7 @@ export default function ImportPage() {
     }
   }
 
-  // Extract text from a single file after upload
   async function extractTextFromFile(file: FileWithStatus): Promise<boolean> {
-    // Update status to extracting, record upload final time and start extract timer
     const extractStartTime = Date.now()
     setFiles(prev =>
       prev.map(f => {
@@ -360,22 +325,19 @@ export default function ImportPage() {
     )
 
     try {
-      console.log(`📝 Extracting text from: ${file.name}`)
-      
       const response = await fetch("/api/extract-text", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           tableConfig,
           fileName: file.name,
-          mode: "replace"  // Always replace if exists
+          mode: "replace"
         })
       })
 
       const result = await response.json()
 
       if (result.success) {
-        console.log(`✅ Text extracted: ${file.name} (${result.textLength} chars, ${result.pageCount} pages)`)
         setFiles(prev =>
           prev.map(f => {
             if (f.id === file.id) {
@@ -396,18 +358,17 @@ export default function ImportPage() {
         )
         return true
       } else {
-        throw new Error(result.error || "Text extraction failed")
+        throw new Error(result.error || t("import.toast.uploadError"))
       }
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Text extraction failed"
-      console.error(`❌ Error extracting text from ${file.name}:`, errorMessage)
+      const errorMessage = error instanceof Error ? error.message : t("import.toast.uploadError")
 
       setFiles(prev =>
         prev.map(f => {
           if (f.id === file.id) {
             const finalExtractDuration = f.extractStartTime ? Math.floor((Date.now() - f.extractStartTime) / 1000) : 0
             const totalDuration = (f.uploadDuration || 0) + finalExtractDuration
-            return { ...f, status: "error", error: `Extração: ${errorMessage}`, progress: 0, extractDuration: finalExtractDuration, totalDuration }
+            return { ...f, status: "error", error: errorMessage, progress: 0, extractDuration: finalExtractDuration, totalDuration }
           }
           return f
         })
@@ -419,17 +380,14 @@ export default function ImportPage() {
   async function handleImport() {
     if (files.length === 0) return
 
-    // Check if table is configured
     if (!isConfigSaved) {
-      toast.warning("Configure a tabela de documentos primeiro", {
-        description: "Clique em 'Verificar / Salvar' na seção de configuração",
+      toast.warning(t("prepare.toast.configFirst"), {
         duration: 5000
       })
       setShowConfig(true)
       return
     }
 
-    // Calculate files to process (pending, error - not success or skipped)
     const filesToProcess = files.filter(f => f.status === "pending" || f.status === "error")
     if (filesToProcess.length === 0) return
     
@@ -445,33 +403,25 @@ export default function ImportPage() {
     let skippedCount = 0
     let processedIndex = 0
 
-    console.log(`🚀 Starting upload of ${filesToProcess.length} file(s) (${files.length} total)`)
-
     for (let i = 0; i < files.length; i++) {
       const file = files[i]
       if (file.status === "success" || file.status === "skipped") continue
 
-      // Update current file index for UI
       processedIndex++
       setCurrentFileIndex(processedIndex)
 
-      // Navigate to the page where this file is located
       const filePageNumber = Math.floor(i / FILES_PER_PAGE) + 1
       if (filePageNumber !== currentPage) {
         setCurrentPage(filePageNumber)
-        // Small delay to allow page transition
         await new Promise(resolve => setTimeout(resolve, 300))
       }
 
-      // Step 1: Upload to volume
       const uploadResult = await uploadFile(file, localOverwriteAll)
 
       if (uploadResult === "conflict") {
-        // Show dialog and wait for user decision
         setCurrentConflictFile(file.name)
         setShowOverwriteDialog(true)
 
-        // Wait for user decision
         const decision = await new Promise<"overwrite" | "overwrite_all" | "skip" | "cancel">((resolve) => {
           const checkDecision = setInterval(() => {
             if (!showOverwriteDialog) {
@@ -479,7 +429,6 @@ export default function ImportPage() {
             }
           }, 100)
 
-          // Store resolve function for dialog handlers
           window.__overwriteResolve = resolve
         })
 
@@ -487,12 +436,9 @@ export default function ImportPage() {
         setCurrentConflictFile(null)
 
         if (decision === "cancel") {
-          // Cancel entire import process
-          console.log("🚫 Import cancelled by user")
           setIsUploading(false)
           setProcessingStartTime(null)
           
-          // Reset all pending files to their original state
           setFiles(prev =>
             prev.map(f =>
               f.status === "uploading" || f.status === "extracting" 
@@ -501,27 +447,23 @@ export default function ImportPage() {
             )
           )
           
-          toast.error("Importação cancelada", {
-            description: "Nenhum arquivo foi importado",
+          toast.error(t("common.cancel"), {
             duration: 5000
           })
-          return // Exit the function early
+          return
         }
 
         if (decision === "overwrite" || decision === "overwrite_all") {
           if (decision === "overwrite_all") {
             localOverwriteAll = true
-            console.log("🔄 Overwrite ALL enabled - will not ask again")
           }
-          // Retry upload with overwrite
           const retryResult = await uploadFile(file, true)
           if (retryResult === "success") {
-            // Step 2: Extract text after successful upload
             const extractResult = await extractTextFromFile(file)
             if (extractResult) {
               successCount++
               toast.success(`${file.name}`, {
-                description: "Upload e extração de texto concluídos",
+                description: t("common.success"),
                 duration: 3000
               })
             } else {
@@ -531,8 +473,6 @@ export default function ImportPage() {
             errorCount++
           }
         } else {
-          // Skip this file
-          console.log(`⏭️ Skipping file: ${file.name}`)
           setFiles(prev =>
             prev.map(f =>
               f.id === file.id ? { ...f, status: "skipped" } : f
@@ -541,12 +481,11 @@ export default function ImportPage() {
           skippedCount++
         }
       } else if (uploadResult === "success") {
-        // Step 2: Extract text after successful upload
         const extractResult = await extractTextFromFile(file)
         if (extractResult) {
-        successCount++
+          successCount++
           toast.success(`${file.name}`, {
-            description: "Upload e extração de texto concluídos",
+            description: t("common.success"),
             duration: 3000
           })
         } else {
@@ -563,7 +502,6 @@ export default function ImportPage() {
     setCurrentFileIndex(0)
     setTotalFilesToProcess(0)
 
-    // Sort files: success/error/skipped at end, pending at start
     setFiles(prev => {
       const sorted = [...prev].sort((a, b) => {
         const order = { pending: 0, uploading: 1, extracting: 2, success: 3, error: 4, skipped: 5 }
@@ -572,50 +510,37 @@ export default function ImportPage() {
       return sorted
     })
 
-    // Show summary toast
     if (errorCount === 0 && skippedCount === 0 && successCount > 0) {
-      toast.success(`${successCount} arquivo(s) importado(s) com sucesso!`, {
-        description: `Textos extraídos em ${formatElapsedTime(totalTime)}`,
+      toast.success(t("import.toast.uploadSuccess", { count: successCount }), {
+        description: `${formatElapsedTime(totalTime)}`,
         duration: 6000,
       })
     } else if (successCount > 0) {
-      const parts = [`${successCount} importado(s)`]
-      if (skippedCount > 0) parts.push(`${skippedCount} ignorado(s)`)
-      if (errorCount > 0) parts.push(`${errorCount} com erro`)
+      const parts = [`${successCount} ${t("common.success").toLowerCase()}`]
+      if (skippedCount > 0) parts.push(`${skippedCount} ${t("import.fileList.skipped").toLowerCase()}`)
+      if (errorCount > 0) parts.push(`${errorCount} ${t("common.error").toLowerCase()}`)
       
       toast.warning(parts.join(', '), {
           duration: 8000,
       })
-    } else if (errorCount > 0 || skippedCount > 0) {
-      const parts = []
-      if (errorCount > 0) parts.push(`${errorCount} com erro`)
-      if (skippedCount > 0) parts.push(`${skippedCount} ignorado(s)`)
-      
-      toast.warning(parts.join(', '), {
-        duration: 7000,
-      })
     }
-
-    console.log(`📊 Import complete: ${successCount} success, ${errorCount} errors, ${skippedCount} skipped`)
   }
 
-  // Save table configuration
   async function saveTableConfig() {
     if (!tableConfig.catalog || !tableConfig.schema || !tableConfig.tableName) {
-      toast.warning("Preencha todos os campos de configuração")
+      toast.warning(t("import.validation.fillAllFields"))
       return
     }
 
     setIsConfigSaved(true)
     setShowConfig(false)
     
-    toast.success("Configuração salva!", {
-      description: `Tabela: ${tableConfig.catalog}.${tableConfig.schema}.${tableConfig.tableName}`,
+    toast.success(t("import.toast.configSaved"), {
+      description: t("import.toast.configSavedDesc", { table: `${tableConfig.catalog}.${tableConfig.schema}.${tableConfig.tableName}` }),
       duration: 4000
     })
   }
 
-  // Volume management functions
   async function loadVolumeFiles(page: number = 1) {
     setVolumeFilesLoading(true)
     try {
@@ -633,7 +558,7 @@ export default function ImportPage() {
       setSelectedVolumeFiles(new Set())
     } catch (error) {
       console.error("Error loading volume files:", error)
-      toast.error("Erro ao carregar arquivos do volume")
+      toast.error(t("common.error"))
     } finally {
       setVolumeFilesLoading(false)
     }
@@ -673,17 +598,17 @@ export default function ImportPage() {
       const result = await response.json()
       
       if (result.success) {
-        toast.success(`${result.deletedCount} arquivo(s) removido(s)`, { duration: 5000 })
+        toast.success(t("prepare.delete.success", { count: result.deletedCount }), { duration: 5000 })
         await loadVolumeFiles(1)
       } else {
-        toast.error("Erro ao remover alguns arquivos", {
+        toast.error(t("prepare.delete.error"), {
           description: result.errors?.map((e: { fileName: string }) => e.fileName).join(", "),
           duration: 7000
         })
       }
     } catch (error) {
       console.error("Error deleting files:", error)
-      toast.error("Erro ao remover arquivos")
+      toast.error(t("prepare.delete.error"))
     } finally {
       setIsDeleting(false)
       setShowDeleteConfirm(false)
@@ -706,42 +631,39 @@ export default function ImportPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="bg-white rounded-xl shadow-2xl p-6 max-w-md w-full">
             <h3 className="text-xl font-bold text-[#1B1B1D] mb-2">
-              Arquivo já existe
+              {t("import.overwrite.title")}
             </h3>
             <p className="text-base text-gray-600 mb-2">
-              O arquivo
+              {t("import.overwrite.message", { fileName: "" }).split('"{fileName}"')[0]}
             </p>
             <p className="text-sm font-medium text-[#1B1B1D] bg-gray-50 p-3 rounded-lg mb-4 break-words">
               {currentConflictFile}
-            </p>
-            <p className="text-base text-gray-600 mb-6">
-              já existe no volume. Deseja sobrescrevê-lo?
             </p>
             <div className="flex flex-col gap-2">
               <button
                 onClick={() => handleOverwriteDecision("overwrite_all")}
                 className="w-full px-4 py-2.5 text-sm font-medium text-white bg-[#FF3621] rounded-lg hover:bg-[#FF3621]/90 transition-colors"
               >
-                Sobrescrever todos
+                {t("import.overwrite.overwriteAll")}
               </button>
               <button
                 onClick={() => handleOverwriteDecision("overwrite")}
                 className="w-full px-4 py-2.5 text-sm font-medium text-[#FF3621] bg-red-50 rounded-lg hover:bg-red-100 transition-colors"
               >
-                Sobrescrever este arquivo
+                {t("import.overwrite.overwriteThis")}
               </button>
               <button
                 onClick={() => handleOverwriteDecision("skip")}
                 className="w-full px-4 py-2.5 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
               >
-                Pular este arquivo
+                {t("import.overwrite.skipThis")}
               </button>
               <div className="mt-4 pt-4 border-t border-gray-200">
                 <button
                   onClick={() => handleOverwriteDecision("cancel")}
                   className="w-full px-4 py-2.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
                 >
-                  Cancelar importação
+                  {t("common.cancel")}
                 </button>
               </div>
             </div>
@@ -758,28 +680,18 @@ export default function ImportPage() {
                 <Trash2 className="h-6 w-6 text-red-600" />
               </div>
               <h3 className="text-xl font-bold text-[#1B1B1D]">
-                Confirmar Remoção
+                {t("prepare.delete.title")}
               </h3>
             </div>
             
             <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4">
               <p className="text-sm text-amber-800 font-medium">
-                ⚠️ Atenção: Esta ação não pode ser desfeita!
-              </p>
-              <p className="text-sm text-amber-700 mt-1">
-                Os arquivos serão removidos permanentemente do volume. Não existe backup.
+                ⚠️ {t("common.warning")}
               </p>
             </div>
             
             <p className="text-base text-gray-600 mb-2">
-              {deleteMode === "all" 
-                ? `Você está prestes a remover TODOS os ${volumeFilesTotal} arquivo(s) do volume.`
-                : `Você está prestes a remover ${selectedVolumeFiles.size} arquivo(s) selecionado(s).`
-              }
-            </p>
-            
-            <p className="text-sm text-gray-500 mb-6">
-              Os dados extraídos ainda existirão nas tabelas Delta.
+              {t("prepare.delete.message", { count: deleteMode === "all" ? volumeFilesTotal : selectedVolumeFiles.size })}
             </p>
             
             <div className="flex flex-col gap-2">
@@ -791,12 +703,12 @@ export default function ImportPage() {
                 {isDeleting ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    Removendo...
+                    {t("common.processing")}
                   </>
                 ) : (
                   <>
                     <Trash2 className="h-4 w-4" />
-                    Confirmar Remoção
+                    {t("common.confirm")}
                   </>
                 )}
               </button>
@@ -805,7 +717,7 @@ export default function ImportPage() {
                 disabled={isDeleting}
                 className="w-full px-4 py-2.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
               >
-                Cancelar
+                {t("common.cancel")}
               </button>
             </div>
           </div>
@@ -814,9 +726,9 @@ export default function ImportPage() {
 
       <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold text-[#1B1B1D]">Importar Documentos</h1>
+        <h1 className="text-3xl font-bold text-[#1B1B1D]">{t("import.title")}</h1>
         <p className="mt-2 text-base text-gray-600">
-          Faça upload dos seus contratos em PDF e extraia o texto automaticamente
+          {t("import.subtitle")}
         </p>
       </div>
 
@@ -828,13 +740,13 @@ export default function ImportPage() {
         >
           <div className="flex items-center gap-2">
             <Database className="h-5 w-5 text-[#FF3621]" />
-            <h2 className="text-lg font-semibold text-[#1B1B1D]">Onde Salvar os Documentos</h2>
+            <h2 className="text-lg font-semibold text-[#1B1B1D]">{t("import.whereToSave")}</h2>
           </div>
           <div className="flex items-center gap-2">
             {isConfigSaved && (
               <span className="flex items-center gap-1 text-sm text-[#00A972]">
                 <CheckCircle2 className="h-4 w-4" />
-                Configurado
+                {t("import.configured")}
               </span>
             )}
             <ChevronRight className={`h-5 w-5 text-gray-400 transition-transform ${showConfig ? 'rotate-90' : ''}`} />
@@ -844,12 +756,12 @@ export default function ImportPage() {
         {showConfig && (
           <div className="p-4">
             <p className="text-sm text-gray-600 mb-4">
-              Configure onde os textos dos documentos extraídos serão salvos. O texto será extraído automaticamente após o upload.
+              {t("import.whereToSaveDesc")}
             </p>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Catálogo
+                  {t("common.catalog")}
                 </label>
                 <input
                   type="text"
@@ -858,13 +770,13 @@ export default function ImportPage() {
                     setTableConfig(prev => ({ ...prev, catalog: e.target.value }))
                     setIsConfigSaved(false)
                   }}
-                  placeholder="ex: fabio_goncalves"
+                  placeholder={t("import.placeholder.catalog")}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#FF3621]/20 focus:border-[#FF3621]"
                 />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Schema
+                  {t("common.schema")}
                 </label>
                 <input
                   type="text"
@@ -873,13 +785,13 @@ export default function ImportPage() {
                     setTableConfig(prev => ({ ...prev, schema: e.target.value }))
                     setIsConfigSaved(false)
                   }}
-                  placeholder="ex: customer_cielo"
+                  placeholder={t("import.placeholder.schema")}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#FF3621]/20 focus:border-[#FF3621]"
                 />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Nome da Tabela
+                  {t("common.tableName")}
                 </label>
                 <input
                   type="text"
@@ -888,7 +800,7 @@ export default function ImportPage() {
                     setTableConfig(prev => ({ ...prev, tableName: e.target.value }))
                     setIsConfigSaved(false)
                   }}
-                  placeholder="ex: contracts"
+                  placeholder={t("import.placeholder.tableName")}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#FF3621]/20 focus:border-[#FF3621]"
                 />
               </div>
@@ -897,10 +809,10 @@ export default function ImportPage() {
             {/* Preview das tabelas que serão criadas */}
             {tableConfig.tableName && (
               <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                <p className="text-xs font-medium text-blue-800 mb-2">Tabela que será criada:</p>
+                <p className="text-xs font-medium text-blue-800 mb-2">{t("import.tableToCreate")}</p>
                 <div className="flex flex-wrap gap-2">
                   <code className="bg-blue-100 text-blue-900 px-2 py-1 rounded text-xs font-mono">
-                    {tableConfig.catalog || "catalogo"}.{tableConfig.schema || "schema"}.{tableConfig.tableName}_raw
+                    {tableConfig.catalog || "catalog"}.{tableConfig.schema || "schema"}.{tableConfig.tableName}_raw
                   </code>
                 </div>
               </div>
@@ -916,7 +828,7 @@ export default function ImportPage() {
                     className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors flex items-center gap-2"
                   >
                     <X className="h-4 w-4" />
-                    Cancelar
+                    {t("common.cancel")}
                   </button>
                   <button
                     onClick={saveTableConfig}
@@ -924,13 +836,13 @@ export default function ImportPage() {
                     className="px-4 py-2 text-sm font-medium text-white bg-[#FF3621] rounded-lg hover:bg-[#FF3621]/90 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                   >
                     <Check className="h-4 w-4" />
-                    Verificar / Salvar
+                    {t("common.verifySave")}
                   </button>
                 </>
               ) : (
                 <span className="flex items-center gap-2 text-sm text-[#00A972]">
                   <CheckCircle2 className="h-4 w-4" />
-                  Configuração salva
+                  {t("import.configSaved")}
                 </span>
               )}
             </div>
@@ -946,12 +858,12 @@ export default function ImportPage() {
         >
           <div className="flex items-center gap-2">
             <FolderOpen className="h-5 w-5 text-[#FF3621]" />
-            <h2 className="text-lg font-semibold text-[#1B1B1D]">Gerenciar Pasta do Databricks</h2>
+            <h2 className="text-lg font-semibold text-[#1B1B1D]">{t("import.manageDatabricksFolder")}</h2>
           </div>
           <div className="flex items-center gap-2">
             {volumeFilesTotal > 0 && (
               <span className="text-sm text-gray-500">
-                {volumeFilesTotal} arquivo(s)
+                {volumeFilesTotal} {t("common.files")}
               </span>
             )}
             <ChevronRight className={`h-5 w-5 text-gray-400 transition-transform ${showVolumeManager ? 'rotate-90' : ''}`} />
@@ -961,7 +873,7 @@ export default function ImportPage() {
         {showVolumeManager && (
           <div className="p-4">
             <p className="text-sm text-gray-600 mb-4">
-              Gerencie os arquivos armazenados na pasta do Databricks (Volume) gerenciado pelo Unity Catalog.
+              {t("import.manageDatabricksFolderDesc")}
             </p>
             
             {/* Load Files Button */}
@@ -971,7 +883,7 @@ export default function ImportPage() {
                 className="px-4 py-2 text-sm font-medium text-[#FF3621] bg-red-50 border border-[#FF3621]/30 rounded-lg hover:bg-red-100 transition-colors flex items-center gap-2"
               >
                 <RefreshCw className="h-4 w-4" />
-                Carregar arquivos existentes
+                {t("import.loadExistingFiles")}
               </button>
             )}
             
@@ -979,7 +891,7 @@ export default function ImportPage() {
             {volumeFilesLoading && (
               <div className="flex items-center justify-center py-8">
                 <Loader2 className="h-6 w-6 text-[#FF3621] animate-spin" />
-                <span className="ml-2 text-sm text-gray-600">Carregando arquivos...</span>
+                <span className="ml-2 text-sm text-gray-600">{t("common.loading")}</span>
               </div>
             )}
             
@@ -992,12 +904,12 @@ export default function ImportPage() {
                     <button
                       onClick={() => loadVolumeFiles(volumeFilesPage)}
                       className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-                      title="Recarregar"
+                      title="Reload"
                     >
                       <RefreshCw className="h-4 w-4" />
                     </button>
                     <span className="text-sm text-gray-500">
-                      {selectedVolumeFiles.size > 0 && `${selectedVolumeFiles.size} selecionado(s)`}
+                      {selectedVolumeFiles.size > 0 && `${selectedVolumeFiles.size} ${t("common.selected")}`}
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
@@ -1010,7 +922,7 @@ export default function ImportPage() {
                       className="px-3 py-1.5 text-sm font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
                     >
                       <Trash2 className="h-4 w-4" />
-                      Remover Selecionados
+                      {t("prepare.step2.removeSelected")}
                     </button>
                     <button
                       onClick={() => {
@@ -1020,7 +932,7 @@ export default function ImportPage() {
                       className="px-3 py-1.5 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors flex items-center gap-1"
                     >
                       <Trash2 className="h-4 w-4" />
-                      Remover Todos
+                      {t("prepare.step2.removeAll")}
                     </button>
                   </div>
                 </div>
@@ -1038,8 +950,8 @@ export default function ImportPage() {
                             className="rounded border-gray-300 text-[#FF3621] focus:ring-[#FF3621]"
                           />
                         </th>
-                        <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">Nome do Arquivo</th>
-                        <th className="px-4 py-2 text-right text-sm font-medium text-gray-700">Tamanho</th>
+                        <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">{t("common.files")}</th>
+                        <th className="px-4 py-2 text-right text-sm font-medium text-gray-700">Size</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200">
@@ -1079,7 +991,7 @@ export default function ImportPage() {
                 {volumeFilesTotal > VOLUME_FILES_PER_PAGE && (
                   <div className="flex items-center justify-between pt-2">
                     <span className="text-sm text-gray-500">
-                      Mostrando {((volumeFilesPage - 1) * VOLUME_FILES_PER_PAGE) + 1} - {Math.min(volumeFilesPage * VOLUME_FILES_PER_PAGE, volumeFilesTotal)} de {volumeFilesTotal}
+                      {((volumeFilesPage - 1) * VOLUME_FILES_PER_PAGE) + 1} - {Math.min(volumeFilesPage * VOLUME_FILES_PER_PAGE, volumeFilesTotal)} {t("common.of")} {volumeFilesTotal}
                     </span>
                     <div className="flex items-center gap-2">
                       <button
@@ -1090,7 +1002,7 @@ export default function ImportPage() {
                         <ChevronLeft className="h-4 w-4" />
                       </button>
                       <span className="text-sm text-gray-600 font-medium">
-                        Página {volumeFilesPage} de {Math.ceil(volumeFilesTotal / VOLUME_FILES_PER_PAGE)}
+                        {t("common.page")} {volumeFilesPage} {t("common.of")} {Math.ceil(volumeFilesTotal / VOLUME_FILES_PER_PAGE)}
                       </span>
                       <button
                         onClick={() => loadVolumeFiles(volumeFilesPage + 1)}
@@ -1109,7 +1021,7 @@ export default function ImportPage() {
             {!volumeFilesLoading && volumeFiles.length === 0 && volumeFilesTotal === 0 && volumeFilesPage > 0 && (
               <div className="text-center py-8 text-gray-500">
                 <FolderOpen className="h-12 w-12 mx-auto mb-2 text-gray-300" />
-                <p className="text-sm">Nenhum arquivo encontrado no volume</p>
+                <p className="text-sm">{t("import.noFilesInVolume")}</p>
               </div>
             )}
           </div>
@@ -1134,12 +1046,12 @@ export default function ImportPage() {
           <Upload className="mx-auto h-12 w-12 text-gray-400" />
           <div className="mt-4">
             <span className="text-base text-[#FF3621] hover:text-[#FF3621]/80 font-medium">
-              Clique para selecionar
+              {t("import.uploadArea.subtitle")}
             </span>
-            <span className="text-base text-gray-600"> ou arraste os arquivos aqui</span>
+            <span className="text-base text-gray-600"> {t("import.uploadArea.title").toLowerCase()}</span>
           </div>
           <p className="mt-2 text-sm text-gray-500">
-            Apenas arquivos PDF (máximo 10MB por arquivo)
+            {t("import.uploadArea.allowedTypes")}
           </p>
           <input
             id="file-upload"
@@ -1153,7 +1065,6 @@ export default function ImportPage() {
       )}
 
       {files.length > 0 && (() => {
-        // Pagination calculations
         const totalPages = Math.ceil(files.length / FILES_PER_PAGE)
         const startIndex = (currentPage - 1) * FILES_PER_PAGE
         const endIndex = startIndex + FILES_PER_PAGE
@@ -1167,7 +1078,7 @@ export default function ImportPage() {
                 <label htmlFor="file-upload-more" className="cursor-pointer">
                   <div className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-[#FF3621] bg-red-50 border border-[#FF3621]/30 rounded-lg hover:bg-red-100 transition-colors">
                     <Upload className="h-4 w-4" />
-                    Adicionar mais arquivos
+                    {t("import.uploadArea.subtitle")}
                   </div>
                   <input
                     id="file-upload-more"
@@ -1186,7 +1097,7 @@ export default function ImportPage() {
               <div className="flex items-center gap-2">
                 <FileStack className="h-5 w-5 text-[#FF3621]" />
                 <h3 className="text-lg font-semibold text-[#1B1B1D]">
-                  Arquivos Selecionados ({files.length})
+                  {t("import.fileList.title")} ({files.length})
                 </h3>
               </div>
               {totalPages > 1 && (
@@ -1195,18 +1106,18 @@ export default function ImportPage() {
                     onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
                     disabled={currentPage === 1}
                     className="p-1.5 rounded-md text-gray-600 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                    aria-label="Página anterior"
+                    aria-label={t("common.previous")}
                   >
                     <ChevronLeft className="h-4 w-4" />
                   </button>
                   <span className="text-sm text-gray-600 font-medium min-w-[80px] text-center">
-                    Página {currentPage} de {totalPages}
+                    {t("common.page")} {currentPage} {t("common.of")} {totalPages}
                   </span>
                   <button
                     onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
                     disabled={currentPage === totalPages}
                     className="p-1.5 rounded-md text-gray-600 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                    aria-label="Próxima página"
+                    aria-label={t("common.next")}
                   >
                     <ChevronRight className="h-4 w-4" />
                   </button>
@@ -1259,7 +1170,7 @@ export default function ImportPage() {
                         </p>
                         {file.status === "uploading" && (
                           <span className="text-xs flex items-center gap-1.5">
-                            <span className="text-[#FF3621]">Enviando...</span>
+                            <span className="text-[#FF3621]">{t("import.fileList.importing")}...</span>
                             <span className="font-mono text-[10px] flex items-center gap-0.5">
                               <span className="bg-red-100 text-red-600 px-1 py-0.5 rounded">
                                 {formatElapsedTime(file.uploadDuration || 0)}
@@ -1269,7 +1180,7 @@ export default function ImportPage() {
                         )}
                         {file.status === "extracting" && (
                           <span className="text-xs flex items-center gap-1.5">
-                            <span className="text-blue-500">Extraindo texto...</span>
+                            <span className="text-blue-500">{t("common.processing")}...</span>
                             <span className="font-mono text-[10px] flex items-center gap-0.5">
                               <span className="bg-red-100 text-red-600 px-1 py-0.5 rounded">
                                 {formatElapsedTime(file.uploadDuration || 0)}
@@ -1284,7 +1195,7 @@ export default function ImportPage() {
                         {file.status === "success" && (
                           <span className="text-xs flex items-center gap-1.5">
                             <span className="text-[#00A972]">
-                              ✓ {file.textLength?.toLocaleString() || 0} chars • {file.pageCount || 0} pág
+                              ✓ {file.textLength?.toLocaleString() || 0} chars • {file.pageCount || 0} pgs
                             </span>
                             <span className="font-mono text-[10px] flex items-center gap-0.5">
                               <span className="bg-red-100 text-red-600 px-1 py-0.5 rounded">
@@ -1303,7 +1214,7 @@ export default function ImportPage() {
                         )}
                         {file.status === "error" && (
                           <span className="text-xs flex items-center gap-1.5">
-                            <span className="text-red-600">✕ {file.error || "Erro"}</span>
+                            <span className="text-red-600">✕ {file.error || t("common.error")}</span>
                             {(file.uploadDuration || file.extractDuration) && (
                               <span className="font-mono text-[10px] flex items-center gap-0.5">
                                 {file.uploadDuration !== undefined && (
@@ -1325,7 +1236,7 @@ export default function ImportPage() {
                         )}
                         {file.status === "skipped" && (
                           <span className="text-xs text-gray-400">
-                            Ignorado
+                            {t("import.fileList.skipped")}
                           </span>
                         )}
                       </div>
@@ -1338,7 +1249,6 @@ export default function ImportPage() {
                       onClick={() => {
                         setFiles(prev => {
                           const newFiles = prev.filter(f => f.id !== file.id)
-                          // Adjust page if needed
                           const totalPages = Math.ceil(newFiles.length / FILES_PER_PAGE)
                           if (currentPage > totalPages && totalPages > 0) {
                             setCurrentPage(totalPages)
@@ -1348,23 +1258,22 @@ export default function ImportPage() {
                       }}
                       className="text-[#FF3621] hover:text-[#FF3621]/80 text-sm font-medium transition-colors ml-4"
                     >
-                      Remover
+                      {t("common.remove")}
                     </button>
                   )}
                 </div>
               </li>
               ))}
             </ul>
-            {/* Total timing summary - shows accumulated times */}
+            {/* Total timing summary */}
             {files.some(f => f.status === "success" || f.status === "extracting" || f.status === "uploading") && (() => {
-              // Calculate total times across all files
               const totalUpload = files.reduce((sum, f) => sum + (f.uploadDuration || 0), 0)
               const totalExtract = files.reduce((sum, f) => sum + (f.extractDuration || 0), 0)
               const totalTime = files.reduce((sum, f) => sum + (f.totalDuration || 0), 0)
               
               return (
                 <div className="px-4 py-2 bg-gray-100 border-t border-gray-200 flex items-center justify-end gap-4 text-[10px] font-mono">
-                  <span className="text-gray-500 text-xs">Tempo total:</span>
+                  <span className="text-gray-500 text-xs">Total:</span>
                   <span className="flex items-center gap-1">
                     <span className="bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-semibold">
                       {formatElapsedTime(totalUpload)}
@@ -1376,7 +1285,7 @@ export default function ImportPage() {
                     <span className="bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded font-semibold">
                       {formatElapsedTime(totalExtract)}
                     </span>
-                    <span className="text-gray-500">Extração</span>
+                    <span className="text-gray-500">Extract</span>
                   </span>
                   <span className="text-gray-400">|</span>
                   <span className="flex items-center gap-1">
@@ -1398,7 +1307,7 @@ export default function ImportPage() {
                   className="px-4 py-2 text-sm font-medium text-white bg-[#00A972] rounded-lg hover:bg-[#00A972]/90 transition-colors shadow-sm flex items-center gap-2"
                 >
                   <CheckCircle2 className="h-4 w-4" />
-                  Concluir
+                  {t("import.fileList.completed")}
                 </button>
               ) : (
                 <>
@@ -1410,7 +1319,7 @@ export default function ImportPage() {
                     disabled={isUploading}
                     className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    Cancelar
+                    {t("common.cancel")}
                   </button>
                   {(() => {
                     const pendingCount = files.filter(f => f.status === "pending" || f.status === "error").length
@@ -1424,10 +1333,10 @@ export default function ImportPage() {
                       >
                         {isUploading && <Loader2 className="h-4 w-4 animate-spin" />}
                         {isUploading
-                          ? `Importando ${currentFileIndex}/${totalFilesToProcess} ${formatElapsedTime(elapsedTime)}`
+                          ? `${t("import.fileList.importing")} ${currentFileIndex}/${totalFilesToProcess} ${formatElapsedTime(elapsedTime)}`
                           : pendingCount === files.length
-                            ? `Importar ${files.length} ${files.length === 1 ? "arquivo" : "arquivos"}`
-                            : `Importar ${pendingCount} de ${files.length}`
+                            ? `${t("import.fileList.import")} ${files.length} ${t("common.files")}`
+                            : `${t("import.fileList.import")} ${pendingCount} ${t("common.of")} ${files.length}`
                         }
                       </button>
                     )

@@ -1,0 +1,194 @@
+{
+  "app": {
+    "name": "Contracts App",
+    "nav": {
+      "import": "Importar Documentos",
+      "prepare": "Preparar dados para busca"
+    }
+  },
+  "language": {
+    "select": "Idioma",
+    "en": "English",
+    "pt-BR": "Português"
+  },
+  "common": {
+    "catalog": "Catálogo",
+    "schema": "Schema",
+    "tableName": "Nome da Tabela",
+    "cancel": "Cancelar",
+    "save": "Salvar",
+    "verify": "Verificar",
+    "verifySave": "Verificar / Salvar",
+    "next": "Próximo",
+    "previous": "Anterior",
+    "close": "Fechar",
+    "confirm": "Confirmar",
+    "delete": "Excluir",
+    "remove": "Remover",
+    "loading": "Carregando...",
+    "processing": "Processando...",
+    "success": "Sucesso",
+    "error": "Erro",
+    "warning": "Atenção",
+    "info": "Informação",
+    "yes": "Sim",
+    "no": "Não",
+    "all": "Todos",
+    "none": "Nenhum",
+    "selected": "selecionado(s)",
+    "page": "Página",
+    "of": "de",
+    "characters": "caracteres",
+    "documents": "documentos",
+    "files": "arquivos",
+    "segments": "segmentos"
+  },
+  "import": {
+    "title": "Importar Documentos",
+    "subtitle": "Faça upload dos seus contratos em PDF e extraia o texto automaticamente",
+    "whereToSave": "Onde Salvar os Documentos",
+    "whereToSaveDesc": "Configure onde os textos dos documentos extraídos serão salvos. O texto será extraído automaticamente após o upload.",
+    "tableToCreate": "Tabela que será criada:",
+    "configSaved": "Configuração salva",
+    "configured": "Configurado",
+    "manageDatabricksFolder": "Gerenciar Pasta do Databricks",
+    "manageDatabricksFolderDesc": "Gerencie os arquivos armazenados na pasta do Databricks (Volume) gerenciado pelo Unity Catalog.",
+    "loadExistingFiles": "Carregar arquivos existentes",
+    "noFilesInVolume": "Nenhum arquivo encontrado no volume",
+    "uploadArea": {
+      "title": "Arraste e solte arquivos PDF aqui",
+      "subtitle": "ou clique para selecionar",
+      "allowedTypes": "Apenas arquivos PDF são permitidos"
+    },
+    "fileList": {
+      "title": "Arquivos para importar",
+      "import": "Importar",
+      "importing": "Importando",
+      "completed": "Concluído",
+      "skipped": "Ignorado",
+      "failed": "Falhou",
+      "pending": "Pendente"
+    },
+    "overwrite": {
+      "title": "Arquivo já existe",
+      "message": "O arquivo \"{fileName}\" já existe no volume. O que deseja fazer?",
+      "overwriteAll": "Sobrescrever todos",
+      "overwriteThis": "Sobrescrever este arquivo",
+      "skipThis": "Pular este arquivo"
+    },
+    "toast": {
+      "configSaved": "Configuração salva!",
+      "configSavedDesc": "Tabela: {table}",
+      "uploadSuccess": "{count} arquivo(s) importado(s) com sucesso!",
+      "uploadError": "Erro ao enviar arquivo",
+      "fileExists": "Arquivo já existe",
+      "invalidFileType": "Apenas arquivos PDF são permitidos",
+      "noFilesToImport": "Nenhum arquivo para importar"
+    },
+    "validation": {
+      "fillAllFields": "Preencha todos os campos",
+      "invalidCatalog": "Catálogo inválido",
+      "invalidSchema": "Schema inválido",
+      "invalidTableName": "Nome da tabela inválido"
+    },
+    "placeholder": {
+      "catalog": "ex: fabio_goncalves",
+      "schema": "ex: customer_cielo",
+      "tableName": "ex: contracts"
+    }
+  },
+  "prepare": {
+    "title": "Preparar dados para busca",
+    "subtitle": "Configure a tabela, selecione documentos e gere segmentos de texto para busca",
+    "step1": {
+      "title": "1. Onde Salvar os Segmentos de Texto",
+      "tableUsed": "Tabela que será utilizada:",
+      "tableCreated": "Tabela que será criada:",
+      "configValid": "Configuração válida"
+    },
+    "step2": {
+      "title": "2. Selecionar Documentos",
+      "loadDocuments": "Carregar documentos",
+      "noDocuments": "Nenhum documento encontrado",
+      "tableNotFound": "Tabela de documentos não encontrada",
+      "tableNotFoundDesc": "A tabela ainda não existe. Importe documentos primeiro.",
+      "goToImport": "Ir para Importar",
+      "selectAll": "Selecionar todos",
+      "deselectAll": "Desmarcar todos",
+      "removeSelected": "Remover selecionados",
+      "removeAll": "Remover todos",
+      "viewText": "Ver texto",
+      "completed": "Concluído"
+    },
+    "step3": {
+      "title": "3. Estratégia de Segmentação",
+      "completed": "Concluído",
+      "strategies": {
+        "fixed_size": {
+          "name": "Tamanho Fixo",
+          "description": "Divide o texto em partes iguais com sobreposição configurável. Simples e eficiente."
+        },
+        "recursive": {
+          "name": "Recursivo por Caractere",
+          "description": "Divide respeitando parágrafos e quebras de linha. Mantém o contexto do texto."
+        },
+        "by_separator": {
+          "name": "Por Separador",
+          "description": "Divide por marcadores específicos (parágrafo, linha, ponto). Flexível e adaptável."
+        },
+        "by_page": {
+          "name": "Por Página",
+          "description": "Cada página do PDF vira um segmento. Ideal para documentos organizados por página."
+        },
+        "by_sentence": {
+          "name": "Por Sentença",
+          "description": "Agrupa frases completas até atingir o tamanho máximo. Preserva a estrutura do texto."
+        },
+        "semantic": {
+          "name": "Semântico",
+          "description": "Identifica automaticamente onde o assunto muda. Maior precisão, mais lento."
+        }
+      },
+      "params": {
+        "maxSize": "Tamanho máximo do segmento (caracteres)",
+        "overlap": "Sobreposição (caracteres)"
+      },
+      "preview": "Visualizar Prévia",
+      "confirmProcess": "Confirmar e Processar"
+    },
+    "preview": {
+      "title": "Prévia dos Segmentos",
+      "generatedTitle": "Segmentos Gerados",
+      "segment": "Segmento",
+      "total": "Total",
+      "inDocument": "neste documento",
+      "noSegment": "Nenhum segmento disponível para visualização"
+    },
+    "processing": {
+      "title": "Confirmar Processamento",
+      "message": "Você irá processar {count} documento(s) com a estratégia",
+      "warning": "Atenção: Os segmentos existentes serão apagados e novos segmentos serão gerados com a estratégia selecionada.",
+      "success": "Processamento concluído! {count} segmentos criados em {files} arquivo(s).",
+      "successWithErrors": "Concluído com {errors} erro(s). {count} segmentos criados.",
+      "error": "Erro ao processar documentos"
+    },
+    "delete": {
+      "title": "Confirmar Remoção de Documentos",
+      "message": "Você está prestes a remover {count} documento(s). Esta ação removerá os registros das tabelas.",
+      "alsoDeleteVolume": "Também remover os arquivos PDF do volume?",
+      "removeSelected": "Remover selecionados",
+      "removeAll": "Remover todos",
+      "success": "{count} documento(s) removido(s)!",
+      "successWithErrors": "Com {errors} erro(s)",
+      "error": "Erro ao remover documentos"
+    },
+    "toast": {
+      "configFirst": "Configure e salve a tabela primeiro",
+      "verifyFirst": "Verifique a configuração primeiro",
+      "selectDocuments": "Selecione pelo menos um documento",
+      "previewGenerated": "Prévia gerada: {count} segmentos em {docs} documento(s)",
+      "previewError": "Erro ao gerar prévia",
+      "documentsRemoved": "Documentos e segmentos removidos"
+    }
+  }
+}

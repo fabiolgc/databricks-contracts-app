@@ -1,0 +1,194 @@
+{
+  "app": {
+    "name": "Contracts App",
+    "nav": {
+      "import": "Import Documents",
+      "prepare": "Prepare data for search"
+    }
+  },
+  "language": {
+    "select": "Language",
+    "en": "English",
+    "pt-BR": "Português"
+  },
+  "common": {
+    "catalog": "Catalog",
+    "schema": "Schema",
+    "tableName": "Table Name",
+    "cancel": "Cancel",
+    "save": "Save",
+    "verify": "Verify",
+    "verifySave": "Verify / Save",
+    "next": "Next",
+    "previous": "Previous",
+    "close": "Close",
+    "confirm": "Confirm",
+    "delete": "Delete",
+    "remove": "Remove",
+    "loading": "Loading...",
+    "processing": "Processing...",
+    "success": "Success",
+    "error": "Error",
+    "warning": "Warning",
+    "info": "Info",
+    "yes": "Yes",
+    "no": "No",
+    "all": "All",
+    "none": "None",
+    "selected": "selected",
+    "page": "Page",
+    "of": "of",
+    "characters": "characters",
+    "documents": "documents",
+    "files": "files",
+    "segments": "segments"
+  },
+  "import": {
+    "title": "Import Documents",
+    "subtitle": "Upload your PDF contracts and extract text automatically",
+    "whereToSave": "Where to Save Documents",
+    "whereToSaveDesc": "Configure where extracted document texts will be saved. Text will be extracted automatically after upload.",
+    "tableToCreate": "Table that will be created:",
+    "configSaved": "Configuration saved",
+    "configured": "Configured",
+    "manageDatabricksFolder": "Manage Databricks Folder",
+    "manageDatabricksFolderDesc": "Manage files stored in the Databricks folder (Volume) managed by Unity Catalog.",
+    "loadExistingFiles": "Load existing files",
+    "noFilesInVolume": "No files found in volume",
+    "uploadArea": {
+      "title": "Drag and drop PDF files here",
+      "subtitle": "or click to select",
+      "allowedTypes": "Only PDF files are allowed"
+    },
+    "fileList": {
+      "title": "Files to import",
+      "import": "Import",
+      "importing": "Importing",
+      "completed": "Completed",
+      "skipped": "Skipped",
+      "failed": "Failed",
+      "pending": "Pending"
+    },
+    "overwrite": {
+      "title": "File already exists",
+      "message": "The file \"{fileName}\" already exists in the volume. What do you want to do?",
+      "overwriteAll": "Overwrite all",
+      "overwriteThis": "Overwrite this file",
+      "skipThis": "Skip this file"
+    },
+    "toast": {
+      "configSaved": "Configuration saved!",
+      "configSavedDesc": "Table: {table}",
+      "uploadSuccess": "{count} file(s) imported successfully!",
+      "uploadError": "Error uploading file",
+      "fileExists": "File already exists",
+      "invalidFileType": "Only PDF files are allowed",
+      "noFilesToImport": "No files to import"
+    },
+    "validation": {
+      "fillAllFields": "Fill in all fields",
+      "invalidCatalog": "Invalid catalog",
+      "invalidSchema": "Invalid schema",
+      "invalidTableName": "Invalid table name"
+    },
+    "placeholder": {
+      "catalog": "e.g.: fabio_goncalves",
+      "schema": "e.g.: customer_cielo",
+      "tableName": "e.g.: contracts"
+    }
+  },
+  "prepare": {
+    "title": "Prepare data for search",
+    "subtitle": "Configure the table, select documents and generate text segments for search",
+    "step1": {
+      "title": "1. Where to Save Text Segments",
+      "tableUsed": "Table that will be used:",
+      "tableCreated": "Table that will be created:",
+      "configValid": "Configuration valid"
+    },
+    "step2": {
+      "title": "2. Select Documents",
+      "loadDocuments": "Load documents",
+      "noDocuments": "No documents found",
+      "tableNotFound": "Document table not found",
+      "tableNotFoundDesc": "The table does not exist yet. Import documents first.",
+      "goToImport": "Go to Import",
+      "selectAll": "Select all",
+      "deselectAll": "Deselect all",
+      "removeSelected": "Remove selected",
+      "removeAll": "Remove all",
+      "viewText": "View text",
+      "completed": "Completed"
+    },
+    "step3": {
+      "title": "3. Segmentation Strategy",
+      "completed": "Completed",
+      "strategies": {
+        "fixed_size": {
+          "name": "Fixed Size",
+          "description": "Divides text into equal parts with configurable overlap. Simple and efficient."
+        },
+        "recursive": {
+          "name": "Recursive by Character",
+          "description": "Divides respecting paragraphs and line breaks. Maintains text context."
+        },
+        "by_separator": {
+          "name": "By Separator",
+          "description": "Divides by specific markers (paragraph, line, period). Flexible and adaptable."
+        },
+        "by_page": {
+          "name": "By Page",
+          "description": "Each PDF page becomes a segment. Ideal for page-organized documents."
+        },
+        "by_sentence": {
+          "name": "By Sentence",
+          "description": "Groups complete sentences until reaching maximum size. Preserves text structure."
+        },
+        "semantic": {
+          "name": "Semantic",
+          "description": "Automatically identifies where the topic changes. Higher precision, slower."
+        }
+      },
+      "params": {
+        "maxSize": "Maximum segment size (characters)",
+        "overlap": "Overlap (characters)"
+      },
+      "preview": "Preview",
+      "confirmProcess": "Confirm and Process"
+    },
+    "preview": {
+      "title": "Segments Preview",
+      "generatedTitle": "Generated Segments",
+      "segment": "Segment",
+      "total": "Total",
+      "inDocument": "in this document",
+      "noSegment": "No segment available for preview"
+    },
+    "processing": {
+      "title": "Confirm Processing",
+      "message": "You will process {count} document(s) with the strategy",
+      "warning": "Attention: Existing segments will be deleted and new segments will be generated with the selected strategy.",
+      "success": "Processing completed! {count} segments created in {files} file(s).",
+      "successWithErrors": "Completed with {errors} error(s). {count} segments created.",
+      "error": "Error processing documents"
+    },
+    "delete": {
+      "title": "Confirm Document Removal",
+      "message": "You are about to remove {count} document(s). This action will remove records from the tables.",
+      "alsoDeleteVolume": "Also remove PDF files from volume?",
+      "removeSelected": "Remove selected",
+      "removeAll": "Remove all",
+      "success": "{count} document(s) removed!",
+      "successWithErrors": "With {errors} error(s)",
+      "error": "Error removing documents"
+    },
+    "toast": {
+      "configFirst": "Configure and save the table first",
+      "verifyFirst": "Verify the configuration first",
+      "selectDocuments": "Select at least one document",
+      "previewGenerated": "Preview generated: {count} segments in {docs} document(s)",
+      "previewError": "Error generating preview",
+      "documentsRemoved": "Documents and segments removed"
+    }
+  }
+}
