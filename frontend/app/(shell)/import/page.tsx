@@ -838,7 +838,7 @@ export default function ImportPage() {
         {showConfig && (
           <div className="p-4">
             <p className="text-sm text-gray-600 mb-4">
-              Configure onde os documentos extraídos serão salvos. O texto será extraído automaticamente após o upload.
+              Configure onde os textos dos documentos extraídos serão salvos. O texto será extraído automaticamente após o upload.
             </p>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
