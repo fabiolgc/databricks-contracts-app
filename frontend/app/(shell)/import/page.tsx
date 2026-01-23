@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Upload, CheckCircle2, XCircle, Loader2, ChevronLeft, ChevronRight, Database, Settings, Trash2, FolderOpen, RefreshCw, FileStack } from "lucide-react"
+import { Upload, CheckCircle2, XCircle, Loader2, ChevronLeft, ChevronRight, Database, Settings, Trash2, FolderOpen, RefreshCw, FileStack, X, Check } from "lucide-react"
 import { toast } from "sonner"
 
 type FileStatus = "pending" | "uploading" | "extracting" | "success" | "error" | "skipped"
@@ -900,16 +900,27 @@ export default function ImportPage() {
               </div>
             )}
             
-            <div className="mt-4 flex items-center gap-3">
+            <div className="mt-4 flex items-center justify-end gap-3">
               {!isConfigSaved ? (
-                <button
-                  onClick={saveTableConfig}
-                  disabled={!tableConfig.catalog || !tableConfig.schema || !tableConfig.tableName}
-                  className="px-4 py-2 text-sm font-medium text-white bg-[#FF3621] rounded-lg hover:bg-[#FF3621]/90 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                >
-                  <Settings className="h-4 w-4" />
-                  Verificar / Salvar
-                </button>
+                <>
+                  <button
+                    onClick={() => {
+                      setTableConfig({ catalog: "", schema: "", tableName: "" })
+                    }}
+                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors flex items-center gap-2"
+                  >
+                    <X className="h-4 w-4" />
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={saveTableConfig}
+                    disabled={!tableConfig.catalog || !tableConfig.schema || !tableConfig.tableName}
+                    className="px-4 py-2 text-sm font-medium text-white bg-[#FF3621] rounded-lg hover:bg-[#FF3621]/90 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                  >
+                    <Check className="h-4 w-4" />
+                    Verificar / Salvar
+                  </button>
+                </>
               ) : (
                 <span className="flex items-center gap-2 text-sm text-[#00A972]">
                   <CheckCircle2 className="h-4 w-4" />
