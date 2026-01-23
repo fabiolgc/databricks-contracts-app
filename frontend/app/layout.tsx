@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
 import { DM_Sans, DM_Mono } from "next/font/google";
 import { Toaster } from "sonner";
+import { I18nProvider } from "@/lib/i18n";
 import "./globals.css";
 
-// Databricks official typography
 const dmSans = DM_Sans({
   variable: "--font-dm-sans",
   subsets: ["latin"],
@@ -29,22 +29,24 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="pt-BR">
+    <html lang="en" suppressHydrationWarning>
       <body
         className={`${dmSans.variable} ${dmMono.variable} font-sans antialiased`}
       >
-        {children}
-        <Toaster 
-          position="top-right" 
-          richColors 
-          closeButton
-          duration={6000}
-          toastOptions={{
-            style: {
-              padding: '16px',
-            },
-          }}
-        />
+        <I18nProvider>
+          {children}
+          <Toaster 
+            position="top-right" 
+            richColors 
+            closeButton
+            duration={6000}
+            toastOptions={{
+              style: {
+                padding: '16px',
+              },
+            }}
+          />
+        </I18nProvider>
       </body>
     </html>
   );

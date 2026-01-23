@@ -3,7 +3,6 @@
 import { useState, useEffect } from "react"
 import { 
   Database, 
-  Settings, 
   FileText, 
   Play, 
   Eye,
@@ -21,6 +20,7 @@ import {
   Check
 } from "lucide-react"
 import { toast, Toaster } from "sonner"
+import { useTranslation } from "@/lib/i18n"
 
 // Helper function to format time in MM:SS
 function formatTime(seconds: number): string {
@@ -144,9 +144,8 @@ const SEPARATOR_TYPES = [
 ]
 
 export default function PreparePage() {
-  // State for table configuration
-  // Note: tableName should be the BASE name (e.g., "contracts")
-  // Backend will add _raw and _chunks suffixes automatically
+  const { t } = useTranslation()
+  
   const [tableConfig, setTableConfig] = useState<TableConfig>({
     catalog: "",
     schema: "",
@@ -923,7 +922,7 @@ export default function PreparePage() {
             <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
               <div>
                 <h3 className="text-xl font-bold text-[#1B1B1D]">
-                  Prévia dos Segmentos
+                  {t("prepare.preview.title")}
                 </h3>
                 <p className="text-sm text-gray-600">
                   Ajuste a estratégia e visualize os resultados antes de processar
@@ -1089,7 +1088,7 @@ export default function PreparePage() {
                   onClick={() => setShowChunkingPreview(false)}
                   className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 transition-colors"
                 >
-                  Fechar
+                  {t("common.close")}
                 </button>
                 <button
                   onClick={() => {
@@ -1100,7 +1099,7 @@ export default function PreparePage() {
                   className="px-6 py-2 text-sm font-medium text-white bg-[#FF3621] rounded-lg hover:bg-[#FF3621]/90 transition-colors shadow-sm disabled:opacity-50 flex items-center gap-2"
                 >
                   <Play className="h-4 w-4" />
-                  Confirmar e Processar
+                  {t("prepare.step3.confirmProcess")}
                 </button>
               </div>
             </div>
@@ -1116,7 +1115,7 @@ export default function PreparePage() {
             <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
               <div>
                 <h3 className="text-xl font-bold text-[#1B1B1D]">
-                  Segmentos Gerados
+                  {t("prepare.preview.generatedTitle")}
                 </h3>
                 <p className="text-sm text-gray-600">
                   {uniqueExistingDocuments.length} documento(s), {existingChunkPreviews.length} segmentos no total
@@ -1227,9 +1226,9 @@ export default function PreparePage() {
       <div className="space-y-6">
         {/* Header */}
         <div>
-          <h1 className="text-3xl font-bold text-[#1B1B1D]">Preparar dados para busca</h1>
+          <h1 className="text-3xl font-bold text-[#1B1B1D]">{t("prepare.title")}</h1>
           <p className="mt-2 text-base text-gray-600">
-            Configure a tabela, selecione documentos e gere segmentos de texto para busca
+            {t("prepare.subtitle")}
           </p>
         </div>
 
@@ -1247,11 +1246,11 @@ export default function PreparePage() {
               ) : (
                 <Database className="h-5 w-5 text-[#FF3621]" />
               )}
-              <h2 className="text-lg font-semibold text-[#1B1B1D]">1. Onde Salvar os Segmentos de Texto</h2>
+              <h2 className="text-lg font-semibold text-[#1B1B1D]">{t("prepare.step1.title")}</h2>
             </div>
             <div className="flex items-center gap-2">
               {completedSteps.has(1) && (
-                <span className="text-sm text-[#00A972]">Concluído</span>
+                <span className="text-sm text-[#00A972]">{t("prepare.step2.completed")}</span>
               )}
               <ChevronRight className={`h-5 w-5 text-gray-400 transition-transform ${activeStep === 1 ? 'rotate-90' : ''}`} />
             </div>
@@ -1261,8 +1260,8 @@ export default function PreparePage() {
             <div className="p-4">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Catálogo
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                    {t("common.catalog")}
                   </label>
                   <input
                     type="text"
@@ -1278,7 +1277,7 @@ export default function PreparePage() {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Schema
+                    {t("common.schema")}
                   </label>
                   <input
                     type="text"
@@ -1294,7 +1293,7 @@ export default function PreparePage() {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Nome da Tabela
+                    {t("common.tableName")}
                   </label>
                   <input
                     type="text"
@@ -1335,7 +1334,7 @@ export default function PreparePage() {
                   {isConfigSaved && (
                     <span className="flex items-center gap-2 text-sm text-[#00A972]">
                       <CheckCircle2 className="h-4 w-4" />
-                      Configuração válida
+                      {t("prepare.step1.configValid")}
                     </span>
                   )}
                 </div>
@@ -1350,7 +1349,7 @@ export default function PreparePage() {
                         className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors flex items-center gap-2"
                       >
                         <X className="h-4 w-4" />
-                        Cancelar
+                        {t("common.cancel")}
                       </button>
                       <button
                         onClick={async () => {
@@ -1364,7 +1363,7 @@ export default function PreparePage() {
                         ) : (
                           <Check className="h-4 w-4" />
                         )}
-                        Verificar / Salvar
+                        {t("common.verifySave")}
                       </button>
                     </>
                   ) : (
@@ -1375,7 +1374,7 @@ export default function PreparePage() {
                       }}
                       className="px-4 py-2 text-sm font-medium text-white bg-[#FF3621] rounded-lg hover:bg-[#FF3621]/90 transition-colors shadow-sm flex items-center gap-2"
                     >
-                      Próximo
+                      {t("common.next")}
                       <ChevronRight className="h-4 w-4" />
                     </button>
                   )}
@@ -1400,7 +1399,7 @@ export default function PreparePage() {
               ) : (
                 <FileText className="h-5 w-5 text-[#FF3621]" />
               )}
-              <h2 className="text-lg font-semibold text-[#1B1B1D]">2. Selecionar Documentos</h2>
+              <h2 className="text-lg font-semibold text-[#1B1B1D]">{t("prepare.step2.title")}</h2>
             </div>
             <div className="flex items-center gap-3">
               {selectedDocuments.size > 0 && (
@@ -1629,7 +1628,7 @@ export default function PreparePage() {
                   <Trash2 className="h-6 w-6 text-red-600" />
                 </div>
                 <h3 className="text-xl font-bold text-[#1B1B1D]">
-                  {deleteAllDocuments ? "Remover todos os documentos?" : "Remover documentos selecionados?"}
+                  {t("prepare.delete.title")}
                 </h3>
               </div>
               
@@ -1702,7 +1701,7 @@ export default function PreparePage() {
                   <AlertCircle className="h-6 w-6 text-amber-600" />
                 </div>
                 <h3 className="text-xl font-bold text-[#1B1B1D]">
-                  Confirmar processamento
+                  {t("prepare.processing.title")}
                 </h3>
               </div>
               
@@ -1723,7 +1722,7 @@ export default function PreparePage() {
                   onClick={() => setShowProcessConfirmModal(false)}
                   className="flex-1 px-4 py-2.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
                 >
-                  Cancelar
+                  {t("common.cancel")}
                 </button>
                 <button
                   onClick={() => {
@@ -1735,7 +1734,7 @@ export default function PreparePage() {
                   className="flex-1 px-4 py-2.5 text-sm font-medium text-white bg-[#FF3621] rounded-lg hover:bg-[#FF3621]/90 transition-colors flex items-center justify-center gap-2"
                 >
                   <Play className="h-4 w-4" />
-                  Sim, Processar
+                  {t("common.confirm")}
                 </button>
               </div>
             </div>
@@ -1796,11 +1795,11 @@ export default function PreparePage() {
               ) : (
                 <Layers className="h-5 w-5 text-[#FF3621]" />
               )}
-              <h2 className="text-lg font-semibold text-[#1B1B1D]">3. Estratégia de Segmentação</h2>
+              <h2 className="text-lg font-semibold text-[#1B1B1D]">{t("prepare.step3.title")}</h2>
             </div>
             <div className="flex items-center gap-2">
               {completedSteps.has(3) && (
-                <span className="text-sm text-[#00A972]">Concluído</span>
+                <span className="text-sm text-[#00A972]">{t("prepare.step2.completed")}</span>
               )}
               {selectedStrategy && !completedSteps.has(3) && (
                 <span className="text-sm text-gray-500">
@@ -1947,7 +1946,7 @@ export default function PreparePage() {
                   ) : (
                     <Eye className="h-4 w-4" />
                   )}
-                  Visualizar Prévia
+                    {t("prepare.step3.preview")}
                 </button>
                 <span className="text-sm text-gray-500">
                   {CHUNKING_STRATEGIES.find(s => s.id === selectedStrategy)?.name}
