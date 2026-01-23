@@ -1304,12 +1304,15 @@ export default function PreparePage() {
 
               {/* Preview das tabelas que serão criadas/usadas */}
               {tableConfig.tableName && (
-                <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                  <p className="text-xs font-medium text-blue-800 mb-2">Tabelas que serão utilizadas:</p>
-                  <div className="flex flex-wrap gap-2">
+                <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg space-y-2">
+                  <div>
+                    <p className="text-xs font-medium text-blue-800 mb-1">Tabela que será utilizada:</p>
                     <code className="bg-blue-100 text-blue-900 px-2 py-1 rounded text-xs font-mono">
                       {tableConfig.catalog || "catalogo"}.{tableConfig.schema || "schema"}.{tableConfig.tableName}_raw
                     </code>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-blue-800 mb-1">Tabela que será criada:</p>
                     <code className="bg-blue-100 text-blue-900 px-2 py-1 rounded text-xs font-mono">
                       {tableConfig.catalog || "catalogo"}.{tableConfig.schema || "schema"}.{tableConfig.tableName}_chunks
                     </code>
