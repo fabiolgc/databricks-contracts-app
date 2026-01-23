@@ -822,7 +822,7 @@ export default function ImportPage() {
         >
           <div className="flex items-center gap-2">
             <Database className="h-5 w-5 text-[#FF3621]" />
-            <h2 className="text-lg font-semibold text-[#1B1B1D]">Configurar Tabela de Documentos</h2>
+            <h2 className="text-lg font-semibold text-[#1B1B1D]">Onde Salvar os Documentos</h2>
           </div>
           <div className="flex items-center gap-2">
             {isConfigSaved && (
