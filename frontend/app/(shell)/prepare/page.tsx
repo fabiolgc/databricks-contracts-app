@@ -152,6 +152,11 @@ export default function PreparePage() {
     schema: "",
     tableName: "contracts"  // Base name only - backend adds _raw/_chunks
   })
+  const [initialTableConfig, setInitialTableConfig] = useState<TableConfig>({
+    catalog: "",
+    schema: "",
+    tableName: "contracts"
+  })
   const [isConfigSaved, setIsConfigSaved] = useState(false)
   
   // Wizard step control - only one step open at a time
@@ -257,6 +262,7 @@ export default function PreparePage() {
             tableName: baseTableName
           }
           setTableConfig(newConfig)
+          setInitialTableConfig(newConfig) // Store initial config for cancel
           
           // Auto-save if all fields are filled from environment
           if (newConfig.catalog && newConfig.schema && newConfig.tableName) {
@@ -1339,7 +1345,7 @@ export default function PreparePage() {
                     <>
                       <button
                         onClick={() => {
-                          setTableConfig({ catalog: "", schema: "", tableName: "" })
+                          setTableConfig(initialTableConfig)
                         }}
                         className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors flex items-center gap-2"
                       >

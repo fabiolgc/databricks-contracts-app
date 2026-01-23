@@ -60,6 +60,11 @@ export default function ImportPage() {
     schema: "",
     tableName: "contracts"  // Base name only - backend adds _raw suffix
   })
+  const [initialTableConfig, setInitialTableConfig] = useState<TableConfig>({
+    catalog: "",
+    schema: "",
+    tableName: "contracts"
+  })
   const [isConfigSaved, setIsConfigSaved] = useState(false)
   const [showConfig, setShowConfig] = useState(false)
   
@@ -96,6 +101,7 @@ export default function ImportPage() {
             tableName: "contracts"  // Base name only - backend adds _raw suffix
           }
           setTableConfig(newConfig)
+          setInitialTableConfig(newConfig) // Store initial config for cancel
           
           // Auto-save if all fields are filled from environment
           if (newConfig.catalog && newConfig.schema && newConfig.tableName) {
@@ -905,7 +911,7 @@ export default function ImportPage() {
                 <>
                   <button
                     onClick={() => {
-                      setTableConfig({ catalog: "", schema: "", tableName: "" })
+                      setTableConfig(initialTableConfig)
                     }}
                     className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors flex items-center gap-2"
                   >
