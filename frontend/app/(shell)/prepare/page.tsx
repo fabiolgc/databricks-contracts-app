@@ -16,7 +16,9 @@ import {
   RefreshCw,
   Trash2,
   Plus,
-  Layers
+  Layers,
+  X,
+  Check
 } from "lucide-react"
 import { toast, Toaster } from "sonner"
 
@@ -1304,40 +1306,27 @@ export default function PreparePage() {
 
               {/* Preview das tabelas que serão criadas/usadas */}
               {tableConfig.tableName && (
-                <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg space-y-2">
-                  <div>
-                    <p className="text-xs font-medium text-blue-800 mb-1">Tabela que será utilizada:</p>
-                    <code className="bg-blue-100 text-blue-900 px-2 py-1 rounded text-xs font-mono">
-                      {tableConfig.catalog || "catalogo"}.{tableConfig.schema || "schema"}.{tableConfig.tableName}_raw
-                    </code>
-                  </div>
-                  <div>
-                    <p className="text-xs font-medium text-blue-800 mb-1">Tabela que será criada:</p>
-                    <code className="bg-blue-100 text-blue-900 px-2 py-1 rounded text-xs font-mono">
-                      {tableConfig.catalog || "catalogo"}.{tableConfig.schema || "schema"}.{tableConfig.tableName}_chunks
-                    </code>
+                <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <p className="text-xs font-medium text-blue-800 mb-1">Tabela que será utilizada:</p>
+                      <code className="bg-blue-100 text-blue-900 px-2 py-1 rounded text-xs font-mono">
+                        {tableConfig.catalog || "catalogo"}.{tableConfig.schema || "schema"}.{tableConfig.tableName}_raw
+                      </code>
+                    </div>
+                    <div>
+                      <p className="text-xs font-medium text-blue-800 mb-1">Tabela que será criada:</p>
+                      <code className="bg-blue-100 text-blue-900 px-2 py-1 rounded text-xs font-mono">
+                        {tableConfig.catalog || "catalogo"}.{tableConfig.schema || "schema"}.{tableConfig.tableName}_chunks
+                      </code>
+                    </div>
                   </div>
                 </div>
               )}
               
               <div className="mt-4 pt-4 border-t border-gray-200 flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  {!isConfigSaved ? (
-                    <button
-                      onClick={async () => {
-                        await checkTableExists()
-                      }}
-                      disabled={processingStatus.status === "checking" || !tableConfig.catalog || !tableConfig.schema || !tableConfig.tableName}
-                      className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                    >
-                      {processingStatus.status === "checking" ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Settings className="h-4 w-4" />
-                      )}
-                      Verificar
-                    </button>
-                  ) : (
+                <div className="flex items-center gap-2">
+                  {isConfigSaved && (
                     <span className="flex items-center gap-2 text-sm text-[#00A972]">
                       <CheckCircle2 className="h-4 w-4" />
                       Configuração válida
@@ -1345,21 +1334,46 @@ export default function PreparePage() {
                   )}
                 </div>
                 
-                <button
-                  onClick={() => {
-                    if (isConfigSaved) {
-                      setCompletedSteps(prev => new Set([...prev, 1]))
-                      setActiveStep(2)
-                    } else {
-                      toast.warning("Verifique a configuração primeiro")
-                    }
-                  }}
-                  disabled={!isConfigSaved}
-                  className="px-4 py-2 text-sm font-medium text-white bg-[#FF3621] rounded-lg hover:bg-[#FF3621]/90 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                >
-                  Próximo
-                  <ChevronRight className="h-4 w-4" />
-                </button>
+                <div className="flex items-center gap-3">
+                  {!isConfigSaved ? (
+                    <>
+                      <button
+                        onClick={() => {
+                          setTableConfig({ catalog: "", schema: "", tableName: "" })
+                        }}
+                        className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors flex items-center gap-2"
+                      >
+                        <X className="h-4 w-4" />
+                        Cancelar
+                      </button>
+                      <button
+                        onClick={async () => {
+                          await checkTableExists()
+                        }}
+                        disabled={processingStatus.status === "checking" || !tableConfig.catalog || !tableConfig.schema || !tableConfig.tableName}
+                        className="px-4 py-2 text-sm font-medium text-white bg-[#FF3621] rounded-lg hover:bg-[#FF3621]/90 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                      >
+                        {processingStatus.status === "checking" ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Check className="h-4 w-4" />
+                        )}
+                        Verificar / Salvar
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      onClick={() => {
+                        setCompletedSteps(prev => new Set([...prev, 1]))
+                        setActiveStep(2)
+                      }}
+                      className="px-4 py-2 text-sm font-medium text-white bg-[#FF3621] rounded-lg hover:bg-[#FF3621]/90 transition-colors shadow-sm flex items-center gap-2"
+                    >
+                      Próximo
+                      <ChevronRight className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           )}
