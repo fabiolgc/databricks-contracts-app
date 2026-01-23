@@ -1315,15 +1315,15 @@ export default function PreparePage() {
                 <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <p className="text-xs font-medium text-blue-800 mb-1">Tabela que será utilizada:</p>
-                      <code className="bg-blue-100 text-blue-900 px-2 py-1 rounded text-xs font-mono">
-                        {tableConfig.catalog || "catalogo"}.{tableConfig.schema || "schema"}.{tableConfig.tableName}_raw
-                      </code>
-                    </div>
-                    <div>
                       <p className="text-xs font-medium text-blue-800 mb-1">Tabela que será criada:</p>
                       <code className="bg-blue-100 text-blue-900 px-2 py-1 rounded text-xs font-mono">
                         {tableConfig.catalog || "catalogo"}.{tableConfig.schema || "schema"}.{tableConfig.tableName}_chunks
+                      </code>
+                    </div>
+                    <div>
+                      <p className="text-xs font-medium text-blue-800 mb-1">Tabela que será utilizada:</p>
+                      <code className="bg-blue-100 text-blue-900 px-2 py-1 rounded text-xs font-mono">
+                        {initialTableConfig.catalog || "catalogo"}.{initialTableConfig.schema || "schema"}.{initialTableConfig.tableName}_raw
                       </code>
                     </div>
                   </div>
