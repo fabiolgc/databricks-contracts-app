@@ -1301,6 +1301,21 @@ export default function PreparePage() {
                   />
                 </div>
               </div>
+
+              {/* Preview das tabelas que serão criadas/usadas */}
+              {tableConfig.tableName && (
+                <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                  <p className="text-xs font-medium text-blue-800 mb-2">Tabelas que serão utilizadas:</p>
+                  <div className="flex flex-wrap gap-2">
+                    <code className="bg-blue-100 text-blue-900 px-2 py-1 rounded text-xs font-mono">
+                      {tableConfig.catalog || "catalogo"}.{tableConfig.schema || "schema"}.{tableConfig.tableName}_raw
+                    </code>
+                    <code className="bg-blue-100 text-blue-900 px-2 py-1 rounded text-xs font-mono">
+                      {tableConfig.catalog || "catalogo"}.{tableConfig.schema || "schema"}.{tableConfig.tableName}_chunks
+                    </code>
+                  </div>
+                </div>
+              )}
               
               <div className="mt-4 pt-4 border-t border-gray-200 flex items-center justify-between">
                 <div className="flex items-center gap-4">
@@ -1325,11 +1340,6 @@ export default function PreparePage() {
                       Configuração válida
                     </span>
                   )}
-                  <span className="text-sm text-gray-500">
-                    <code className="bg-gray-100 px-2 py-0.5 rounded text-xs">
-                      {tableConfig.catalog}.{tableConfig.schema}.{tableConfig.tableName}
-                    </code>
-                  </span>
                 </div>
                 
                 <button

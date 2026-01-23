@@ -882,11 +882,23 @@ export default function ImportPage() {
                     setTableConfig(prev => ({ ...prev, tableName: e.target.value }))
                     setIsConfigSaved(false)
                   }}
-                  placeholder="ex: contracts_documents"
+                  placeholder="ex: contracts"
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#FF3621]/20 focus:border-[#FF3621]"
                 />
               </div>
             </div>
+
+            {/* Preview das tabelas que serão criadas */}
+            {tableConfig.tableName && (
+              <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <p className="text-xs font-medium text-blue-800 mb-2">Tabela que será criada:</p>
+                <div className="flex flex-wrap gap-2">
+                  <code className="bg-blue-100 text-blue-900 px-2 py-1 rounded text-xs font-mono">
+                    {tableConfig.catalog || "catalogo"}.{tableConfig.schema || "schema"}.{tableConfig.tableName}_raw
+                  </code>
+                </div>
+              </div>
+            )}
             
             <div className="mt-4 flex items-center gap-3">
               {!isConfigSaved ? (
@@ -904,11 +916,6 @@ export default function ImportPage() {
                   Configuração salva
                 </span>
               )}
-              <span className="text-sm text-gray-600">
-                Tabela: <code className="bg-gray-100 px-2 py-0.5 rounded text-xs">
-                  {tableConfig.catalog}.{tableConfig.schema}.{tableConfig.tableName}
-                </code>
-              </span>
             </div>
           </div>
         )}
