@@ -98,37 +98,37 @@ const CHUNKING_STRATEGIES: ChunkingStrategy[] = [
   {
     id: "fixed_size",
     name: "Tamanho Fixo",
-    description: "Divide o texto em chunks de tamanho igual com overlap configurável. Simples e eficiente.",
+    description: "Divide o texto em partes iguais com sobreposição configurável. Simples e eficiente.",
     params: { chunkSize: 1000, chunkOverlap: 200 }
   },
   {
     id: "recursive",
     name: "Recursivo por Caractere",
-    description: "Divide recursivamente por separadores naturais (\\n\\n, \\n, espaço). Mantém contexto semântico.",
+    description: "Divide respeitando parágrafos e quebras de linha. Mantém o contexto do texto.",
     params: { chunkSize: 1000, chunkOverlap: 200, separator: "\\n\\n" }
   },
   {
     id: "by_separator",
     name: "Por Separador",
-    description: "Divide por delimitadores personalizados (parágrafo, linha, ponto). Usa fallback se não encontrar.",
+    description: "Divide por marcadores específicos (parágrafo, linha, ponto). Flexível e adaptável.",
     params: { chunkSize: 800, separatorType: "paragraph", customSeparator: "" }
   },
   {
     id: "by_page",
     name: "Por Página",
-    description: "Cada página do PDF se torna um chunk. Ideal para documentos estruturados por página.",
+    description: "Cada página do PDF vira um segmento. Ideal para documentos organizados por página.",
     params: {}
   },
   {
     id: "by_sentence",
     name: "Por Sentença",
-    description: "Agrupa sentenças completas até atingir o tamanho máximo. Preserva estrutura gramatical.",
+    description: "Agrupa frases completas até atingir o tamanho máximo. Preserva a estrutura do texto.",
     params: { chunkSize: 1000, chunkOverlap: 100 }
   },
   {
     id: "semantic",
     name: "Semântico",
-    description: "Usa embeddings para identificar quebras naturais de tópico. Maior precisão, mais lento.",
+    description: "Identifica automaticamente onde o assunto muda. Maior precisão, mais lento.",
     params: { chunkSize: 1500 }
   }
 ]
@@ -527,7 +527,7 @@ export default function PreparePage() {
         toast.success(`${count} documento(s) removido(s)`, {
           description: deleteFromVolume 
             ? `Removidos da tabela e do volume (${data.deletedFilesCount} arquivos)`
-            : "Removidos das tabelas _raw e _chunks",
+            : "Documentos e segmentos removidos",
           duration: 5000
         })
         
@@ -603,7 +603,7 @@ export default function PreparePage() {
         
         // Calculate total chunks across all documents
         const totalChunks = data.documents.reduce((sum: number, doc: ChunkPreviewData) => sum + doc.totalChunks, 0)
-        toast.success(`Prévia gerada: ${totalChunks} chunks em ${data.documents.length} documento(s)`, {
+        toast.success(`Prévia gerada: ${totalChunks} segmentos em ${data.documents.length} documento(s)`, {
           duration: 4000
         })
       }
@@ -766,14 +766,14 @@ export default function PreparePage() {
             // Update progress AFTER processing - show completion
             setProcessingStatus({
               status: "processing",
-              message: `✓ ${fileName} - ${fileResult.chunksCreated} chunks criados`,
+              message: `✓ ${fileName} - ${fileResult.chunksCreated} segmentos criados`,
               progress: Math.round((fileNumber / totalFiles) * 100),
               totalFiles: totalFiles,
               processedFiles: processedCount
             })
             
             toast.success(`Arquivo ${fileNumber}/${totalFiles}: ${fileName}`, {
-              description: `${fileResult.textLength?.toLocaleString() || 0} caracteres → ${fileResult.chunksCreated} chunks`,
+              description: `${fileResult.textLength?.toLocaleString() || 0} caracteres → ${fileResult.chunksCreated} segmentos`,
               duration: 3000
             })
           } else {
@@ -825,8 +825,8 @@ export default function PreparePage() {
       setProcessingStatus({
         status: success ? "completed" : "error",
         message: success 
-          ? `Processamento concluído! ${totalChunks} chunks criados em ${processedCount} arquivo(s).`
-          : `Concluído com ${errors.length} erro(s). ${totalChunks} chunks criados.`,
+          ? `Processamento concluído! ${totalChunks} segmentos criados em ${processedCount} arquivo(s).`
+          : `Concluído com ${errors.length} erro(s). ${totalChunks} segmentos criados.`,
         progress: 100,
         totalFiles: actualFilesToProcess.length,
         processedFiles: processedCount
@@ -834,7 +834,7 @@ export default function PreparePage() {
       
       if (success) {
         toast.success("Processamento concluído!", {
-          description: `${processedCount} arquivos processados, ${totalChunks} chunks criados`,
+          description: `${processedCount} arquivos processados, ${totalChunks} segmentos criados`,
           duration: 6000
         })
       }
@@ -915,7 +915,7 @@ export default function PreparePage() {
             <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
               <div>
                 <h3 className="text-xl font-bold text-[#1B1B1D]">
-                  Prévia dos Chunks
+                  Prévia dos Segmentos
                 </h3>
                 <p className="text-sm text-gray-600">
                   Ajuste a estratégia e visualize os resultados antes de processar
@@ -960,7 +960,7 @@ export default function PreparePage() {
                       />
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="text-sm text-gray-600">Overlap:</span>
+                      <span className="text-sm text-gray-600">Sobreposição:</span>
                       <input
                         type="number"
                         value={chunkingParams.chunkOverlap}
@@ -1025,7 +1025,7 @@ export default function PreparePage() {
             {chunkPreviewData[previewDocIndex] && (
               <div className="px-6 py-3 border-b border-gray-200 flex items-center justify-between">
                 <span className="text-sm text-gray-600">
-                  Chunk {previewChunkIndex + 1} de {chunkPreviewData[previewDocIndex].totalChunks}
+                  Segmento {previewChunkIndex + 1} de {chunkPreviewData[previewDocIndex].totalChunks}
                   {chunkPreviewData[previewDocIndex].totalChunks > 10 && (
                     <span className="text-xs text-gray-400 ml-1">(mostrando até 10)</span>
                   )}
@@ -1058,7 +1058,7 @@ export default function PreparePage() {
                 <div className="bg-gray-50 rounded-lg border border-gray-200 h-full flex flex-col">
                   <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
                     <span className="text-sm font-medium text-[#FF3621]">
-                      Chunk #{previewChunkIndex + 1}
+                      Segmento #{previewChunkIndex + 1}
                     </span>
                     <span className="text-sm text-gray-500">
                       {chunkPreviewData[previewDocIndex].chunks[previewChunkIndex]?.length || 0} caracteres
@@ -1074,7 +1074,7 @@ export default function PreparePage() {
             {/* Footer */}
             <div className="px-6 py-4 border-t border-gray-200 bg-gray-50 flex items-center justify-between">
               <span className="text-sm text-gray-500">
-                Total: {chunkPreviewData.reduce((sum, doc) => sum + doc.totalChunks, 0)} chunks em {chunkPreviewData.length} documento(s)
+                Total: {chunkPreviewData.reduce((sum, doc) => sum + doc.totalChunks, 0)} segmentos em {chunkPreviewData.length} documento(s)
               </span>
               <div className="flex items-center gap-3">
                 <button
@@ -1108,10 +1108,10 @@ export default function PreparePage() {
             <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
               <div>
                 <h3 className="text-xl font-bold text-[#1B1B1D]">
-                  Chunks Gerados
+                  Segmentos Gerados
                 </h3>
                 <p className="text-sm text-gray-600">
-                  {uniqueExistingDocuments.length} documento(s), {existingChunkPreviews.length} chunks total
+                  {uniqueExistingDocuments.length} documento(s), {existingChunkPreviews.length} segmentos no total
                 </p>
               </div>
               <button
@@ -1155,7 +1155,7 @@ export default function PreparePage() {
             {currentExistingChunk && (
               <div className="px-6 py-3 border-b border-gray-200 flex items-center justify-between">
                 <span className="text-sm text-gray-600">
-                  Chunk {existingChunkIndex + 1} de {totalExistingChunks}
+                  Segmento {existingChunkIndex + 1} de {totalExistingChunks}
                 </span>
                 <div className="flex items-center gap-2">
                   <button
@@ -1182,7 +1182,7 @@ export default function PreparePage() {
                 <div className="bg-gray-50 rounded-lg border border-gray-200 h-full flex flex-col">
                   <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
                     <span className="text-sm font-medium text-[#FF3621]">
-                      Chunk #{existingChunkIndex + 1}
+                      Segmento #{existingChunkIndex + 1}
                     </span>
                     <span className="text-sm text-gray-500">
                       {currentExistingChunk.content?.length || 0} caracteres
@@ -1194,7 +1194,7 @@ export default function PreparePage() {
                 </div>
               ) : (
                 <div className="text-center py-12 text-gray-500">
-                  Nenhum chunk disponível para visualização
+                  Nenhum segmento disponível para visualização
                 </div>
               )}
             </div>
@@ -1203,7 +1203,7 @@ export default function PreparePage() {
             <div className="px-6 py-4 border-t border-gray-200 bg-gray-50 flex items-center justify-between">
               <span className="text-sm text-gray-500">
                 Documento {existingDocIndex + 1} de {uniqueExistingDocuments.length} • 
-                {" "}{currentExistingDocChunks.length} chunks neste documento
+                {" "}{currentExistingDocChunks.length} segmentos neste documento
               </span>
               <button
                 onClick={() => setShowExistingPreview(false)}
@@ -1221,7 +1221,7 @@ export default function PreparePage() {
         <div>
           <h1 className="text-3xl font-bold text-[#1B1B1D]">Preparar dados para busca</h1>
           <p className="mt-2 text-base text-gray-600">
-            Configure a tabela Delta, selecione arquivos e gere chunks para indexação vetorial
+            Configure a tabela, selecione documentos e gere segmentos de texto para busca
           </p>
         </div>
 
@@ -1296,7 +1296,7 @@ export default function PreparePage() {
                       setIsConfigSaved(false)
                       setCompletedSteps(prev => { const newSet = new Set(prev); newSet.delete(1); return newSet })
                     }}
-                    placeholder="ex: contracts_chunks"
+                    placeholder="ex: contracts"
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#FF3621]/20 focus:border-[#FF3621]"
                   />
                 </div>
@@ -1610,7 +1610,7 @@ export default function PreparePage() {
               <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4">
                 <p className="text-sm text-amber-800">
                   <strong>Atenção:</strong> Esta ação irá remover os documentos da tabela <code className="bg-amber-100 px-1 rounded">_raw</code> e 
-                  os chunks correspondentes da tabela <code className="bg-amber-100 px-1 rounded">_chunks</code>.
+                  os segmentos correspondentes.
                 </p>
               </div>
               
@@ -1680,8 +1680,8 @@ export default function PreparePage() {
               
               <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-6">
                 <p className="text-sm text-amber-800">
-                  <strong>Atenção:</strong> Todos os chunks existentes na tabela <code className="bg-amber-100 px-1 rounded">_chunks</code> serão 
-                  <strong> apagados</strong> e novos chunks serão gerados com a estratégia selecionada.
+                  <strong>Atenção:</strong> Os segmentos existentes serão 
+                  <strong> apagados</strong> e novos segmentos serão gerados com a estratégia selecionada.
                 </p>
               </div>
               
@@ -1864,7 +1864,7 @@ export default function PreparePage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm text-gray-600 mb-1">
-                      Tamanho máximo do Chunk (caracteres)
+                      Tamanho máximo do segmento (caracteres)
                     </label>
                     <input
                       type="number"
@@ -1884,7 +1884,7 @@ export default function PreparePage() {
                   {selectedStrategy !== "semantic" && selectedStrategy !== "by_separator" && (
                     <div>
                       <label className="block text-sm text-gray-600 mb-1">
-                        Overlap (caracteres)
+                        Sobreposição (caracteres)
                       </label>
                       <input
                         type="number"
@@ -1919,7 +1919,7 @@ export default function PreparePage() {
                 <span className="text-sm text-gray-500">
                   {CHUNKING_STRATEGIES.find(s => s.id === selectedStrategy)?.name}
                   {selectedStrategy !== "by_page" && (
-                    <> • {chunkingParams.chunkSize} chars, {chunkingParams.chunkOverlap} overlap</>
+                    <> • {chunkingParams.chunkSize} chars, {chunkingParams.chunkOverlap} sobreposição</>
                   )}
                 </span>
               </div>
