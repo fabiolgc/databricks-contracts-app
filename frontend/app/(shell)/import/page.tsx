@@ -922,7 +922,7 @@ export default function ImportPage() {
         >
           <div className="flex items-center gap-2">
             <FolderOpen className="h-5 w-5 text-[#FF3621]" />
-            <h2 className="text-lg font-semibold text-[#1B1B1D]">Gerenciar Volume</h2>
+            <h2 className="text-lg font-semibold text-[#1B1B1D]">Gerenciar Pasta do Databricks</h2>
           </div>
           <div className="flex items-center gap-2">
             {volumeFilesTotal > 0 && (
@@ -937,7 +937,7 @@ export default function ImportPage() {
         {showVolumeManager && (
           <div className="p-4">
             <p className="text-sm text-gray-600 mb-4">
-              Visualize e gerencie os arquivos PDF armazenados no volume do Unity Catalog.
+              Gerencie os arquivos armazenados na pasta do Databricks (Volume) gerenciado pelo Unity Catalog.
             </p>
             
             {/* Load Files Button */}
