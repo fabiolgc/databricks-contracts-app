@@ -2091,38 +2091,55 @@ async def generate_ai_config(
         # Build the AI prompt for extracting brand colors with full palette
         ai_prompt = f"""You are a brand identity expert and UI/UX designer. Analyze the visual identity of the company or website "{company_escaped}".
 
-Based on your knowledge of this company's brand guidelines, website design, and corporate identity, create a complete color palette in HEX format:
+Your job:
+1) Produce a professional UI color palette in HEX (primary + derived subtle tints).
+2) Provide a reliable, publicly accessible logo_url that is a direct link to an image file (PNG, SVG, JPG, or WebP).
 
+IMPORTANT LIMITATION:
+You may not have reliable real-time browsing access. Do NOT hallucinate specific logo file URLs from private knowledge. Prefer deterministic, highly reliable URL patterns.
+
+LOGO URL STRATEGY (minimize broken URLs):
+A) First, infer the company's most likely official domain (e.g., "databricks.com") from the company_name.
+   - If multiple companies match, choose the most likely and proceed only if reasonably confident.
+B) Preferred logo_url sources (in order):
+   1) A well-known, stable public logo URL (e.g., Wikimedia/Wikipedia media file) ONLY if you are highly confident it is correct and publicly accessible.
+   2) The company's official site ONLY if you are highly confident about a standard public logo path AND it is a direct image file URL (ends with .svg/.png/.jpg/.webp). Do NOT guess obscure paths.
+   3) Reliable fallback: Google favicon service (returns a direct image and is usually accessible):
+      - https://www.google.com/s2/favicons?domain=DOMAIN&sz=256
+      Use this when you can infer a plausible DOMAIN with moderate confidence, even if you cannot confirm the exact logo file.
+C) If you cannot infer a plausible domain with moderate confidence, set logo_url to "" (empty string).
+
+COLOR PALETTE REQUIREMENTS:
 PRIMARY COLORS:
-1. primary_color: The main brand color (used for buttons, links, CTAs)
-2. text_color: Color for headings and important text (usually dark)
+1. primary_color: The main brand color (buttons, links, CTAs)
+2. text_color: Color for headings and important text (usually near-black / dark for readability)
 3. success_color: Color for success states (usually green tones)
 4. accent_color: Secondary/accent color for highlights and information
 
 DERIVED COLORS (lighter versions for backgrounds and UI elements):
-5. primary_light: Very light version of primary (for backgrounds, ~95% lightness) - like bg-red-50
-6. primary_lighter: Light version of primary (for hover states, ~90% lightness) - like bg-red-100
-7. success_light: Very light version of success (for success backgrounds, ~95% lightness) - like bg-green-50
-8. success_lighter: Light version of success (for success elements, ~90% lightness) - like bg-green-100
-9. accent_light: Very light version of accent (for info backgrounds, ~95% lightness) - like bg-blue-50
-10. accent_lighter: Light version of accent (for info elements, ~90% lightness) - like bg-blue-100
+5. primary_light: Very light tint of primary for backgrounds (~95% lightness, like Tailwind *-50)
+6. primary_lighter: Light tint of primary for hovers (~90% lightness, like Tailwind *-100)
+7. success_light: Very light tint of success for backgrounds (~95% lightness)
+8. success_lighter: Light tint of success for UI elements (~90% lightness)
+9. accent_light: Very light tint of accent for info backgrounds (~95% lightness)
+10. accent_lighter: Light tint of accent for info elements (~90% lightness)
 11. warning_color: Warning/caution color (amber/yellow tones for alerts)
-12. warning_light: Very light version of warning (for warning backgrounds) - like bg-amber-50
+12. warning_light: Very light tint of warning (for warning backgrounds, like Tailwind amber-50)
 
-Also suggest:
+ALSO SUGGEST:
 13. app_name: A short name for the application (2-4 words max)
-14. logo_url: Find the company's official logo URL from these sources (in order of preference):
-    - The company's official website (usually at /logo.png, /images/logo.svg, or similar paths)
-    - Wikipedia (look for the company's logo in the infobox)
-    - Brand/press resources page (usually has high-quality logos)
-    - Social media profiles: LinkedIn company page, Instagram, Twitter/X, or Facebook
-    - Clearbit Logo API: https://logo.clearbit.com/DOMAIN (e.g., https://logo.clearbit.com/databricks.com)
-    The URL must be a direct link to an image file (PNG, SVG, JPG, or WebP). Return an empty string "" if you cannot find a reliable, publicly accessible logo URL.
+14. logo_url: Must be a direct image URL as described above.
 
-IMPORTANT: Return ONLY a valid JSON object with ALL these exact keys, no additional text:
-{{"primary_color": "#XXXXXX", "text_color": "#XXXXXX", "success_color": "#XXXXXX", "accent_color": "#XXXXXX", "primary_light": "#XXXXXX", "primary_lighter": "#XXXXXX", "success_light": "#XXXXXX", "success_lighter": "#XXXXXX", "accent_light": "#XXXXXX", "accent_lighter": "#XXXXXX", "warning_color": "#XXXXXX", "warning_light": "#XXXXXX", "app_name": "Company App", "logo_url": "https://logo.clearbit.com/company.com"}}
+QUALITY & CONSISTENCY RULES:
+- All colors must be valid HEX in the form "#RRGGBB".
+- text_color must be readable on white backgrounds (prefer very dark gray/black tones).
+- Derived light colors must be subtle background-friendly tints (not saturated).
+- If you do not know the company brand colors, make educated, professional choices based on likely industry and typical brand patterns.
+- For logo_url: NEVER output Clearbit logo URLs. Prefer the favicon fallback if unsure.
 
-Ensure all derived light colors are very subtle tints that work well as backgrounds. If you don't know the company, make educated guesses based on professional design principles. For logo_url, prefer using Clearbit Logo API (https://logo.clearbit.com/DOMAIN) as it's reliable and works for most companies. Only provide a URL if you are confident it will display a valid image."""
+OUTPUT FORMAT:
+Return ONLY a valid JSON object with ALL these exact keys, no additional text:
+{{"primary_color": "#XXXXXX", "text_color": "#XXXXXX", "success_color": "#XXXXXX", "accent_color": "#XXXXXX", "primary_light": "#XXXXXX", "primary_lighter": "#XXXXXX", "success_light": "#XXXXXX", "success_lighter": "#XXXXXX", "accent_light": "#XXXXXX", "accent_lighter": "#XXXXXX", "warning_color": "#XXXXXX", "warning_light": "#XXXXXX", "app_name": "Company App", "logo_url": "https://www.google.com/s2/favicons?domain=example.com&sz=256"}}"""
         
         # Call ai_gen function
         ai_sql = f"SELECT ai_gen('{ai_prompt.replace(chr(39), chr(39)+chr(39))}')"
