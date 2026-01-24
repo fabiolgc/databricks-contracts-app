@@ -9,7 +9,7 @@ type FileStatus = "pending" | "uploading" | "extracting" | "success" | "error" |
 
 interface FileWithStatus {
   id: string
-  file: File
+  file: File | null  // null when file is already in volume
   name: string
   size: number
   status: FileStatus
@@ -22,6 +22,7 @@ interface FileWithStatus {
   extractStartTime?: number
   extractDuration?: number
   totalDuration?: number
+  existsInVolume?: boolean  // true when importing from volume (skip upload)
 }
 
 interface TableConfig {
@@ -39,6 +40,8 @@ interface VolumeFile {
 
 const FILES_PER_PAGE = 5
 
+type ConflictType = "volume" | "table"
+
 declare global {
   interface Window {
     __overwriteResolve?: (decision: "overwrite" | "overwrite_all" | "skip" | "cancel") => void
@@ -52,6 +55,7 @@ export default function ImportPage() {
   const [isUploading, setIsUploading] = useState(false)
   const [showOverwriteDialog, setShowOverwriteDialog] = useState(false)
   const [currentConflictFile, setCurrentConflictFile] = useState<string | null>(null)
+  const [conflictType, setConflictType] = useState<ConflictType>("volume")
   const [currentPage, setCurrentPage] = useState(1)
   
   const [tableConfig, setTableConfig] = useState<TableConfig>({
@@ -391,13 +395,18 @@ export default function ImportPage() {
     const filesToProcess = files.filter(f => f.status === "pending" || f.status === "error")
     if (filesToProcess.length === 0) return
     
+    // Close config and volume manager sections when import starts
+    setShowConfig(false)
+    setShowVolumeManager(false)
+    
     setIsUploading(true)
     setProcessingStartTime(Date.now())
     setElapsedTime(0)
     setCurrentFileIndex(0)
     setTotalFilesToProcess(filesToProcess.length)
     
-    let localOverwriteAll = false
+    let localOverwriteAllVolume = false
+    let localOverwriteAllTable = false
     let successCount = 0
     let errorCount = 0
     let skippedCount = 0
@@ -416,71 +425,51 @@ export default function ImportPage() {
         await new Promise(resolve => setTimeout(resolve, 300))
       }
 
-      const uploadResult = await uploadFile(file, localOverwriteAll)
+      // If file already exists in volume, skip upload step
+      if (file.existsInVolume) {
+        // Check if file exists in table
+        const existsInTable = await checkFileExistsInTable(file.name)
+        
+        if (existsInTable && !localOverwriteAllTable) {
+          setConflictType("table")
+          setCurrentConflictFile(file.name)
+          setShowOverwriteDialog(true)
 
-      if (uploadResult === "conflict") {
-        setCurrentConflictFile(file.name)
-        setShowOverwriteDialog(true)
-
-        const decision = await new Promise<"overwrite" | "overwrite_all" | "skip" | "cancel">((resolve) => {
-          const checkDecision = setInterval(() => {
-            if (!showOverwriteDialog) {
-              clearInterval(checkDecision)
-            }
-          }, 100)
-
-          window.__overwriteResolve = resolve
-        })
-
-        setShowOverwriteDialog(false)
-        setCurrentConflictFile(null)
-
-        if (decision === "cancel") {
-          setIsUploading(false)
-          setProcessingStartTime(null)
-          
-          setFiles(prev =>
-            prev.map(f =>
-              f.status === "uploading" || f.status === "extracting" 
-                ? { ...f, status: "pending", progress: 0 } 
-                : f
-            )
-          )
-          
-          toast.error(t("common.cancel"), {
-            duration: 5000
+          const decision = await new Promise<"overwrite" | "overwrite_all" | "skip" | "cancel">((resolve) => {
+            window.__overwriteResolve = resolve
           })
-          return
+
+          setShowOverwriteDialog(false)
+          setCurrentConflictFile(null)
+
+          if (decision === "cancel") {
+            setIsUploading(false)
+            setProcessingStartTime(null)
+            setFiles(prev =>
+              prev.map(f =>
+                f.status === "uploading" || f.status === "extracting" 
+                  ? { ...f, status: "pending", progress: 0 } 
+                  : f
+              )
+            )
+            toast.error(t("common.cancel"), { duration: 5000 })
+            return
+          }
+
+          if (decision === "overwrite_all") {
+            localOverwriteAllTable = true
+          }
+
+          if (decision === "skip") {
+            setFiles(prev =>
+              prev.map(f => f.id === file.id ? { ...f, status: "skipped" } : f)
+            )
+            skippedCount++
+            continue
+          }
         }
 
-        if (decision === "overwrite" || decision === "overwrite_all") {
-          if (decision === "overwrite_all") {
-            localOverwriteAll = true
-          }
-          const retryResult = await uploadFile(file, true)
-          if (retryResult === "success") {
-            const extractResult = await extractTextFromFile(file)
-            if (extractResult) {
-              successCount++
-              toast.success(`${file.name}`, {
-                description: t("common.success"),
-                duration: 3000
-              })
-            } else {
-              errorCount++
-            }
-          } else if (retryResult === "error") {
-            errorCount++
-          }
-        } else {
-          setFiles(prev =>
-            prev.map(f =>
-              f.id === file.id ? { ...f, status: "skipped" } : f
-            )
-          )
-          skippedCount++
-        }
-      } else if (uploadResult === "success") {
+        // Extract text directly (file already in volume)
         const extractResult = await extractTextFromFile(file)
         if (extractResult) {
           successCount++
@@ -491,8 +480,81 @@ export default function ImportPage() {
         } else {
           errorCount++
         }
-      } else if (uploadResult === "error") {
-        errorCount++
+      } else {
+        // Normal flow: upload then extract
+        const uploadResult = await uploadFile(file, localOverwriteAllVolume)
+
+        if (uploadResult === "conflict") {
+          setConflictType("volume")
+          setCurrentConflictFile(file.name)
+          setShowOverwriteDialog(true)
+
+          const decision = await new Promise<"overwrite" | "overwrite_all" | "skip" | "cancel">((resolve) => {
+            window.__overwriteResolve = resolve
+          })
+
+          setShowOverwriteDialog(false)
+          setCurrentConflictFile(null)
+
+          if (decision === "cancel") {
+            setIsUploading(false)
+            setProcessingStartTime(null)
+            
+            setFiles(prev =>
+              prev.map(f =>
+                f.status === "uploading" || f.status === "extracting" 
+                  ? { ...f, status: "pending", progress: 0 } 
+                  : f
+              )
+            )
+            
+            toast.error(t("common.cancel"), {
+              duration: 5000
+            })
+            return
+          }
+
+          if (decision === "overwrite" || decision === "overwrite_all") {
+            if (decision === "overwrite_all") {
+              localOverwriteAllVolume = true
+            }
+            const retryResult = await uploadFile(file, true)
+            if (retryResult === "success") {
+              const extractResult = await extractTextFromFile(file)
+              if (extractResult) {
+                successCount++
+                toast.success(`${file.name}`, {
+                  description: t("common.success"),
+                  duration: 3000
+                })
+              } else {
+                errorCount++
+              }
+            } else if (retryResult === "error") {
+              errorCount++
+            }
+          } else {
+            setFiles(prev =>
+              prev.map(f =>
+                f.id === file.id ? { ...f, status: "skipped" } : f
+              )
+            )
+            skippedCount++
+          }
+        } else if (uploadResult === "success") {
+          const extractResult = await extractTextFromFile(file)
+          if (extractResult) {
+            successCount++
+            toast.success(`${file.name}`, {
+              description: t("common.success"),
+              duration: 3000
+            })
+          } else {
+            errorCount++
+          }
+        } else if (uploadResult === "error") {
+          errorCount++
+        }
       }
     }
 
@@ -624,6 +686,84 @@ export default function ImportPage() {
     setShowOverwriteDialog(false)
   }
 
+  // Function to add files from volume to the import list
+  function addVolumeFilesToImportList() {
+    if (selectedVolumeFiles.size === 0) return
+
+    const existingFileNames = new Set(files.map(f => f.name))
+    const duplicates: string[] = []
+    const filesToAdd: FileWithStatus[] = []
+
+    selectedVolumeFiles.forEach(fileName => {
+      if (existingFileNames.has(fileName)) {
+        duplicates.push(fileName)
+      } else {
+        const volumeFile = volumeFiles.find(f => f.name === fileName)
+        if (volumeFile) {
+          filesToAdd.push({
+            id: crypto.randomUUID(),
+            file: null,  // No File object since it's already in volume
+            name: volumeFile.name,
+            size: volumeFile.size,
+            status: "pending",
+            progress: 0,
+            existsInVolume: true
+          })
+        }
+      }
+    })
+
+    if (duplicates.length > 0) {
+      toast.warning(t("import.importFromVolume.alreadyInList", { count: duplicates.length }), {
+        duration: 5000,
+      })
+    }
+
+    if (filesToAdd.length > 0) {
+      setFiles(prev => {
+        const newFiles = [...prev, ...filesToAdd]
+        const totalPages = Math.ceil(newFiles.length / FILES_PER_PAGE)
+        if (currentPage > totalPages) {
+          setCurrentPage(totalPages)
+        }
+        return newFiles
+      })
+
+      toast.success(t("import.importFromVolume.addedToList", { count: filesToAdd.length }), {
+        duration: 5000,
+      })
+
+      // Clear selection after adding
+      setSelectedVolumeFiles(new Set())
+      
+      // Close the volume manager section
+      setShowVolumeManager(false)
+    }
+  }
+
+  // Check if a file already exists in the _parsed table
+  async function checkFileExistsInTable(fileName: string): Promise<boolean> {
+    try {
+      const response = await fetch("/api/parsed-documents/check", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          catalog: tableConfig.catalog,
+          schema_name: tableConfig.schema,
+          tableName: tableConfig.tableName,
+          fileName: fileName
+        })
+      })
+      
+      if (!response.ok) return false
+      
+      const result = await response.json()
+      return result.exists === true
+    } catch {
+      return false
+    }
+  }
+
   return (
     <>
       {/* Overwrite Confirmation Dialog */}
@@ -631,10 +771,13 @@ export default function ImportPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="bg-white rounded-xl shadow-2xl p-6 max-w-md w-full">
             <h3 className="text-xl font-bold text-[var(--color-text)] mb-2">
-              {t("import.overwrite.title")}
+              {conflictType === "table" ? t("import.overwrite.titleTable") : t("import.overwrite.title")}
             </h3>
             <p className="text-base text-gray-600 mb-2">
-              {t("import.overwrite.message", { fileName: "" }).split('"{fileName}"')[0]}
+              {conflictType === "table" 
+                ? t("import.overwrite.messageTable", { fileName: "" }).split('"{fileName}"')[0]
+                : t("import.overwrite.message", { fileName: "" }).split('"{fileName}"')[0]
+              }
             </p>
             <p className="text-sm font-medium text-[var(--color-text)] bg-gray-50 p-3 rounded-lg mb-4 break-words">
               {currentConflictFile}
@@ -817,7 +960,7 @@ export default function ImportPage() {
                 <p className="text-xs font-medium text-[var(--color-accent)] mb-2">{t("import.tableToCreate")}</p>
                 <div className="flex flex-wrap gap-2">
                   <code className="bg-[var(--color-accent-lighter)] text-[var(--color-accent)] px-2 py-1 rounded text-xs font-mono">
-                    {tableConfig.catalog || "catalog"}.{tableConfig.schema || "schema"}.{tableConfig.tableName}_raw
+                    {tableConfig.catalog || "catalog"}.{tableConfig.schema || "schema"}.{tableConfig.tableName}_parsed
                   </code>
                 </div>
               </div>
@@ -921,6 +1064,14 @@ export default function ImportPage() {
                   </div>
                   <div className="flex items-center gap-2">
                     <button
+                      onClick={addVolumeFilesToImportList}
+                      disabled={selectedVolumeFiles.size === 0}
+                      className="px-3 py-1.5 text-sm font-medium text-[var(--color-success)] bg-[var(--color-success-light)] border border-[var(--color-success)]/30 rounded-lg hover:bg-[var(--color-success-lighter)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                    >
+                      <Upload className="h-4 w-4" />
+                      {t("import.importFromVolume.button")}
+                    </button>
+                    <button
                       onClick={() => {
                         setDeleteMode("selected")
                         setShowDeleteConfirm(true)
@@ -957,7 +1108,7 @@ export default function ImportPage() {
                             className="rounded border-gray-300 text-[var(--color-primary)] focus:ring-[var(--color-primary)]"
                           />
                         </th>
-                        <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">{t("common.files")}</th>
+                        <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">{t("common.filesCapital")}</th>
                         <th className="px-4 py-2 text-right text-sm font-medium text-gray-700">Size</th>
                       </tr>
                     </thead>

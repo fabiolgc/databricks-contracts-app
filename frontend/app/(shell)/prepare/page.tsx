@@ -116,12 +116,6 @@ const CHUNKING_STRATEGIES: ChunkingStrategy[] = [
     params: { chunkSize: 800, separatorType: "paragraph", customSeparator: "" }
   },
   {
-    id: "by_page",
-    name: "Por Página",
-    description: "Cada página do PDF vira um segmento. Ideal para documentos organizados por página.",
-    params: {}
-  },
-  {
     id: "by_sentence",
     name: "Por Sentença",
     description: "Agrupa frases completas até atingir o tamanho máximo. Preserva a estrutura do texto.",
@@ -132,6 +126,12 @@ const CHUNKING_STRATEGIES: ChunkingStrategy[] = [
     name: "Semântico",
     description: "Identifica automaticamente onde o assunto muda. Maior precisão, mais lento.",
     params: { chunkSize: 1500 }
+  },
+  {
+    id: "hybrid_ai",
+    name: "Híbrido + IA",
+    description: "Combina chunking recursivo com extração de metadados por IA. Ideal para RAG com contratos e documentos jurídicos.",
+    params: { chunkSize: 1200, chunkOverlap: 150 }
   }
 ]
 
@@ -149,7 +149,7 @@ export default function PreparePage() {
   const [tableConfig, setTableConfig] = useState<TableConfig>({
     catalog: "",
     schema: "",
-    tableName: "contracts"  // Base name only - backend adds _raw/_chunks
+    tableName: "contracts"  // Base name only - backend adds _parsed/_chunks
   })
   const [initialTableConfig, setInitialTableConfig] = useState<TableConfig>({
     catalog: "",
@@ -162,8 +162,8 @@ export default function PreparePage() {
   const [activeStep, setActiveStep] = useState<1 | 2 | 3 | null>(2) // Start with step 2 open
   const [completedSteps, setCompletedSteps] = useState<Set<number>>(new Set())
   
-  // State for raw documents (from _raw table)
-  const [rawDocuments, setRawDocuments] = useState<RawDocument[]>([])
+  // State for parsed documents (from _parsed table)
+  const [parsedDocuments, setParsedDocuments] = useState<RawDocument[]>([])
   const [selectedDocuments, setSelectedDocuments] = useState<Set<string>>(new Set())
   const [isLoadingDocuments, setIsLoadingDocuments] = useState(false)
   const [documentsTotal, setDocumentsTotal] = useState(0)
@@ -177,7 +177,7 @@ export default function PreparePage() {
   const [selectedDocumentText, setSelectedDocumentText] = useState<{
     id: string
     fileName: string
-    rawText: string
+    parsedText: string
     textLength: number
     pageCount: number
   } | null>(null)
@@ -245,14 +245,14 @@ export default function PreparePage() {
   // State for process confirmation modal
   const [showProcessConfirmModal, setShowProcessConfirmModal] = useState(false)
 
-  // Load environment config on mount - use base table name (without _raw or _chunks suffix)
+  // Load environment config on mount - use base table name (without _parsed or _chunks suffix)
   useEffect(() => {
     const loadConfig = async () => {
       try {
         const response = await fetch("/api/config")
         if (response.ok) {
           const config = await response.json()
-          // Use base table name - backend will add _raw or _chunks suffix as needed
+          // Use base table name - backend will add _parsed or _chunks suffix as needed
           const baseTableName = "contracts"
           
           const newConfig = {
@@ -279,8 +279,8 @@ export default function PreparePage() {
   
   // Auto-load documents when step 2 is active and config is saved
   useEffect(() => {
-    if (activeStep === 2 && isConfigSaved && rawDocuments.length === 0 && !isLoadingDocuments) {
-      loadRawDocuments()
+    if (activeStep === 2 && isConfigSaved && parsedDocuments.length === 0 && !isLoadingDocuments) {
+      loadParsedDocuments()
     }
   }, [activeStep, isConfigSaved])
 
@@ -376,8 +376,8 @@ export default function PreparePage() {
     }
   }
 
-  // Load documents from _raw table
-  async function loadRawDocuments(loadMore = false) {
+  // Load documents from _parsed table
+  async function loadParsedDocuments(loadMore = false) {
     if (!isConfigSaved) {
       toast.warning("Configure e salve a tabela primeiro")
       return
@@ -387,7 +387,7 @@ export default function PreparePage() {
     const newOffset = loadMore ? documentsOffset + DOCUMENTS_PER_PAGE : 0
     
     try {
-      const response = await fetch("/api/raw-documents", {
+      const response = await fetch("/api/parsed-documents", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -421,10 +421,10 @@ export default function PreparePage() {
       
       if (loadMore) {
         // Append to existing documents
-        setRawDocuments(prev => [...prev, ...data.documents])
+        setParsedDocuments(prev => [...prev, ...data.documents])
       } else {
         // Replace documents
-        setRawDocuments(data.documents)
+        setParsedDocuments(data.documents)
       }
       
       if (data.total === 0) {
@@ -434,7 +434,7 @@ export default function PreparePage() {
         })
       }
     } catch (error) {
-      console.error("Error loading raw documents:", error)
+      console.error("Error loading parsed documents:", error)
       toast.error("Erro ao carregar documentos", {
         description: error instanceof Error ? error.message : "Erro desconhecido",
         duration: 5000
@@ -444,12 +444,12 @@ export default function PreparePage() {
     }
   }
 
-  // Load document raw text
+  // Load document parsed text
   async function loadDocumentText(documentId: string) {
     setIsLoadingText(true)
     
     try {
-      const response = await fetch("/api/raw-documents/text", {
+      const response = await fetch("/api/parsed-documents/text", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -470,7 +470,7 @@ export default function PreparePage() {
         setSelectedDocumentText({
           id: documentId,
           fileName: data.document.fileName,
-          rawText: data.document.rawText,
+          parsedText: data.document.parsedText,
           textLength: data.document.textLength,
           pageCount: data.document.pageCount
         })
@@ -501,10 +501,10 @@ export default function PreparePage() {
 
   // Select all documents
   function selectAllDocuments() {
-    if (selectedDocuments.size === rawDocuments.length) {
+    if (selectedDocuments.size === parsedDocuments.length) {
       setSelectedDocuments(new Set())
     } else {
-      setSelectedDocuments(new Set(rawDocuments.map(d => d.id)))
+      setSelectedDocuments(new Set(parsedDocuments.map(d => d.id)))
     }
   }
 
@@ -515,7 +515,7 @@ export default function PreparePage() {
     try {
       const documentIds = deleteAllDocuments ? [] : Array.from(selectedDocuments)
       
-      const response = await fetch("/api/raw-documents/delete", {
+      const response = await fetch("/api/parsed-documents/delete", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -545,7 +545,7 @@ export default function PreparePage() {
         setDeleteAllDocuments(false)
         
         // Reload documents
-        await loadRawDocuments()
+        await loadParsedDocuments()
       } else {
         throw new Error(data.errors?.join(", ") || "Erro ao deletar documentos")
       }
@@ -668,7 +668,7 @@ export default function PreparePage() {
     
     const strategy = CHUNKING_STRATEGIES.find(s => s.id === selectedStrategy)
     // Get file names from selected document IDs
-    const selectedDocs = rawDocuments.filter(d => selectedDocuments.has(d.id))
+    const selectedDocs = parsedDocuments.filter(d => selectedDocuments.has(d.id))
     const filesToProcess = selectedDocs.map(d => d.fileName)
     
     // Initialize timers
@@ -952,34 +952,30 @@ export default function PreparePage() {
                   </select>
                 </div>
                 
-                {selectedStrategy !== "by_page" && (
-                  <>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-gray-600">Tamanho:</span>
-                      <input
-                        type="number"
-                        value={chunkingParams.chunkSize}
-                        onChange={(e) => setChunkingParams(prev => ({ ...prev, chunkSize: parseInt(e.target.value) || 500 }))}
-                        min={100}
-                        max={4000}
-                        step={100}
-                        className="w-20 px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
-                      />
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-gray-600">Sobreposição:</span>
-                      <input
-                        type="number"
-                        value={chunkingParams.chunkOverlap}
-                        onChange={(e) => setChunkingParams(prev => ({ ...prev, chunkOverlap: parseInt(e.target.value) || 0 }))}
-                        min={0}
-                        max={500}
-                        step={50}
-                        className="w-20 px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
-                      />
-                    </div>
-                  </>
-                )}
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-gray-600">Tamanho:</span>
+                  <input
+                    type="number"
+                    value={chunkingParams.chunkSize}
+                    onChange={(e) => setChunkingParams(prev => ({ ...prev, chunkSize: parseInt(e.target.value) || 500 }))}
+                    min={100}
+                    max={4000}
+                    step={100}
+                    className="w-20 px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-gray-600">Sobreposição:</span>
+                  <input
+                    type="number"
+                    value={chunkingParams.chunkOverlap}
+                    onChange={(e) => setChunkingParams(prev => ({ ...prev, chunkOverlap: parseInt(e.target.value) || 0 }))}
+                    min={0}
+                    max={500}
+                    step={50}
+                    className="w-20 px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
+                  />
+                </div>
                 
                 <button
                   onClick={() => {
@@ -1322,7 +1318,7 @@ export default function PreparePage() {
                     <div>
                       <p className="text-xs font-medium text-[var(--color-accent)] mb-1">Tabela que será utilizada:</p>
                       <code className="bg-[var(--color-accent-lighter)] text-[var(--color-accent)] px-2 py-1 rounded text-xs font-mono">
-                        {initialTableConfig.catalog || "catalogo"}.{initialTableConfig.schema || "schema"}.{initialTableConfig.tableName}_raw
+                        {initialTableConfig.catalog || "catalogo"}.{initialTableConfig.schema || "schema"}.{initialTableConfig.tableName}_parsed
                       </code>
                     </div>
                   </div>
@@ -1384,7 +1380,7 @@ export default function PreparePage() {
           )}
         </div>
 
-        {/* Step 2: Select Documents from _raw table */}
+        {/* Step 2: Select Documents from _parsed table */}
         <div className={`bg-white rounded-xl border shadow-sm overflow-hidden transition-all ${
           activeStep === 2 ? 'border-[var(--color-primary)]' : 'border-gray-200'
         }`}>
@@ -1429,18 +1425,18 @@ export default function PreparePage() {
                     Importe documentos primeiro no Módulo 1 (Importar Documentos)
                   </p>
                   <button
-                    onClick={() => loadRawDocuments()}
+                    onClick={() => loadParsedDocuments()}
                     className="mt-3 text-sm text-[var(--color-primary)] hover:text-[var(--color-primary)]/80 font-medium"
                   >
                     Tentar novamente
                   </button>
                 </div>
-              ) : rawDocuments.length === 0 && !isLoadingDocuments ? (
+              ) : parsedDocuments.length === 0 && !isLoadingDocuments ? (
                 <div className="text-center py-8">
                   <FileText className="h-12 w-12 text-gray-300 mx-auto mb-3" />
                   <p className="text-gray-500">Nenhum documento na tabela</p>
                   <button
-                    onClick={() => loadRawDocuments()}
+                    onClick={() => loadParsedDocuments()}
                     className="mt-3 text-sm text-[var(--color-primary)] hover:text-[var(--color-primary)]/80 font-medium"
                   >
                     Carregar documentos
@@ -1453,12 +1449,12 @@ export default function PreparePage() {
                     <label className="flex items-center gap-2 cursor-pointer">
                       <input
                         type="checkbox"
-                        checked={rawDocuments.length > 0 && selectedDocuments.size === rawDocuments.length}
+                        checked={parsedDocuments.length > 0 && selectedDocuments.size === parsedDocuments.length}
                         onChange={selectAllDocuments}
                         className="w-4 h-4 text-[var(--color-primary)] border-gray-300 rounded focus:ring-[var(--color-primary)]"
                       />
                       <span className="text-sm font-medium text-gray-700">
-                        Selecionar todos ({rawDocuments.length})
+                        Selecionar todos ({parsedDocuments.length})
                       </span>
                     </label>
                     <div className="flex items-center gap-2">
@@ -1479,7 +1475,7 @@ export default function PreparePage() {
                       )}
                       
                       {/* Delete all button */}
-                      {rawDocuments.length > 0 && selectedDocuments.size === 0 && (
+                      {parsedDocuments.length > 0 && selectedDocuments.size === 0 && (
                         <button
                           onClick={() => openDeleteModal(true)}
                           className="px-3 py-1.5 text-sm font-medium text-white bg-[var(--color-primary)] rounded-lg hover:opacity-90 transition-colors flex items-center gap-1"
@@ -1491,7 +1487,7 @@ export default function PreparePage() {
                       )}
                       
                       <button
-                        onClick={() => loadRawDocuments()}
+                        onClick={() => loadParsedDocuments()}
                         disabled={isLoadingDocuments}
                         className="p-1.5 text-gray-500 hover:text-gray-700 transition-colors"
                         title="Atualizar lista"
@@ -1514,7 +1510,7 @@ export default function PreparePage() {
                     
                     {/* Table body */}
                     <div className="divide-y divide-gray-100">
-                      {rawDocuments.map((doc) => (
+                      {parsedDocuments.map((doc) => (
                         <div
                           key={doc.id}
                           className={`grid grid-cols-12 gap-2 px-4 py-3 items-center transition-colors ${
@@ -1568,7 +1564,7 @@ export default function PreparePage() {
                   {hasMoreDocuments && (
                     <div className="mt-4 text-center">
                       <button
-                        onClick={() => loadRawDocuments(true)}
+                        onClick={() => loadParsedDocuments(true)}
                         disabled={isLoadingDocuments}
                         className="px-4 py-2 text-sm font-medium text-[var(--color-primary)] border border-[var(--color-primary)] rounded-lg hover:bg-[var(--color-primary-light)] transition-colors flex items-center gap-2 mx-auto"
                       >
@@ -1577,13 +1573,13 @@ export default function PreparePage() {
                         ) : (
                           <Plus className="h-4 w-4" />
                         )}
-                        Carregar mais ({documentsTotal - rawDocuments.length} restantes)
+                        Carregar mais ({documentsTotal - parsedDocuments.length} restantes)
                       </button>
                     </div>
                   )}
                   
                   {/* Loading indicator */}
-                  {isLoadingDocuments && rawDocuments.length === 0 && (
+                  {isLoadingDocuments && parsedDocuments.length === 0 && (
                     <div className="text-center py-8">
                       <Loader2 className="h-8 w-8 text-[var(--color-primary)] animate-spin mx-auto mb-2" />
                       <p className="text-sm text-gray-500">Carregando documentos...</p>
@@ -1591,7 +1587,7 @@ export default function PreparePage() {
                   )}
                   
                   {/* Next button */}
-                  {rawDocuments.length > 0 && (
+                  {parsedDocuments.length > 0 && (
                     <div className="mt-4 pt-4 border-t border-gray-200 flex items-center justify-between">
                       <span className="text-sm text-gray-500">
                         {selectedDocuments.size} de {documentsTotal} documento(s) selecionado(s)
@@ -1641,7 +1637,7 @@ export default function PreparePage() {
               
               <div className="bg-[var(--color-warning-light)] border border-[var(--color-warning)] rounded-lg p-3 mb-4">
                 <p className="text-sm text-[var(--color-warning)]">
-                  <strong>Atenção:</strong> Esta ação irá remover os documentos da tabela <code className="bg-[var(--color-warning-light)] px-1 rounded">_raw</code> e 
+                  <strong>Atenção:</strong> Esta ação irá remover os documentos da tabela <code className="bg-[var(--color-warning-light)] px-1 rounded">_parsed</code> e 
                   os segmentos correspondentes.
                 </p>
               </div>
@@ -1773,7 +1769,7 @@ export default function PreparePage() {
               </div>
               <div className="flex-1 overflow-auto p-6">
                 <pre className="whitespace-pre-wrap text-sm text-gray-700 font-mono bg-gray-50 p-4 rounded-lg">
-                  {selectedDocumentText.rawText}
+                  {selectedDocumentText.parsedText}
                 </pre>
               </div>
             </div>
@@ -1838,9 +1834,8 @@ export default function PreparePage() {
             </div>
             
             {/* Chunking Parameters */}
-            {selectedStrategy !== "by_page" && (
-              <div className="mt-4 pt-4 border-t border-gray-200">
-                <h3 className="text-sm font-medium text-gray-700 mb-3">Parâmetros</h3>
+            <div className="mt-4 pt-4 border-t border-gray-200">
+              <h3 className="text-sm font-medium text-gray-700 mb-3">Parâmetros</h3>
                 
                 {/* Separator controls for by_separator strategy */}
                 {selectedStrategy === "by_separator" && (
@@ -1931,7 +1926,6 @@ export default function PreparePage() {
                   )}
                 </div>
               </div>
-            )}
             
             {/* Preview button */}
             <div className="mt-4 pt-4 border-t border-gray-200 flex items-center justify-between">
@@ -1950,9 +1944,7 @@ export default function PreparePage() {
                 </button>
                 <span className="text-sm text-gray-500">
                   {CHUNKING_STRATEGIES.find(s => s.id === selectedStrategy)?.name}
-                  {selectedStrategy !== "by_page" && (
-                    <> • {chunkingParams.chunkSize} chars, {chunkingParams.chunkOverlap} sobreposição</>
-                  )}
+                  {" "} • {chunkingParams.chunkSize} chars, {chunkingParams.chunkOverlap} sobreposição
                 </span>
               </div>
               <button

@@ -41,6 +41,7 @@
     "characters": "caracteres",
     "documents": "documentos",
     "files": "arquivos",
+    "filesCapital": "Arquivos",
     "segments": "segmentos"
   },
   "import": {
@@ -61,7 +62,7 @@
       "allowedTypes": "Apenas arquivos PDF são permitidos"
     },
     "fileList": {
-      "title": "Arquivos para importar",
+      "title": "Arquivos para Importar",
       "import": "Importar",
       "importing": "Importando",
       "completed": "Concluído",
@@ -71,10 +72,17 @@
     },
     "overwrite": {
       "title": "Arquivo já existe",
+      "titleTable": "Arquivo já processado",
       "message": "O arquivo \"{fileName}\" já existe no volume. O que deseja fazer?",
+      "messageTable": "O arquivo \"{fileName}\" já foi processado e existe na tabela. O que deseja fazer?",
       "overwriteAll": "Sobrescrever todos",
       "overwriteThis": "Sobrescrever este arquivo",
       "skipThis": "Pular este arquivo"
+    },
+    "importFromVolume": {
+      "button": "Importar selecionados",
+      "addedToList": "{count} arquivo(s) adicionado(s) à lista de importação",
+      "alreadyInList": "{count} arquivo(s) já está(ão) na lista"
     },
     "toast": {
       "configSaved": "Configuração salva!",
@@ -136,10 +144,6 @@
           "name": "Por Separador",
           "description": "Divide por marcadores específicos (parágrafo, linha, ponto). Flexível e adaptável."
         },
-        "by_page": {
-          "name": "Por Página",
-          "description": "Cada página do PDF vira um segmento. Ideal para documentos organizados por página."
-        },
         "by_sentence": {
           "name": "Por Sentença",
           "description": "Agrupa frases completas até atingir o tamanho máximo. Preserva a estrutura do texto."
@@ -147,6 +151,10 @@
         "semantic": {
           "name": "Semântico",
           "description": "Identifica automaticamente onde o assunto muda. Maior precisão, mais lento."
+        },
+        "hybrid_ai": {
+          "name": "Híbrido + IA",
+          "description": "Combina chunking recursivo com extração de metadados por IA. Ideal para RAG com contratos e documentos jurídicos."
         }
       },
       "params": {

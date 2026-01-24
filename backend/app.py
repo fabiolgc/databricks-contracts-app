@@ -26,14 +26,17 @@ app = FastAPI(title="Databricks Contracts App")
 
 def sanitize_table_name(table_name: str) -> str:
     """
-    Remove _raw and _chunks suffixes from table name if present.
-    This prevents duplicate suffixes like contracts_raw_raw.
+    Remove _parsed and _chunks suffixes from table name if present.
+    This prevents duplicate suffixes like contracts_parsed_parsed.
     """
     if not table_name:
         return table_name
-    # Remove suffixes in order (handle cases like contracts_raw_chunks)
+    # Remove suffixes in order (handle cases like contracts_parsed_chunks)
     if table_name.endswith("_chunks"):
         table_name = table_name[:-7]
+    if table_name.endswith("_parsed"):
+        table_name = table_name[:-7]
+    # Also handle legacy _raw suffix for backwards compatibility
     if table_name.endswith("_raw"):
         table_name = table_name[:-4]
     return table_name
@@ -81,7 +84,7 @@ class ChunkPreviewRequest(BaseModel):
 class RawDocumentsRequest(BaseModel):
     catalog: str
     schema_name: str
-    tableName: str  # Base name like "contracts" - will append "_raw"
+    tableName: str  # Base name like "contracts" - will append "_parsed"
     offset: int = 0
     limit: int = 10
 
@@ -90,6 +93,12 @@ class RawDocumentTextRequest(BaseModel):
     schema_name: str
     tableName: str
     documentId: str
+
+class CheckFileExistsRequest(BaseModel):
+    catalog: str
+    schema_name: str
+    tableName: str
+    fileName: str
 
 class DeleteDocumentsRequest(BaseModel):
     catalog: str
@@ -103,7 +112,7 @@ class ChunkingPreviewRequest(BaseModel):
     schema_name: str
     tableName: str
     documentIds: List[str]  # IDs of documents to preview (max 3)
-    strategy: str  # fixed_size, recursive, by_sentence, by_separator, by_page, semantic
+    strategy: str  # fixed_size, recursive, by_sentence, by_separator, semantic, hybrid_ai
     chunkSize: int = 1000
     chunkOverlap: int = 200
     separatorType: str = "paragraph"  # For by_separator: paragraph, line, sentence, custom
@@ -228,12 +237,6 @@ def chunk_by_sentence(text: str, chunk_size: int, overlap: int) -> List[str]:
     return chunks
 
 
-def chunk_by_page(text: str) -> List[str]:
-    """Divide text by page markers (triple newlines)"""
-    pages = re.split(r'\n\n\n+', text)
-    return [p.strip() for p in pages if p.strip()]
-
-
 def chunk_by_separator(text: str, chunk_size: int, separator_type: str = "paragraph", custom_separator: str = "") -> tuple[List[str], List[str]]:
     """
     Divide text by custom separators with fallback chain.
@@ -323,13 +326,92 @@ def apply_chunking(text: str, strategy: str, chunk_size: int = 1000, overlap: in
     elif strategy == 'by_separator':
         chunks, _ = chunk_by_separator(text, chunk_size, separator_type, custom_separator)
         return chunks
-    elif strategy == 'by_page':
-        return chunk_by_page(text)
-    elif strategy == 'semantic':
-        # Semantic would need embeddings - fallback to recursive for now
+    elif strategy == 'semantic' or strategy == 'hybrid_ai':
+        # Both use recursive as base chunking - hybrid_ai adds AI metadata enrichment
         return chunk_by_recursive(text, chunk_size, overlap)
     else:
         return chunk_by_fixed_size(text, chunk_size, overlap)
+
+
+async def extract_document_metadata_with_ai(
+    config: dict,
+    warehouse_id: str,
+    text: str,
+    file_name: str,
+    request_id: str
+) -> dict:
+    """
+    Extract document metadata using AI_GEN function.
+    Returns structured metadata about document type, parties, key clauses, etc.
+    """
+    # Truncate text if too long (ai_gen has token limits)
+    max_chars = 15000  # ~4000 tokens approximately
+    text_sample = text[:max_chars] if len(text) > max_chars else text
+    
+    # Escape text for SQL
+    escaped_text = text_sample.replace("'", "''").replace("\\", "\\\\")
+    escaped_filename = file_name.replace("'", "''")
+    
+    ai_prompt = f"""Analise este documento e extraia metadados estruturados.
+
+DOCUMENTO: {escaped_filename}
+CONTEÚDO (amostra):
+{escaped_text[:8000]}
+
+EXTRAIA E RETORNE APENAS um JSON válido com:
+{{
+  "document_type": "tipo do documento (contrato, NDA, acordo, aditivo, procuração, etc)",
+  "language": "idioma principal (pt-BR, en-US, es, etc)",
+  "parties": ["lista de partes envolvidas"],
+  "subject": "assunto principal em 1-2 frases",
+  "key_clauses": ["lista de cláusulas importantes identificadas"],
+  "dates": {{"signature": "data assinatura se houver", "effective": "data vigência", "expiration": "data término"}},
+  "summary": "resumo executivo em 2-3 frases",
+  "keywords": ["palavras-chave relevantes para busca"]
+}}
+
+IMPORTANTE: Retorne APENAS o JSON, sem texto adicional."""
+
+    # Escape prompt for SQL
+    escaped_prompt = ai_prompt.replace("'", "''")
+    
+    sql = f"SELECT ai_gen('{escaped_prompt}') as metadata"
+    
+    try:
+        print(f"🤖 [{request_id}] Extracting document metadata with AI...")
+        result = await execute_sql_long(config, warehouse_id, sql, request_id, timeout_minutes=2)
+        
+        if result and result.get("data_array") and len(result["data_array"]) > 0:
+            metadata_str = result["data_array"][0][0]
+            
+            # Try to parse as JSON
+            try:
+                # Clean up the response - sometimes AI adds markdown code blocks
+                clean_str = metadata_str.strip()
+                if clean_str.startswith("```json"):
+                    clean_str = clean_str[7:]
+                if clean_str.startswith("```"):
+                    clean_str = clean_str[3:]
+                if clean_str.endswith("```"):
+                    clean_str = clean_str[:-3]
+                clean_str = clean_str.strip()
+                
+                import json
+                metadata = json.loads(clean_str)
+                print(f"✅ [{request_id}] AI metadata extracted successfully")
+                print(f"   Type: {metadata.get('document_type', 'N/A')}")
+                print(f"   Subject: {metadata.get('subject', 'N/A')[:50]}...")
+                return metadata
+            except json.JSONDecodeError as e:
+                print(f"⚠️ [{request_id}] Could not parse AI metadata as JSON: {str(e)}")
+                # Return raw string as fallback
+                return {"raw_analysis": metadata_str, "parse_error": True}
+        
+        return {"error": "No response from AI"}
+        
+    except Exception as e:
+        print(f"⚠️ [{request_id}] Error extracting AI metadata: {str(e)}")
+        return {"error": str(e)}
 
 
 async def check_file_exists(
@@ -645,8 +727,8 @@ async def extract_text_from_file(
         schema = table_config.get("schema", "")
         table_name = sanitize_table_name(table_config.get("tableName", ""))
         
-        # Use _raw suffix for raw documents table (Module 1)
-        raw_table = f"{catalog}.{schema}.{table_name}_raw"
+        # Use _parsed suffix for parsed documents table (Module 1)
+        parsed_table = f"{catalog}.{schema}.{table_name}_parsed"
         volume_path = get_volume_base_path(config)
         
         warehouse_id = os.getenv("DATABRICKS_WAREHOUSE_ID")
@@ -654,18 +736,18 @@ async def extract_text_from_file(
             raise HTTPException(status_code=500, detail="Warehouse ID not configured")
         
         print(f"📋 [{request_id}] Configuration:")
-        print(f"  - Table: {raw_table}")
+        print(f"  - Table: {parsed_table}")
         print(f"  - Volume: {volume_path}")
         print(f"  - File: {file_name}")
         print(f"  - Mode: {mode}")
         
-        # Step 1: Create raw documents table if not exists
+        # Step 1: Create parsed documents table if not exists
         create_table_sql = f"""
-        CREATE TABLE IF NOT EXISTS {raw_table} (
+        CREATE TABLE IF NOT EXISTS {parsed_table} (
             id STRING,
             file_name STRING,
             file_path STRING,
-            raw_text STRING,
+            parsed_text STRING,
             text_length INT,
             page_count INT,
             created_at TIMESTAMP,
@@ -674,12 +756,12 @@ async def extract_text_from_file(
         )
         USING DELTA
         """
-        print(f"\n📊 [{request_id}] Ensuring raw table exists...")
+        print(f"\n📊 [{request_id}] Ensuring parsed table exists...")
         await execute_sql(config, warehouse_id, create_table_sql, request_id)
         
         # Step 2: Check if document already exists
         escaped_file_name = file_name.replace("'", "''")
-        check_sql = f"SELECT id FROM {raw_table} WHERE file_name = '{escaped_file_name}'"
+        check_sql = f"SELECT id FROM {parsed_table} WHERE file_name = '{escaped_file_name}'"
         check_result = await execute_sql(config, warehouse_id, check_sql, request_id)
         
         existing_doc_id = None
@@ -698,47 +780,40 @@ async def extract_text_from_file(
                 }
         
         # Step 3: Extract text using ai_parse_document
+        # Based on Databricks official documentation example
         print(f"\n🤖 [{request_id}] Extracting text with ai_parse_document...")
         
         extract_sql = f"""
-        WITH source_file AS (
-            SELECT path, content
+        WITH parsed_documents AS (
+            SELECT
+                path,
+                ai_parse_document(content) AS parsed
             FROM READ_FILES('{volume_path}', format => 'binaryFile')
             WHERE path LIKE '%/{escaped_file_name}'
             LIMIT 1
         ),
-        parsed AS (
-            SELECT 
-                path,
-                ai_parse_document(content) as parsed
-            FROM source_file
-        ),
-        extracted AS (
+        parsed_text AS (
             SELECT
                 path,
-                element:content AS content,
-                idx
-            FROM (
-                SELECT
-                    path,
-                    posexplode(
-                        CASE
-                            WHEN try_cast(parsed:metadata:version AS STRING) = '1.0' 
-                            THEN try_cast(parsed:document:pages AS ARRAY<VARIANT>)
-                            ELSE try_cast(parsed:document:elements AS ARRAY<VARIANT>)
-                        END
-                    ) AS (idx, element)
-                FROM parsed
-                WHERE try_cast(parsed:error_status AS STRING) IS NULL
-            )
+                parsed,
+                concat_ws(
+                    '\\n\\n',
+                    transform(
+                        try_cast(parsed:document:elements AS ARRAY<VARIANT>),
+                        element -> try_cast(element:content AS STRING)
+                    )
+                ) AS text,
+                size(try_cast(parsed:document:pages AS ARRAY<VARIANT>)) AS num_pages
+            FROM parsed_documents
+            WHERE try_cast(parsed:error_status AS STRING) IS NULL
         )
         SELECT
             path,
-            concat_ws('\\n\\n', collect_list(content)) AS full_text,
-            COUNT(*) as page_count
-        FROM extracted
-        WHERE content IS NOT NULL
-        GROUP BY path
+            text,
+            num_pages,
+            to_json(parsed:metadata) AS doc_metadata
+        FROM parsed_text
+        WHERE text IS NOT NULL
         """
         
         result = await execute_sql_long(config, warehouse_id, extract_sql, request_id, timeout_minutes=5)
@@ -752,11 +827,16 @@ async def extract_text_from_file(
             }
         
         row = result["data_array"][0]
-        file_path = row[0]
-        raw_text = row[1] or ""
+        file_path = row[0] if row[0] else ""
+        raw_text = row[1] if row[1] else ""
         page_count = int(row[2]) if row[2] else 0
+        doc_metadata = row[3] if len(row) > 3 and row[3] else "{}"
         
         print(f"✅ [{request_id}] Extracted {len(raw_text)} characters from {page_count} pages")
+        if doc_metadata and len(doc_metadata) > 200:
+            print(f"   Metadata: {doc_metadata[:200]}...")
+        else:
+            print(f"   Metadata: {doc_metadata}")
         
         if not raw_text.strip():
             return {
@@ -765,19 +845,23 @@ async def extract_text_from_file(
                 "error": "Extracted text is empty"
             }
         
-        # Step 4: Save to raw table (INSERT or UPDATE)
-        print(f"\n💾 [{request_id}] Saving to raw table...")
+        # Step 4: Save to parsed table (INSERT or UPDATE)
+        print(f"\n💾 [{request_id}] Saving to parsed table...")
         
-        escaped_raw_text = raw_text.replace("'", "''").replace("\\", "\\\\")
+        escaped_parsed_text = raw_text.replace("'", "''").replace("\\", "\\\\")
         escaped_path = file_path.replace("'", "''")
+        
+        # Escape metadata for SQL
+        escaped_metadata = doc_metadata.replace("'", "''") if doc_metadata else "{}"
         
         if existing_doc_id:
             # Update existing document
             update_sql = f"""
-            UPDATE {raw_table}
-            SET raw_text = '{escaped_raw_text}',
+            UPDATE {parsed_table}
+            SET parsed_text = '{escaped_parsed_text}',
                 text_length = {len(raw_text)},
                 page_count = {page_count},
+                metadata = '{escaped_metadata}',
                 updated_at = current_timestamp()
             WHERE id = '{existing_doc_id}'
             """
@@ -788,18 +872,18 @@ async def extract_text_from_file(
             # Insert new document
             doc_id = str(uuid.uuid4())
             insert_sql = f"""
-            INSERT INTO {raw_table}
-            (id, file_name, file_path, raw_text, text_length, page_count, created_at, updated_at, metadata)
+            INSERT INTO {parsed_table}
+            (id, file_name, file_path, parsed_text, text_length, page_count, created_at, updated_at, metadata)
             VALUES (
                 '{doc_id}',
                 '{escaped_file_name}',
                 '{escaped_path}',
-                '{escaped_raw_text}',
+                '{escaped_parsed_text}',
                 {len(raw_text)},
                 {page_count},
                 current_timestamp(),
                 current_timestamp(),
-                '{{}}'
+                '{escaped_metadata}'
             )
             """
             await execute_sql(config, warehouse_id, insert_sql, request_id)
@@ -907,12 +991,12 @@ async def check_table(
     schema = request.get("schema", "")
     table_name = sanitize_table_name(request.get("tableName", ""))
     
-    # Table names: _raw (from Module 1) and _chunks (Module 2)
-    raw_table = f"{catalog}.{schema}.{table_name}_raw"
+    # Table names: _parsed (from Module 1) and _chunks (Module 2)
+    parsed_table = f"{catalog}.{schema}.{table_name}_parsed"
     chunks_table = f"{catalog}.{schema}.{table_name}_chunks"
     
     print(f"📋 [{request_id}] Checking tables:")
-    print(f"  - Raw: {raw_table}")
+    print(f"  - Parsed: {parsed_table}")
     print(f"  - Chunks: {chunks_table}")
     
     try:
@@ -935,7 +1019,7 @@ async def check_table(
                 return {
                     "exists": True, 
                     "recordCount": count,
-                    "rawTable": raw_table,
+                    "parsedTable": parsed_table,
                     "chunksTable": chunks_table
                 }
         except Exception as e:
@@ -950,7 +1034,7 @@ async def check_table(
         return {
             "exists": False, 
             "recordCount": 0,
-            "rawTable": raw_table,
+            "parsedTable": parsed_table,
             "chunksTable": chunks_table
         }
             
@@ -961,32 +1045,32 @@ async def check_table(
             return {
                 "exists": False, 
                 "recordCount": 0,
-                "rawTable": raw_table,
+                "parsedTable": parsed_table,
                 "chunksTable": chunks_table
             }
         raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================================================
-# Module 2: Raw Documents API (for chunking preparation)
+# Module 2: Parsed Documents API (for chunking preparation)
 # ============================================================================
 
-@app.post("/api/raw-documents")
-async def get_raw_documents(
+@app.post("/api/parsed-documents")
+async def get_parsed_documents(
     request: RawDocumentsRequest,
     x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
 ):
-    """Get documents from the _raw table with pagination"""
+    """Get documents from the _parsed table with pagination"""
     request_id = str(uuid.uuid4())[:8]
     print(f"\n{'=' * 80}")
-    print(f"📄 [{request_id}] Get raw documents at {datetime.now().isoformat()}")
+    print(f"📄 [{request_id}] Get parsed documents at {datetime.now().isoformat()}")
     print(f"{'=' * 80}")
     
-    # Build full table name - use _raw suffix (sanitize to prevent double suffix)
+    # Build full table name - use _parsed suffix (sanitize to prevent double suffix)
     table_name = sanitize_table_name(request.tableName)
-    raw_table = f"{request.catalog}.{request.schema_name}.{table_name}_raw"
+    parsed_table = f"{request.catalog}.{request.schema_name}.{table_name}_parsed"
     
-    print(f"📋 [{request_id}] Table: {raw_table}")
+    print(f"📋 [{request_id}] Table: {parsed_table}")
     print(f"📋 [{request_id}] Offset: {request.offset}, Limit: {request.limit}")
     
     try:
@@ -997,7 +1081,7 @@ async def get_raw_documents(
             raise HTTPException(status_code=500, detail="Warehouse not configured")
         
         # Get total count
-        count_sql = f"SELECT COUNT(*) as total FROM {raw_table}"
+        count_sql = f"SELECT COUNT(*) as total FROM {parsed_table}"
         count_result = await execute_sql(config, warehouse_id, count_sql, request_id)
         
         total_count = 0
@@ -1006,7 +1090,7 @@ async def get_raw_documents(
         
         print(f"📊 [{request_id}] Total records: {total_count}")
         
-        # Get documents (without raw_text for list view - it can be large)
+        # Get documents (without parsed_text for list view - it can be large)
         docs_sql = f"""
         SELECT 
             id,
@@ -1015,7 +1099,7 @@ async def get_raw_documents(
             text_length,
             page_count,
             created_at
-        FROM {raw_table}
+        FROM {parsed_table}
         ORDER BY created_at DESC
         LIMIT {request.limit}
         OFFSET {request.offset}
@@ -1060,21 +1144,21 @@ async def get_raw_documents(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/raw-documents/text")
-async def get_raw_document_text(
+@app.post("/api/parsed-documents/text")
+async def get_parsed_document_text(
     request: RawDocumentTextRequest,
     x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
 ):
-    """Get the raw_text of a specific document"""
+    """Get the parsed_text of a specific document"""
     request_id = str(uuid.uuid4())[:8]
     print(f"\n{'=' * 80}")
     print(f"📝 [{request_id}] Get document text at {datetime.now().isoformat()}")
     print(f"{'=' * 80}")
     
     table_name = sanitize_table_name(request.tableName)
-    raw_table = f"{request.catalog}.{request.schema_name}.{table_name}_raw"
+    parsed_table = f"{request.catalog}.{request.schema_name}.{table_name}_parsed"
     
-    print(f"📋 [{request_id}] Table: {raw_table}")
+    print(f"📋 [{request_id}] Table: {parsed_table}")
     print(f"📋 [{request_id}] Document ID: {request.documentId}")
     
     try:
@@ -1084,15 +1168,15 @@ async def get_raw_document_text(
         if not warehouse_id:
             raise HTTPException(status_code=500, detail="Warehouse not configured")
         
-        # Get document with raw_text
+        # Get document with parsed_text
         sql = f"""
         SELECT 
             id,
             file_name,
-            raw_text,
+            parsed_text,
             text_length,
             page_count
-        FROM {raw_table}
+        FROM {parsed_table}
         WHERE id = '{request.documentId}'
         """
         
@@ -1106,7 +1190,7 @@ async def get_raw_document_text(
                 "document": {
                     "id": row[0],
                     "fileName": row[1],
-                    "rawText": row[2],
+                    "parsedText": row[2],
                     "textLength": int(row[3]) if row[3] else 0,
                     "pageCount": int(row[4]) if row[4] else 0
                 }
@@ -1122,13 +1206,74 @@ async def get_raw_document_text(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/raw-documents/delete")
+@app.post("/api/parsed-documents/check")
+async def check_file_exists_in_table(
+    request: CheckFileExistsRequest,
+    x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
+):
+    """Check if a file already exists in the _parsed table"""
+    request_id = str(uuid.uuid4())[:8]
+    print(f"\n{'=' * 80}")
+    print(f"🔍 [{request_id}] Check file exists at {datetime.now().isoformat()}")
+    print(f"{'=' * 80}")
+    
+    table_name = sanitize_table_name(request.tableName)
+    parsed_table = f"{request.catalog}.{request.schema_name}.{table_name}_parsed"
+    
+    print(f"📋 [{request_id}] Table: {parsed_table}")
+    print(f"📋 [{request_id}] File Name: {request.fileName}")
+    
+    try:
+        config = get_databricks_config(x_forwarded_access_token)
+        warehouse_id = os.getenv("DATABRICKS_WAREHOUSE_ID")
+        
+        if not warehouse_id:
+            raise HTTPException(status_code=500, detail="Warehouse not configured")
+        
+        # Escape single quotes in file name for SQL
+        escaped_file_name = request.fileName.replace("'", "''")
+        
+        # Check if file exists in table
+        sql = f"""
+        SELECT COUNT(*) as cnt FROM {parsed_table}
+        WHERE file_name = '{escaped_file_name}'
+        """
+        
+        result = await execute_sql(config, warehouse_id, sql, request_id)
+        
+        exists = False
+        if result and result.get("data_array") and len(result["data_array"]) > 0:
+            count = int(result["data_array"][0][0])
+            exists = count > 0
+        
+        print(f"✅ [{request_id}] File exists: {exists}")
+        
+        return {
+            "success": True,
+            "exists": exists,
+            "fileName": request.fileName
+        }
+        
+    except Exception as e:
+        error_str = str(e)
+        print(f"💥 [{request_id}] Exception: {error_str}")
+        # If table doesn't exist, file doesn't exist either
+        if "TABLE_OR_VIEW_NOT_FOUND" in error_str:
+            return {
+                "success": True,
+                "exists": False,
+                "fileName": request.fileName
+            }
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/parsed-documents/delete")
 async def delete_documents(
     request: DeleteDocumentsRequest,
     x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
 ):
     """
-    Delete documents from _raw and _chunks tables.
+    Delete documents from _parsed and _chunks tables.
     If documentIds is empty, deletes ALL documents.
     Optionally also deletes PDF files from volume.
     """
@@ -1138,13 +1283,13 @@ async def delete_documents(
     print(f"{'=' * 80}")
     
     table_name = sanitize_table_name(request.tableName)
-    raw_table = f"{request.catalog}.{request.schema_name}.{table_name}_raw"
+    parsed_table = f"{request.catalog}.{request.schema_name}.{table_name}_parsed"
     chunks_table = f"{request.catalog}.{request.schema_name}.{table_name}_chunks"
     
     document_ids = request.documentIds
     delete_all = len(document_ids) == 0
     
-    print(f"📋 [{request_id}] Raw table: {raw_table}")
+    print(f"📋 [{request_id}] Parsed table: {parsed_table}")
     print(f"📋 [{request_id}] Chunks table: {chunks_table}")
     print(f"📋 [{request_id}] Delete all: {delete_all}")
     print(f"📋 [{request_id}] Document IDs: {len(document_ids) if document_ids else 'ALL'}")
@@ -1157,7 +1302,7 @@ async def delete_documents(
         if not warehouse_id:
             raise HTTPException(status_code=500, detail="Warehouse not configured")
         
-        deleted_raw = 0
+        deleted_parsed = 0
         deleted_chunks = 0
         deleted_files = []
         errors = []
@@ -1167,10 +1312,10 @@ async def delete_documents(
         if request.deleteFromVolume:
             if delete_all:
                 # Get all file names
-                get_files_sql = f"SELECT file_name FROM {raw_table}"
+                get_files_sql = f"SELECT file_name FROM {parsed_table}"
             else:
                 ids_str = ", ".join([f"'{id}'" for id in document_ids])
-                get_files_sql = f"SELECT file_name FROM {raw_table} WHERE id IN ({ids_str})"
+                get_files_sql = f"SELECT file_name FROM {parsed_table} WHERE id IN ({ids_str})"
             
             try:
                 files_result = await execute_sql(config, warehouse_id, get_files_sql, request_id)
@@ -1204,35 +1349,35 @@ async def delete_documents(
             else:
                 print(f"ℹ️ [{request_id}] Chunks table does not exist (OK)")
         
-        # Delete from _raw table
-        print(f"\n🗑️ [{request_id}] Deleting from raw table...")
+        # Delete from _parsed table
+        print(f"\n🗑️ [{request_id}] Deleting from parsed table...")
         try:
             # Get count before
-            count_before = await execute_sql(config, warehouse_id, f"SELECT COUNT(*) FROM {raw_table}", request_id)
+            count_before = await execute_sql(config, warehouse_id, f"SELECT COUNT(*) FROM {parsed_table}", request_id)
             before_count = int(count_before["data_array"][0][0]) if count_before and count_before.get("data_array") else 0
             
             if delete_all:
-                delete_raw_sql = f"DELETE FROM {raw_table}"
+                delete_parsed_sql = f"DELETE FROM {parsed_table}"
             else:
                 ids_str = ", ".join([f"'{id}'" for id in document_ids])
-                delete_raw_sql = f"DELETE FROM {raw_table} WHERE id IN ({ids_str})"
+                delete_parsed_sql = f"DELETE FROM {parsed_table} WHERE id IN ({ids_str})"
             
-            await execute_sql(config, warehouse_id, delete_raw_sql, request_id)
+            await execute_sql(config, warehouse_id, delete_parsed_sql, request_id)
             
             # Get count after
-            count_after = await execute_sql(config, warehouse_id, f"SELECT COUNT(*) FROM {raw_table}", request_id)
+            count_after = await execute_sql(config, warehouse_id, f"SELECT COUNT(*) FROM {parsed_table}", request_id)
             after_count = int(count_after["data_array"][0][0]) if count_after and count_after.get("data_array") else 0
             
-            deleted_raw = before_count - after_count
-            print(f"✅ [{request_id}] Deleted {deleted_raw} records from raw table")
+            deleted_parsed = before_count - after_count
+            print(f"✅ [{request_id}] Deleted {deleted_parsed} records from parsed table")
         except Exception as e:
             error_str = str(e)
             if "TABLE_OR_VIEW_NOT_FOUND" not in error_str:
-                print(f"❌ [{request_id}] Error deleting from raw table: {error_str}")
-                errors.append(f"Raw: {error_str}")
+                print(f"❌ [{request_id}] Error deleting from parsed table: {error_str}")
+                errors.append(f"Parsed: {error_str}")
             else:
-                print(f"⚠️ [{request_id}] Raw table does not exist")
-                errors.append("Raw table not found")
+                print(f"⚠️ [{request_id}] Parsed table does not exist")
+                errors.append("Parsed table not found")
         
         # Delete files from volume (if requested)
         if request.deleteFromVolume and file_names_to_delete:
@@ -1262,14 +1407,14 @@ async def delete_documents(
         
         print(f"\n{'=' * 80}")
         print(f"✅ [{request_id}] Deletion complete!")
-        print(f"  - Raw records deleted: {deleted_raw}")
+        print(f"  - Parsed records deleted: {deleted_parsed}")
         print(f"  - Chunks deleted: {'Yes' if deleted_chunks != 0 else 'No'}")
         print(f"  - Volume files deleted: {len(deleted_files)}")
         print(f"{'=' * 80}\n")
         
         return {
             "success": len(errors) == 0,
-            "deletedRaw": deleted_raw,
+            "deletedParsed": deleted_parsed,
             "deletedChunks": deleted_chunks != 0,
             "deletedFiles": deleted_files,
             "deletedFilesCount": len(deleted_files),
@@ -1295,9 +1440,9 @@ async def get_chunking_preview(
     print(f"{'=' * 80}")
     
     table_name = sanitize_table_name(request.tableName)
-    raw_table = f"{request.catalog}.{request.schema_name}.{table_name}_raw"
+    parsed_table = f"{request.catalog}.{request.schema_name}.{table_name}_parsed"
     
-    print(f"📋 [{request_id}] Table: {raw_table}")
+    print(f"📋 [{request_id}] Table: {parsed_table}")
     print(f"📋 [{request_id}] Documents: {len(request.documentIds)}")
     print(f"📋 [{request_id}] Strategy: {request.strategy}")
     print(f"📋 [{request_id}] Chunk size: {request.chunkSize}, Overlap: {request.chunkOverlap}")
@@ -1312,14 +1457,14 @@ async def get_chunking_preview(
         if not warehouse_id:
             raise HTTPException(status_code=500, detail="Warehouse not configured")
         
-        # Get documents with raw_text
+        # Get documents with parsed_text
         ids_list = "', '".join(doc_ids)
         sql = f"""
         SELECT 
             id,
             file_name,
-            raw_text
-        FROM {raw_table}
+            parsed_text
+        FROM {parsed_table}
         WHERE id IN ('{ids_list}')
         """
         
@@ -1331,11 +1476,11 @@ async def get_chunking_preview(
             for row in result["data_array"]:
                 doc_id = row[0]
                 file_name = row[1]
-                raw_text = row[2] or ""
+                parsed_text = row[2] or ""
                 
                 # Apply chunking
                 chunks = apply_chunking(
-                    raw_text, 
+                    parsed_text, 
                     request.strategy, 
                     request.chunkSize, 
                     request.chunkOverlap,
@@ -1401,8 +1546,8 @@ async def init_processing(
         schema = table_config.get("schema", "")
         table_name = sanitize_table_name(table_config.get("tableName", ""))
         
-        # Raw documents table (created in Module 1) - we just verify it exists
-        raw_table = f"{catalog}.{schema}.{table_name}_raw"
+        # Parsed documents table (created in Module 1) - we just verify it exists
+        parsed_table = f"{catalog}.{schema}.{table_name}_parsed"
         # Chunks table stores chunked content
         chunks_table = f"{catalog}.{schema}.{table_name}_chunks"
         
@@ -1410,18 +1555,18 @@ async def init_processing(
         if not warehouse_id:
             raise HTTPException(status_code=500, detail="Warehouse ID not configured")
         
-        # Step 1: Verify _raw table exists (created in Module 1)
-        print(f"\n📋 [{request_id}] Verifying raw table exists: {raw_table}")
-        verify_sql = f"SELECT COUNT(*) FROM {raw_table} LIMIT 1"
+        # Step 1: Verify _parsed table exists (created in Module 1)
+        print(f"\n📋 [{request_id}] Verifying parsed table exists: {parsed_table}")
+        verify_sql = f"SELECT COUNT(*) FROM {parsed_table} LIMIT 1"
         try:
             await execute_sql(config, warehouse_id, verify_sql, request_id)
-            print(f"✅ [{request_id}] Raw table exists")
+            print(f"✅ [{request_id}] Parsed table exists")
         except Exception as e:
             error_str = str(e)
             if "TABLE_OR_VIEW_NOT_FOUND" in error_str:
                 raise HTTPException(
                     status_code=400, 
-                    detail=f"Tabela _raw não encontrada. Importe documentos primeiro no Módulo 1."
+                    detail=f"Tabela _parsed não encontrada. Importe documentos primeiro no Módulo 1."
                 )
             raise
         
@@ -1434,7 +1579,7 @@ async def init_processing(
         except Exception as e:
             print(f"⚠️ [{request_id}] Could not drop chunks table: {str(e)}")
         
-        # Step 3: Create fresh chunks table
+        # Step 3: Create fresh chunks table (with metadata support for hybrid_ai strategy)
         create_chunks_sql = f"""
         CREATE TABLE {chunks_table} (
             id STRING,
@@ -1443,9 +1588,11 @@ async def init_processing(
             chunk_index INT,
             total_chunks INT,
             chunk_content STRING,
+            chunk_context STRING,
             strategy STRING,
             chunk_size INT,
             chunk_overlap INT,
+            doc_metadata STRING,
             created_at TIMESTAMP
         )
         USING DELTA
@@ -1464,7 +1611,7 @@ async def init_processing(
         
         return {
             "success": True,
-            "rawTable": raw_table,
+            "parsedTable": parsed_table,
             "chunksTable": chunks_table,
             "filesToProcess": files_to_process,
             "skippedFiles": skipped_files
@@ -1520,15 +1667,15 @@ async def process_single_file(
         # Note: Chunks table was already dropped and recreated in init_processing
         # No need to delete individual file chunks here
         
-        # Step 1: Get text from _raw table (already extracted in Module 1)
+        # Step 1: Get text from _parsed table (already extracted in Module 1)
         escaped_file_name = file_name.replace("'", "''")
-        raw_table = f"{catalog}.{schema}.{table_name}_raw"
+        parsed_table = f"{catalog}.{schema}.{table_name}_parsed"
         
-        print(f"\n📖 [{request_id}] Fetching text from _raw table: {raw_table}")
+        print(f"\n📖 [{request_id}] Fetching text from _parsed table: {parsed_table}")
         
         fetch_sql = f"""
-        SELECT id, file_path, raw_text, text_length, page_count
-        FROM {raw_table}
+        SELECT id, file_path, parsed_text, text_length, page_count
+        FROM {parsed_table}
         WHERE file_name = '{escaped_file_name}'
         LIMIT 1
         """
@@ -1536,7 +1683,7 @@ async def process_single_file(
         result = await execute_sql(config, warehouse_id, fetch_sql, request_id)
         
         if not result or not result.get("data_array") or len(result.get("data_array", [])) == 0:
-            print(f"❌ [{request_id}] Document not found in _raw table: {file_name}")
+            print(f"❌ [{request_id}] Document not found in _parsed table: {file_name}")
             return {
                 "success": False,
                 "fileName": file_name,
@@ -1547,13 +1694,13 @@ async def process_single_file(
         row = result["data_array"][0]
         doc_id = row[0]
         extracted_path = row[1] or ""
-        raw_text = row[2] or ""
+        parsed_text = row[2] or ""
         text_length = int(row[3]) if row[3] else 0
         page_count = int(row[4]) if row[4] else 0
         
         print(f"✅ [{request_id}] Found document: {text_length} characters, {page_count} pages")
         
-        if not raw_text.strip():
+        if not parsed_text.strip():
             return {
                 "success": False,
                 "fileName": file_name,
@@ -1561,7 +1708,33 @@ async def process_single_file(
                 "chunksCreated": 0
             }
         
-        # Step 4: Create chunks
+        # Step 4: Extract AI metadata if using hybrid_ai strategy
+        doc_metadata = {}
+        doc_context = ""
+        
+        if strategy == "hybrid_ai":
+            print(f"\n🤖 [{request_id}] Extracting document metadata with AI...")
+            doc_metadata = await extract_document_metadata_with_ai(
+                config, warehouse_id, parsed_text, file_name, request_id
+            )
+            
+            # Build context string for chunk enrichment
+            if doc_metadata and not doc_metadata.get("error"):
+                doc_type = doc_metadata.get("document_type", "documento")
+                subject = doc_metadata.get("subject", "")
+                parties = doc_metadata.get("parties", [])
+                summary = doc_metadata.get("summary", "")
+                
+                parties_str = ", ".join(parties) if parties else ""
+                doc_context = f"[Documento: {doc_type}]"
+                if parties_str:
+                    doc_context += f" [Partes: {parties_str}]"
+                if subject:
+                    doc_context += f" [Assunto: {subject}]"
+                
+                print(f"✅ [{request_id}] Document context: {doc_context[:100]}...")
+        
+        # Step 5: Create chunks
         separator_type = params.get("separatorType", "paragraph")
         custom_separator = params.get("customSeparator", "")
         
@@ -1569,30 +1742,45 @@ async def process_single_file(
         if strategy == "by_separator":
             print(f"  Separator type: {separator_type}, Custom: '{custom_separator}'")
         
-        chunks = create_chunks(raw_text, strategy, chunk_size, chunk_overlap, separator_type, custom_separator)
+        chunks = create_chunks(parsed_text, strategy, chunk_size, chunk_overlap, separator_type, custom_separator)
         print(f"✅ [{request_id}] Created {len(chunks)} chunks")
         
-        # Step 5: Save chunks to chunks table
+        # Step 6: Save chunks to chunks table
         print(f"\n💾 [{request_id}] Saving {len(chunks)} chunks...")
+        
+        # Serialize metadata as JSON
+        import json
+        metadata_json = json.dumps(doc_metadata, ensure_ascii=False) if doc_metadata else "{}"
+        escaped_metadata = metadata_json.replace("'", "''")
+        escaped_context = doc_context.replace("'", "''") if doc_context else ""
         
         for idx, chunk in enumerate(chunks):
             chunk_id = str(uuid.uuid4())
             escaped_chunk = chunk.replace("'", "''").replace("\\", "\\\\")
             
+            # For hybrid_ai, prepend context to chunk content for better RAG results
+            if strategy == "hybrid_ai" and doc_context:
+                enriched_chunk = f"{doc_context}\n\n{chunk}"
+                escaped_enriched = enriched_chunk.replace("'", "''").replace("\\", "\\\\")
+            else:
+                escaped_enriched = escaped_chunk
+            
             insert_chunk_sql = f"""
             INSERT INTO {chunks_table}
             (id, document_id, file_name, chunk_index, total_chunks, chunk_content, 
-             strategy, chunk_size, chunk_overlap, created_at)
+             chunk_context, strategy, chunk_size, chunk_overlap, doc_metadata, created_at)
             VALUES (
                 '{chunk_id}',
                 '{doc_id}',
                 '{escaped_file_name}',
                 {idx},
                 {len(chunks)},
-                '{escaped_chunk}',
+                '{escaped_enriched}',
+                '{escaped_context}',
                 '{strategy}',
                 {chunk_size},
                 {chunk_overlap},
+                '{escaped_metadata}',
                 current_timestamp()
             )
             """
@@ -1600,17 +1788,20 @@ async def process_single_file(
         
         print(f"\n✅ [{request_id}] File processing complete!")
         print(f"  - Document ID: {doc_id}")
-        print(f"  - Text length: {len(raw_text)} chars")
+        print(f"  - Text length: {len(parsed_text)} chars")
         print(f"  - Chunks created: {len(chunks)}")
+        if strategy == "hybrid_ai":
+            print(f"  - AI Metadata: {'Extracted' if doc_metadata and not doc_metadata.get('error') else 'Failed'}")
         print(f"{'=' * 80}\n")
         
         return {
             "success": True,
             "fileName": file_name,
             "documentId": doc_id,
-            "textLength": len(raw_text),
+            "textLength": len(parsed_text),
             "pageCount": page_count,
-            "chunksCreated": len(chunks)
+            "chunksCreated": len(chunks),
+            "hasMetadata": bool(doc_metadata and not doc_metadata.get("error"))
         }
         
     except HTTPException:
@@ -2551,16 +2742,15 @@ def create_chunks(text: str, strategy: str, chunk_size: int, chunk_overlap: int,
         print(f"  Separators used: {' → '.join(separators_used)}")
         return chunks
     
-    elif strategy == "by_page":
-        # For placeholder, simulate page breaks
-        pages = text.split("[Page Break]") if "[Page Break]" in text else [text]
-        return [page.strip() for page in pages if page.strip()]
-    
     elif strategy == "by_sentence":
         return chunk_by_sentence(text, chunk_size, chunk_overlap)
     
     elif strategy == "semantic":
         # Semantic chunking would require embeddings - use recursive as fallback
+        return chunk_recursive(text, chunk_size, chunk_overlap)
+    
+    elif strategy == "hybrid_ai":
+        # Hybrid AI uses recursive chunking as base - AI metadata is added in process_single_file
         return chunk_recursive(text, chunk_size, chunk_overlap)
     
     else:

@@ -41,6 +41,7 @@
     "characters": "characters",
     "documents": "documents",
     "files": "files",
+    "filesCapital": "Files",
     "segments": "segments"
   },
   "import": {
@@ -71,10 +72,17 @@
     },
     "overwrite": {
       "title": "File already exists",
+      "titleTable": "File already processed",
       "message": "The file \"{fileName}\" already exists in the volume. What do you want to do?",
+      "messageTable": "The file \"{fileName}\" has already been processed and exists in the table. What do you want to do?",
       "overwriteAll": "Overwrite all",
       "overwriteThis": "Overwrite this file",
       "skipThis": "Skip this file"
+    },
+    "importFromVolume": {
+      "button": "Import selected",
+      "addedToList": "{count} file(s) added to import list",
+      "alreadyInList": "{count} file(s) already in the list"
     },
     "toast": {
       "configSaved": "Configuration saved!",
@@ -136,10 +144,6 @@
           "name": "By Separator",
           "description": "Divides by specific markers (paragraph, line, period). Flexible and adaptable."
         },
-        "by_page": {
-          "name": "By Page",
-          "description": "Each PDF page becomes a segment. Ideal for page-organized documents."
-        },
         "by_sentence": {
           "name": "By Sentence",
           "description": "Groups complete sentences until reaching maximum size. Preserves text structure."
@@ -147,6 +151,10 @@
         "semantic": {
           "name": "Semantic",
           "description": "Automatically identifies where the topic changes. Higher precision, slower."
+        },
+        "hybrid_ai": {
+          "name": "Hybrid + AI",
+          "description": "Combines recursive chunking with AI metadata extraction. Ideal for RAG with contracts and legal documents."
         }
       },
       "params": {
