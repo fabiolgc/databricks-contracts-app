@@ -2111,11 +2111,12 @@ DERIVED COLORS (lighter versions for backgrounds and UI elements):
 
 Also suggest:
 13. app_name: A short name for the application (2-4 words max)
+14. logo_url: The official logo URL of the company (PNG, SVG or JPG format preferred). Search for the company's official logo from their website, Wikipedia, or brand resources. Use a publicly accessible URL that displays the logo image. If you cannot find a reliable logo URL, use an empty string.
 
 IMPORTANT: Return ONLY a valid JSON object with ALL these exact keys, no additional text:
-{{"primary_color": "#XXXXXX", "text_color": "#XXXXXX", "success_color": "#XXXXXX", "accent_color": "#XXXXXX", "primary_light": "#XXXXXX", "primary_lighter": "#XXXXXX", "success_light": "#XXXXXX", "success_lighter": "#XXXXXX", "accent_light": "#XXXXXX", "accent_lighter": "#XXXXXX", "warning_color": "#XXXXXX", "warning_light": "#XXXXXX", "app_name": "Company App"}}
+{{"primary_color": "#XXXXXX", "text_color": "#XXXXXX", "success_color": "#XXXXXX", "accent_color": "#XXXXXX", "primary_light": "#XXXXXX", "primary_lighter": "#XXXXXX", "success_light": "#XXXXXX", "success_lighter": "#XXXXXX", "accent_light": "#XXXXXX", "accent_lighter": "#XXXXXX", "warning_color": "#XXXXXX", "warning_light": "#XXXXXX", "app_name": "Company App", "logo_url": "https://example.com/logo.png"}}
 
-Ensure all derived light colors are very subtle tints that work well as backgrounds. If you don't know the company, make educated guesses based on professional design principles."""
+Ensure all derived light colors are very subtle tints that work well as backgrounds. If you don't know the company, make educated guesses based on professional design principles. For logo_url, only provide a URL if you are confident it is a valid, publicly accessible image URL."""
         
         # Call ai_gen function
         ai_sql = f"SELECT ai_gen('{ai_prompt.replace(chr(39), chr(39)+chr(39))}')"

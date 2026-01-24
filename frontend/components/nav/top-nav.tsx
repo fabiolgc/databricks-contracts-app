@@ -371,7 +371,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
       const data = await response.json()
       
       if (data.success && data.config) {
-        // Apply AI-generated config to local theme (including derived colors)
+        // Apply AI-generated config to local theme (including derived colors and logo)
         setLocalTheme(prev => ({
           ...prev,
           primary_color: data.config.primary_color || prev.primary_color,
@@ -380,6 +380,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
           accent_color: data.config.accent_color || prev.accent_color,
           warning_color: data.config.warning_color || prev.warning_color,
           app_name: data.config.app_name || prev.app_name,
+          logo_url: data.config.logo_url || prev.logo_url,
           // Derived colors from AI or auto-generated
           primary_light: data.config.primary_light || generateLightColor(data.config.primary_color || prev.primary_color, 0.92),
           primary_lighter: data.config.primary_lighter || generateLightColor(data.config.primary_color || prev.primary_color, 0.85),
@@ -519,26 +520,70 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
             />
           </div>
 
-          {/* Logo URL */}
+          {/* Logo URL with Preview */}
           <div className="mb-6">
             <label className="block text-sm font-medium text-gray-700 mb-2">
               {locale === "pt-BR" ? "URL do Logo (opcional)" : "Logo URL (optional)"}
             </label>
-            <input
-              type="url"
-              value={localTheme.logo_url}
-              onChange={(e) => {
-                setLocalTheme(prev => ({ ...prev, logo_url: e.target.value }))
-                setHasChanges(true)
-              }}
-              placeholder="https://example.com/logo.png"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
-            />
-            <p className="mt-1 text-xs text-gray-500">
-              {locale === "pt-BR" 
-                ? "Deixe vazio para usar o logo padrão do Databricks" 
-                : "Leave empty to use default Databricks logo"}
-            </p>
+            <div className="flex gap-3">
+              {/* Logo Preview */}
+              <div className="flex-shrink-0 w-16 h-16 border border-gray-200 rounded-lg bg-gray-50 flex items-center justify-center overflow-hidden">
+                {localTheme.logo_url ? (
+                  <img
+                    src={localTheme.logo_url}
+                    alt="Logo preview"
+                    className="max-w-full max-h-full object-contain"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).style.display = 'none'
+                      const parent = (e.target as HTMLImageElement).parentElement
+                      if (parent) {
+                        const errorText = document.createElement('span')
+                        errorText.className = 'text-[10px] text-red-500 text-center px-1'
+                        errorText.textContent = locale === "pt-BR" ? 'URL inválida' : 'Invalid URL'
+                        parent.appendChild(errorText)
+                      }
+                    }}
+                  />
+                ) : (
+                  <span className="text-[10px] text-gray-400 text-center px-1">
+                    {locale === "pt-BR" ? "Sem logo" : "No logo"}
+                  </span>
+                )}
+              </div>
+              {/* Input and Clear */}
+              <div className="flex-1">
+                <div className="flex gap-2">
+                  <input
+                    type="url"
+                    value={localTheme.logo_url}
+                    onChange={(e) => {
+                      setLocalTheme(prev => ({ ...prev, logo_url: e.target.value }))
+                      setHasChanges(true)
+                    }}
+                    placeholder="https://example.com/logo.png"
+                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
+                  />
+                  {localTheme.logo_url && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLocalTheme(prev => ({ ...prev, logo_url: "" }))
+                        setHasChanges(true)
+                      }}
+                      className="px-3 py-2 text-sm text-gray-600 hover:text-red-600 border border-gray-300 rounded-lg hover:border-red-300 transition-colors"
+                      title={locale === "pt-BR" ? "Remover logo" : "Remove logo"}
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+                <p className="mt-1 text-xs text-gray-500">
+                  {locale === "pt-BR" 
+                    ? "Deixe vazio para usar o logo padrão do Databricks" 
+                    : "Leave empty to use default Databricks logo"}
+                </p>
+              </div>
+            </div>
           </div>
 
           {/* Main Colors */}
