@@ -2111,12 +2111,18 @@ DERIVED COLORS (lighter versions for backgrounds and UI elements):
 
 Also suggest:
 13. app_name: A short name for the application (2-4 words max)
-14. logo_url: The official logo URL of the company (PNG, SVG or JPG format preferred). Search for the company's official logo from their website, Wikipedia, or brand resources. Use a publicly accessible URL that displays the logo image. If you cannot find a reliable logo URL, use an empty string.
+14. logo_url: Find the company's official logo URL from these sources (in order of preference):
+    - The company's official website (usually at /logo.png, /images/logo.svg, or similar paths)
+    - Wikipedia (look for the company's logo in the infobox)
+    - Brand/press resources page (usually has high-quality logos)
+    - Social media profiles: LinkedIn company page, Instagram, Twitter/X, or Facebook
+    - Clearbit Logo API: https://logo.clearbit.com/DOMAIN (e.g., https://logo.clearbit.com/databricks.com)
+    The URL must be a direct link to an image file (PNG, SVG, JPG, or WebP). Return an empty string "" if you cannot find a reliable, publicly accessible logo URL.
 
 IMPORTANT: Return ONLY a valid JSON object with ALL these exact keys, no additional text:
-{{"primary_color": "#XXXXXX", "text_color": "#XXXXXX", "success_color": "#XXXXXX", "accent_color": "#XXXXXX", "primary_light": "#XXXXXX", "primary_lighter": "#XXXXXX", "success_light": "#XXXXXX", "success_lighter": "#XXXXXX", "accent_light": "#XXXXXX", "accent_lighter": "#XXXXXX", "warning_color": "#XXXXXX", "warning_light": "#XXXXXX", "app_name": "Company App", "logo_url": "https://example.com/logo.png"}}
+{{"primary_color": "#XXXXXX", "text_color": "#XXXXXX", "success_color": "#XXXXXX", "accent_color": "#XXXXXX", "primary_light": "#XXXXXX", "primary_lighter": "#XXXXXX", "success_light": "#XXXXXX", "success_lighter": "#XXXXXX", "accent_light": "#XXXXXX", "accent_lighter": "#XXXXXX", "warning_color": "#XXXXXX", "warning_light": "#XXXXXX", "app_name": "Company App", "logo_url": "https://logo.clearbit.com/company.com"}}
 
-Ensure all derived light colors are very subtle tints that work well as backgrounds. If you don't know the company, make educated guesses based on professional design principles. For logo_url, only provide a URL if you are confident it is a valid, publicly accessible image URL."""
+Ensure all derived light colors are very subtle tints that work well as backgrounds. If you don't know the company, make educated guesses based on professional design principles. For logo_url, prefer using Clearbit Logo API (https://logo.clearbit.com/DOMAIN) as it's reliable and works for most companies. Only provide a URL if you are confident it will display a valid image."""
         
         # Call ai_gen function
         ai_sql = f"SELECT ai_gen('{ai_prompt.replace(chr(39), chr(39)+chr(39))}')"

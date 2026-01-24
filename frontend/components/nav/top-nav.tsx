@@ -209,6 +209,9 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   const [isAILoading, setIsAILoading] = useState(false)
   const [aiError, setAiError] = useState<string | null>(null)
   const aiInputRef = useRef<HTMLInputElement>(null)
+  
+  // Logo preview state
+  const [logoError, setLogoError] = useState(false)
 
   // Main colors
   const mainColorFields = [
@@ -390,6 +393,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
           accent_lighter: data.config.accent_lighter || generateLightColor(data.config.accent_color || prev.accent_color, 0.85),
           warning_light: data.config.warning_light || generateLightColor(data.config.warning_color || prev.warning_color || "#F59E0B", 0.92)
         }))
+        setLogoError(false) // Reset logo error for new URL
         setHasChanges(true)
         setShowAIAssistant(false)
         setCompanyInput("")
@@ -528,22 +532,18 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
             <div className="flex gap-3">
               {/* Logo Preview */}
               <div className="flex-shrink-0 w-16 h-16 border border-gray-200 rounded-lg bg-gray-50 flex items-center justify-center overflow-hidden">
-                {localTheme.logo_url ? (
+                {localTheme.logo_url && !logoError ? (
                   <img
                     src={localTheme.logo_url}
                     alt="Logo preview"
                     className="max-w-full max-h-full object-contain"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).style.display = 'none'
-                      const parent = (e.target as HTMLImageElement).parentElement
-                      if (parent) {
-                        const errorText = document.createElement('span')
-                        errorText.className = 'text-[10px] text-red-500 text-center px-1'
-                        errorText.textContent = locale === "pt-BR" ? 'URL inválida' : 'Invalid URL'
-                        parent.appendChild(errorText)
-                      }
-                    }}
+                    onError={() => setLogoError(true)}
+                    onLoad={() => setLogoError(false)}
                   />
+                ) : localTheme.logo_url && logoError ? (
+                  <span className="text-[10px] text-red-500 text-center px-1">
+                    {locale === "pt-BR" ? "URL inválida" : "Invalid URL"}
+                  </span>
                 ) : (
                   <span className="text-[10px] text-gray-400 text-center px-1">
                     {locale === "pt-BR" ? "Sem logo" : "No logo"}
@@ -558,6 +558,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
                     value={localTheme.logo_url}
                     onChange={(e) => {
                       setLocalTheme(prev => ({ ...prev, logo_url: e.target.value }))
+                      setLogoError(false) // Reset error when URL changes
                       setHasChanges(true)
                     }}
                     placeholder="https://example.com/logo.png"
@@ -568,6 +569,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
                       type="button"
                       onClick={() => {
                         setLocalTheme(prev => ({ ...prev, logo_url: "" }))
+                        setLogoError(false)
                         setHasChanges(true)
                       }}
                       className="px-3 py-2 text-sm text-gray-600 hover:text-red-600 border border-gray-300 rounded-lg hover:border-red-300 transition-colors"
