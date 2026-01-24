@@ -261,6 +261,11 @@ export default function ImportPage() {
   }
 
   async function uploadFile(file: FileWithStatus, shouldOverwrite: boolean = false) {
+    // If file already exists in volume, skip upload
+    if (!file.file) {
+      return "success"
+    }
+    
     const uploadStartTime = Date.now()
     setFiles(prev =>
       prev.map(f =>
