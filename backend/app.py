@@ -1768,6 +1768,21 @@ class DeleteVolumeFilesRequest(BaseModel):
     fileNames: List[str]  # List of file names to delete, or empty for all
 
 
+class AppConfigRequest(BaseModel):
+    """Configuration for app customization (colors, logo, etc.)"""
+    primary_color: Optional[str] = None  # Databricks red
+    text_color: Optional[str] = None  # Dark color for text
+    success_color: Optional[str] = None  # Green for success states
+    accent_color: Optional[str] = None  # Blue accent
+    logo_url: Optional[str] = None  # Custom logo URL
+    app_name: Optional[str] = None  # Custom app name
+
+
+class AIConfigRequest(BaseModel):
+    """Request for AI-powered config generation"""
+    company_name: str  # Company name or website URL
+
+
 @app.post("/api/volume/files/delete")
 async def delete_volume_files(
     request: DeleteVolumeFilesRequest,
@@ -1844,6 +1859,357 @@ async def delete_volume_files(
             "deletedCount": len(deleted),
             "errors": errors if errors else None
         }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"💥 [{request_id}] Exception: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# App Configuration API
+# ============================================================================
+
+@app.get("/api/app-config")
+async def get_app_config(
+    x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
+):
+    """Get app configuration (colors, logo, etc.) from database"""
+    request_id = str(uuid.uuid4())[:8]
+    print(f"\n{'=' * 80}")
+    print(f"⚙️ [{request_id}] Get app config at {datetime.now().isoformat()}")
+    print(f"{'=' * 80}")
+    
+    # Default configuration
+    default_config = {
+        "primary_color": "#FF3621",  # Databricks red
+        "text_color": "#1B1B1D",  # Dark text
+        "success_color": "#00A972",  # Green
+        "accent_color": "#1857B6",  # Blue
+        "logo_url": "",  # Empty = use default
+        "app_name": "Contracts App"
+    }
+    
+    try:
+        config = get_databricks_config(x_forwarded_access_token)
+        warehouse_id = os.getenv("DATABRICKS_WAREHOUSE_ID")
+        
+        if not warehouse_id:
+            print(f"⚠️ [{request_id}] No warehouse configured, returning defaults")
+            return {"success": True, "config": default_config, "source": "default"}
+        
+        catalog = os.getenv("DATABRICKS_CATALOG", "")
+        schema = os.getenv("DATABRICKS_SCHEMA", "")
+        config_table = f"{catalog}.{schema}.app_config"
+        
+        # Try to read from table
+        try:
+            sql = f"SELECT config_key, config_value FROM {config_table}"
+            result = await execute_sql(config, warehouse_id, sql, request_id)
+            
+            if result and result.get("data_array"):
+                db_config = dict(default_config)  # Start with defaults
+                for row in result["data_array"]:
+                    key, value = row[0], row[1]
+                    if key in db_config and value:
+                        db_config[key] = value
+                
+                print(f"✅ [{request_id}] Loaded config from database")
+                return {"success": True, "config": db_config, "source": "database"}
+        except Exception as e:
+            error_str = str(e)
+            if "TABLE_OR_VIEW_NOT_FOUND" in error_str:
+                print(f"ℹ️ [{request_id}] Config table not found, returning defaults")
+            else:
+                print(f"⚠️ [{request_id}] Error reading config: {error_str}")
+        
+        return {"success": True, "config": default_config, "source": "default"}
+        
+    except Exception as e:
+        print(f"💥 [{request_id}] Exception: {str(e)}")
+        return {"success": True, "config": default_config, "source": "default"}
+
+
+@app.post("/api/app-config")
+async def save_app_config(
+    request: AppConfigRequest,
+    x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
+):
+    """Save app configuration to database - optimized version"""
+    request_id = str(uuid.uuid4())[:8]
+    print(f"\n{'=' * 80}")
+    print(f"💾 [{request_id}] Save app config at {datetime.now().isoformat()}")
+    print(f"{'=' * 80}")
+    
+    try:
+        config = get_databricks_config(x_forwarded_access_token)
+        warehouse_id = os.getenv("DATABRICKS_WAREHOUSE_ID")
+        
+        if not warehouse_id:
+            raise HTTPException(status_code=500, detail="Warehouse not configured")
+        
+        catalog = os.getenv("DATABRICKS_CATALOG", "")
+        schema = os.getenv("DATABRICKS_SCHEMA", "")
+        config_table = f"{catalog}.{schema}.app_config"
+        
+        # Build config dict from request (only non-None values)
+        new_values = {}
+        if request.primary_color is not None:
+            new_values["primary_color"] = request.primary_color
+        if request.text_color is not None:
+            new_values["text_color"] = request.text_color
+        if request.success_color is not None:
+            new_values["success_color"] = request.success_color
+        if request.accent_color is not None:
+            new_values["accent_color"] = request.accent_color
+        if request.logo_url is not None:
+            new_values["logo_url"] = request.logo_url
+        if request.app_name is not None:
+            new_values["app_name"] = request.app_name
+        
+        if not new_values:
+            print(f"ℹ️ [{request_id}] No values to save")
+            return {"success": True, "message": "No changes to save"}
+        
+        # Step 1: Try to get existing values to compare (optimization: only save changed values)
+        existing_values = {}
+        try:
+            select_sql = f"SELECT config_key, config_value FROM {config_table}"
+            result = await execute_sql(config, warehouse_id, select_sql, request_id)
+            if result and result.get("data_array"):
+                for row in result["data_array"]:
+                    existing_values[row[0]] = row[1]
+            print(f"📖 [{request_id}] Loaded {len(existing_values)} existing config values")
+        except Exception as e:
+            error_str = str(e)
+            if "TABLE_OR_VIEW_NOT_FOUND" in error_str:
+                print(f"ℹ️ [{request_id}] Table doesn't exist yet, will create on first save")
+            else:
+                print(f"⚠️ [{request_id}] Error reading existing config: {error_str}")
+        
+        # Step 2: Filter to only changed values
+        changed_values = {}
+        for key, new_value in new_values.items():
+            existing_value = existing_values.get(key)
+            if existing_value != new_value:
+                changed_values[key] = new_value
+                print(f"  🔄 [{request_id}] {key}: '{existing_value}' → '{new_value}'")
+            else:
+                print(f"  ✓ [{request_id}] {key}: unchanged")
+        
+        if not changed_values:
+            print(f"✅ [{request_id}] No changes detected, skipping save")
+            return {"success": True, "message": "No changes detected"}
+        
+        print(f"📝 [{request_id}] Saving {len(changed_values)} changed value(s)")
+        
+        # Step 3: Build VALUES clause for MERGE
+        values_rows = []
+        for key, value in changed_values.items():
+            escaped_value = value.replace("'", "''") if value else ""
+            values_rows.append(f"('{key}', '{escaped_value}')")
+        
+        values_clause = ", ".join(values_rows)
+        merge_sql = f"""
+        MERGE INTO {config_table} AS target
+        USING (
+            SELECT config_key, config_value 
+            FROM VALUES {values_clause} AS source(config_key, config_value)
+        ) AS source
+        ON target.config_key = source.config_key
+        WHEN MATCHED THEN UPDATE SET 
+            config_value = source.config_value,
+            updated_at = current_timestamp()
+        WHEN NOT MATCHED THEN INSERT (config_key, config_value, updated_at)
+            VALUES (source.config_key, source.config_value, current_timestamp())
+        """
+        
+        # Step 4: Try MERGE first, create table only if it doesn't exist
+        try:
+            await execute_sql(config, warehouse_id, merge_sql, request_id)
+            print(f"✅ [{request_id}] Config saved successfully")
+        except Exception as e:
+            error_str = str(e)
+            # Check for TABLE_OR_VIEW_NOT_FOUND error
+            if "TABLE_OR_VIEW_NOT_FOUND" in error_str:
+                print(f"📊 [{request_id}] Table doesn't exist, creating...")
+                
+                # Create the table
+                create_sql = f"""
+                CREATE TABLE {config_table} (
+                    config_key STRING,
+                    config_value STRING,
+                    updated_at TIMESTAMP
+                )
+                USING DELTA
+                """
+                await execute_sql(config, warehouse_id, create_sql, request_id)
+                print(f"✅ [{request_id}] Table created: {config_table}")
+                
+                # Retry the MERGE
+                await execute_sql(config, warehouse_id, merge_sql, request_id)
+                print(f"✅ [{request_id}] Config saved successfully (after table creation)")
+            else:
+                # Re-raise other errors
+                raise
+        
+        return {"success": True, "message": f"Saved {len(changed_values)} configuration(s)"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"💥 [{request_id}] Exception: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/ai-config")
+async def generate_ai_config(
+    request: AIConfigRequest,
+    x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
+):
+    """
+    Use AI to generate app configuration based on company branding.
+    Uses Databricks ai_gen() function to analyze company identity and suggest colors.
+    """
+    request_id = str(uuid.uuid4())[:8]
+    print(f"\n{'=' * 80}")
+    print(f"🤖 [{request_id}] AI Config generation at {datetime.now().isoformat()}")
+    print(f"{'=' * 80}")
+    print(f"📝 Company: {request.company_name}")
+    
+    try:
+        config = get_databricks_config(x_forwarded_access_token)
+        warehouse_id = os.getenv("DATABRICKS_WAREHOUSE_ID")
+        
+        if not warehouse_id:
+            raise HTTPException(status_code=500, detail="Warehouse not configured")
+        
+        # Escape the company name for SQL
+        company_escaped = request.company_name.replace("'", "''")
+        
+        # Build the AI prompt for extracting brand colors with full palette
+        ai_prompt = f"""You are a brand identity expert and UI/UX designer. Analyze the visual identity of the company or website "{company_escaped}".
+
+Based on your knowledge of this company's brand guidelines, website design, and corporate identity, create a complete color palette in HEX format:
+
+PRIMARY COLORS:
+1. primary_color: The main brand color (used for buttons, links, CTAs)
+2. text_color: Color for headings and important text (usually dark)
+3. success_color: Color for success states (usually green tones)
+4. accent_color: Secondary/accent color for highlights and information
+
+DERIVED COLORS (lighter versions for backgrounds and UI elements):
+5. primary_light: Very light version of primary (for backgrounds, ~95% lightness) - like bg-red-50
+6. primary_lighter: Light version of primary (for hover states, ~90% lightness) - like bg-red-100
+7. success_light: Very light version of success (for success backgrounds, ~95% lightness) - like bg-green-50
+8. success_lighter: Light version of success (for success elements, ~90% lightness) - like bg-green-100
+9. accent_light: Very light version of accent (for info backgrounds, ~95% lightness) - like bg-blue-50
+10. accent_lighter: Light version of accent (for info elements, ~90% lightness) - like bg-blue-100
+11. warning_color: Warning/caution color (amber/yellow tones for alerts)
+12. warning_light: Very light version of warning (for warning backgrounds) - like bg-amber-50
+
+Also suggest:
+13. app_name: A short name for the application (2-4 words max)
+
+IMPORTANT: Return ONLY a valid JSON object with ALL these exact keys, no additional text:
+{{"primary_color": "#XXXXXX", "text_color": "#XXXXXX", "success_color": "#XXXXXX", "accent_color": "#XXXXXX", "primary_light": "#XXXXXX", "primary_lighter": "#XXXXXX", "success_light": "#XXXXXX", "success_lighter": "#XXXXXX", "accent_light": "#XXXXXX", "accent_lighter": "#XXXXXX", "warning_color": "#XXXXXX", "warning_light": "#XXXXXX", "app_name": "Company App"}}
+
+Ensure all derived light colors are very subtle tints that work well as backgrounds. If you don't know the company, make educated guesses based on professional design principles."""
+        
+        # Call ai_gen function
+        ai_sql = f"SELECT ai_gen('{ai_prompt.replace(chr(39), chr(39)+chr(39))}')"
+        
+        print(f"🤖 [{request_id}] Calling ai_gen()...")
+        result = await execute_sql_long(config, warehouse_id, ai_sql, request_id, timeout_minutes=2)
+        
+        if not result or not result.get("data_array") or not result["data_array"][0]:
+            print(f"❌ [{request_id}] No response from ai_gen")
+            raise HTTPException(status_code=500, detail="AI did not return a response")
+        
+        ai_response = result["data_array"][0][0]
+        print(f"📤 [{request_id}] AI Response: {ai_response[:200]}...")
+        
+        # Parse JSON from response
+        import json
+        try:
+            # Try to extract JSON from the response (AI might add extra text)
+            json_start = ai_response.find('{')
+            json_end = ai_response.rfind('}') + 1
+            if json_start >= 0 and json_end > json_start:
+                json_str = ai_response[json_start:json_end]
+                config_data = json.loads(json_str)
+            else:
+                raise ValueError("No JSON found in response")
+            
+            # Validate required base fields
+            required_fields = ["primary_color", "text_color", "success_color", "accent_color"]
+            for field in required_fields:
+                if field not in config_data:
+                    raise ValueError(f"Missing field: {field}")
+                # Validate hex color format
+                color = config_data[field]
+                if not color.startswith('#') or len(color) != 7:
+                    raise ValueError(f"Invalid color format for {field}: {color}")
+            
+            # Helper function to generate light tint from a color
+            def hex_to_rgb(hex_color):
+                hex_color = hex_color.lstrip('#')
+                return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+            
+            def rgb_to_hex(rgb):
+                return '#{:02x}{:02x}{:02x}'.format(*rgb)
+            
+            def lighten_color(hex_color, factor):
+                """Create a lighter version of a color (factor 0.95 = very light, 0.9 = light)"""
+                r, g, b = hex_to_rgb(hex_color)
+                # Mix with white
+                new_r = int(r + (255 - r) * factor)
+                new_g = int(g + (255 - g) * factor)
+                new_b = int(b + (255 - b) * factor)
+                return rgb_to_hex((new_r, new_g, new_b))
+            
+            # Generate derived colors if not provided by AI
+            derived_colors = {
+                'primary_light': ('primary_color', 0.92),
+                'primary_lighter': ('primary_color', 0.85),
+                'success_light': ('success_color', 0.92),
+                'success_lighter': ('success_color', 0.85),
+                'accent_light': ('accent_color', 0.92),
+                'accent_lighter': ('accent_color', 0.85),
+            }
+            
+            for derived_key, (base_key, factor) in derived_colors.items():
+                if derived_key not in config_data or not config_data[derived_key].startswith('#'):
+                    config_data[derived_key] = lighten_color(config_data[base_key], factor)
+                    print(f"   Generated {derived_key} from {base_key}")
+            
+            # Add warning colors if not provided
+            if 'warning_color' not in config_data or not config_data['warning_color'].startswith('#'):
+                config_data['warning_color'] = '#F59E0B'  # Amber-500
+            if 'warning_light' not in config_data or not config_data['warning_light'].startswith('#'):
+                config_data['warning_light'] = lighten_color(config_data['warning_color'], 0.92)
+            
+            print(f"✅ [{request_id}] Successfully parsed config with full palette:")
+            for key, value in config_data.items():
+                print(f"   {key}: {value}")
+            
+            return {
+                "success": True,
+                "config": config_data,
+                "company": request.company_name
+            }
+            
+        except (json.JSONDecodeError, ValueError) as e:
+            print(f"⚠️ [{request_id}] Failed to parse AI response: {str(e)}")
+            print(f"   Raw response: {ai_response}")
+            
+            # Return a fallback with the raw response for debugging
+            return {
+                "success": False,
+                "error": f"Failed to parse AI response: {str(e)}",
+                "raw_response": ai_response
+            }
         
     except HTTPException:
         raise

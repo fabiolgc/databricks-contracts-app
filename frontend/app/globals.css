@@ -3,10 +3,28 @@
 :root {
   --background: #ffffff;
   --foreground: #1B1B1D;
-  --databricks-red: #FF3621;
-  --databricks-dark: #1B1B1D;
-  --databricks-teal: #00A972;
-  --databricks-blue: #1857B6;
+  
+  /* Theme colors - updated by ThemeProvider */
+  --color-primary: #FF3621;
+  --color-text: #1B1B1D;
+  --color-success: #00A972;
+  --color-accent: #1857B6;
+  
+  /* Derived colors - lighter versions for backgrounds */
+  --color-primary-light: #FFEBE8;
+  --color-primary-lighter: #FFD5CF;
+  --color-success-light: #E6F7F1;
+  --color-success-lighter: #CCF0E3;
+  --color-accent-light: #E8EEF7;
+  --color-accent-lighter: #D1DEEF;
+  --color-warning: #F59E0B;
+  --color-warning-light: #FEF3C7;
+  
+  /* Legacy aliases */
+  --databricks-red: var(--color-primary);
+  --databricks-dark: var(--color-text);
+  --databricks-teal: var(--color-success);
+  --databricks-blue: var(--color-accent);
 }
 
 @theme inline {
@@ -15,11 +33,11 @@
   --font-sans: var(--font-dm-sans);
   --font-mono: var(--font-dm-mono);
   
-  /* Databricks colors */
-  --color-databricks-red: var(--databricks-red);
-  --color-databricks-dark: var(--databricks-dark);
-  --color-databricks-teal: var(--databricks-teal);
-  --color-databricks-blue: var(--databricks-blue);
+  /* Theme colors for Tailwind */
+  --color-databricks-red: var(--color-primary);
+  --color-databricks-dark: var(--color-text);
+  --color-databricks-teal: var(--color-success);
+  --color-databricks-blue: var(--color-accent);
 }
 
 body {

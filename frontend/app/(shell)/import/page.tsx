@@ -232,9 +232,9 @@ export default function ImportPage() {
           filesWithStatus.forEach(file => {
             const element = document.querySelector(`[data-file-id="${file.id}"]`)
             if (element) {
-              element.classList.add('animate-pulse', 'bg-green-50')
+              element.classList.add('animate-pulse', 'bg-[var(--color-success-light)]')
               setTimeout(() => {
-                element.classList.remove('animate-pulse', 'bg-green-50')
+                element.classList.remove('animate-pulse', 'bg-[var(--color-success-light)]')
               }, 1500)
             }
           })
@@ -630,25 +630,25 @@ export default function ImportPage() {
       {showOverwriteDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="bg-white rounded-xl shadow-2xl p-6 max-w-md w-full">
-            <h3 className="text-xl font-bold text-[#1B1B1D] mb-2">
+            <h3 className="text-xl font-bold text-[var(--color-text)] mb-2">
               {t("import.overwrite.title")}
             </h3>
             <p className="text-base text-gray-600 mb-2">
               {t("import.overwrite.message", { fileName: "" }).split('"{fileName}"')[0]}
             </p>
-            <p className="text-sm font-medium text-[#1B1B1D] bg-gray-50 p-3 rounded-lg mb-4 break-words">
+            <p className="text-sm font-medium text-[var(--color-text)] bg-gray-50 p-3 rounded-lg mb-4 break-words">
               {currentConflictFile}
             </p>
             <div className="flex flex-col gap-2">
               <button
                 onClick={() => handleOverwriteDecision("overwrite_all")}
-                className="w-full px-4 py-2.5 text-sm font-medium text-white bg-[#FF3621] rounded-lg hover:bg-[#FF3621]/90 transition-colors"
+                className="w-full px-4 py-2.5 text-sm font-medium text-white bg-[var(--color-primary)] rounded-lg hover:bg-[var(--color-primary)]/90 transition-colors"
               >
                 {t("import.overwrite.overwriteAll")}
               </button>
               <button
                 onClick={() => handleOverwriteDecision("overwrite")}
-                className="w-full px-4 py-2.5 text-sm font-medium text-[#FF3621] bg-red-50 rounded-lg hover:bg-red-100 transition-colors"
+                className="w-full px-4 py-2.5 text-sm font-medium text-[var(--color-primary)] bg-[var(--color-primary-light)] rounded-lg hover:bg-[var(--color-primary-lighter)] transition-colors"
               >
                 {t("import.overwrite.overwriteThis")}
               </button>
@@ -676,16 +676,16 @@ export default function ImportPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="bg-white rounded-xl shadow-2xl p-6 max-w-md w-full">
             <div className="flex items-center gap-3 mb-4">
-              <div className="p-2 bg-red-100 rounded-full">
-                <Trash2 className="h-6 w-6 text-red-600" />
+              <div className="p-2 bg-[var(--color-primary-lighter)] rounded-full">
+                <Trash2 className="h-6 w-6 text-[var(--color-primary)]" />
               </div>
-              <h3 className="text-xl font-bold text-[#1B1B1D]">
+              <h3 className="text-xl font-bold text-[var(--color-text)]">
                 {t("prepare.delete.title")}
               </h3>
             </div>
             
-            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4">
-              <p className="text-sm text-amber-800 font-medium">
+            <div className="bg-[var(--color-warning-light)] border border-[var(--color-warning)] rounded-lg p-3 mb-4">
+              <p className="text-sm text-[var(--color-warning)] font-medium">
                 ⚠️ {t("common.warning")}
               </p>
             </div>
@@ -698,7 +698,7 @@ export default function ImportPage() {
               <button
                 onClick={deleteVolumeFiles}
                 disabled={isDeleting}
-                className="w-full px-4 py-2.5 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                className="w-full px-4 py-2.5 text-sm font-medium text-white bg-[var(--color-primary)] rounded-lg hover:opacity-90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 {isDeleting ? (
                   <>
@@ -726,26 +726,31 @@ export default function ImportPage() {
 
       <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold text-[#1B1B1D]">{t("import.title")}</h1>
+        <h1 className="text-3xl font-bold text-[var(--color-text)]">{t("import.title")}</h1>
         <p className="mt-2 text-base text-gray-600">
           {t("import.subtitle")}
         </p>
       </div>
 
       {/* Table Configuration Section */}
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+      <div className={`bg-white rounded-xl border shadow-sm overflow-hidden transition-all ${
+        showConfig ? 'border-[var(--color-primary)]' : 'border-gray-200'
+      }`}>
         <button
           onClick={() => setShowConfig(!showConfig)}
           className="w-full px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between hover:bg-gray-100 transition-colors"
         >
           <div className="flex items-center gap-2">
-            <Database className="h-5 w-5 text-[#FF3621]" />
-            <h2 className="text-lg font-semibold text-[#1B1B1D]">{t("import.whereToSave")}</h2>
+            {isConfigSaved ? (
+              <CheckCircle2 className="h-5 w-5 text-[var(--color-success)]" />
+            ) : (
+              <Database className="h-5 w-5 text-[var(--color-primary)]" />
+            )}
+            <h2 className="text-lg font-semibold text-[var(--color-text)]">{t("import.whereToSave")}</h2>
           </div>
           <div className="flex items-center gap-2">
             {isConfigSaved && (
-              <span className="flex items-center gap-1 text-sm text-[#00A972]">
-                <CheckCircle2 className="h-4 w-4" />
+              <span className="text-sm text-[var(--color-success)]">
                 {t("import.configured")}
               </span>
             )}
@@ -771,7 +776,7 @@ export default function ImportPage() {
                     setIsConfigSaved(false)
                   }}
                   placeholder={t("import.placeholder.catalog")}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#FF3621]/20 focus:border-[#FF3621]"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
                 />
               </div>
               <div>
@@ -786,7 +791,7 @@ export default function ImportPage() {
                     setIsConfigSaved(false)
                   }}
                   placeholder={t("import.placeholder.schema")}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#FF3621]/20 focus:border-[#FF3621]"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
                 />
               </div>
               <div>
@@ -801,17 +806,17 @@ export default function ImportPage() {
                     setIsConfigSaved(false)
                   }}
                   placeholder={t("import.placeholder.tableName")}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#FF3621]/20 focus:border-[#FF3621]"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
                 />
               </div>
             </div>
 
             {/* Preview das tabelas que serão criadas */}
             {tableConfig.tableName && (
-              <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                <p className="text-xs font-medium text-blue-800 mb-2">{t("import.tableToCreate")}</p>
+              <div className="mt-3 p-3 bg-[var(--color-accent-light)] border border-[var(--color-accent-lighter)] rounded-lg">
+                <p className="text-xs font-medium text-[var(--color-accent)] mb-2">{t("import.tableToCreate")}</p>
                 <div className="flex flex-wrap gap-2">
-                  <code className="bg-blue-100 text-blue-900 px-2 py-1 rounded text-xs font-mono">
+                  <code className="bg-[var(--color-accent-lighter)] text-[var(--color-accent)] px-2 py-1 rounded text-xs font-mono">
                     {tableConfig.catalog || "catalog"}.{tableConfig.schema || "schema"}.{tableConfig.tableName}_raw
                   </code>
                 </div>
@@ -833,14 +838,14 @@ export default function ImportPage() {
                   <button
                     onClick={saveTableConfig}
                     disabled={!tableConfig.catalog || !tableConfig.schema || !tableConfig.tableName}
-                    className="px-4 py-2 text-sm font-medium text-white bg-[#FF3621] rounded-lg hover:bg-[#FF3621]/90 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    className="px-4 py-2 text-sm font-medium text-white bg-[var(--color-primary)] rounded-lg hover:bg-[var(--color-primary)]/90 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                   >
                     <Check className="h-4 w-4" />
                     {t("common.verifySave")}
                   </button>
                 </>
               ) : (
-                <span className="flex items-center gap-2 text-sm text-[#00A972]">
+                <span className="flex items-center gap-2 text-sm text-[var(--color-success)]">
                   <CheckCircle2 className="h-4 w-4" />
                   {t("import.configSaved")}
                 </span>
@@ -851,14 +856,16 @@ export default function ImportPage() {
       </div>
 
       {/* Volume Management Section */}
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+      <div className={`bg-white rounded-xl border shadow-sm overflow-hidden transition-all ${
+        showVolumeManager ? 'border-[var(--color-primary)]' : 'border-gray-200'
+      }`}>
         <button
           onClick={() => setShowVolumeManager(!showVolumeManager)}
           className="w-full px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between hover:bg-gray-100 transition-colors"
         >
           <div className="flex items-center gap-2">
-            <FolderOpen className="h-5 w-5 text-[#FF3621]" />
-            <h2 className="text-lg font-semibold text-[#1B1B1D]">{t("import.manageDatabricksFolder")}</h2>
+            <FolderOpen className="h-5 w-5 text-[var(--color-primary)]" />
+            <h2 className="text-lg font-semibold text-[var(--color-text)]">{t("import.manageDatabricksFolder")}</h2>
           </div>
           <div className="flex items-center gap-2">
             {volumeFilesTotal > 0 && (
@@ -880,7 +887,7 @@ export default function ImportPage() {
             {volumeFiles.length === 0 && !volumeFilesLoading && (
               <button
                 onClick={() => loadVolumeFiles(1)}
-                className="px-4 py-2 text-sm font-medium text-[#FF3621] bg-red-50 border border-[#FF3621]/30 rounded-lg hover:bg-red-100 transition-colors flex items-center gap-2"
+                className="px-4 py-2 text-sm font-medium text-[var(--color-primary)] bg-[var(--color-primary-light)] border border-[var(--color-primary)]/30 rounded-lg hover:bg-[var(--color-primary-lighter)] transition-colors flex items-center gap-2"
               >
                 <RefreshCw className="h-4 w-4" />
                 {t("import.loadExistingFiles")}
@@ -890,7 +897,7 @@ export default function ImportPage() {
             {/* Loading State */}
             {volumeFilesLoading && (
               <div className="flex items-center justify-center py-8">
-                <Loader2 className="h-6 w-6 text-[#FF3621] animate-spin" />
+                <Loader2 className="h-6 w-6 text-[var(--color-primary)] animate-spin" />
                 <span className="ml-2 text-sm text-gray-600">{t("common.loading")}</span>
               </div>
             )}
@@ -919,7 +926,7 @@ export default function ImportPage() {
                         setShowDeleteConfirm(true)
                       }}
                       disabled={selectedVolumeFiles.size === 0}
-                      className="px-3 py-1.5 text-sm font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                      className="px-3 py-1.5 text-sm font-medium text-[var(--color-primary)] bg-[var(--color-primary-light)] border border-[var(--color-primary-lighter)] rounded-lg hover:bg-[var(--color-primary-lighter)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
                     >
                       <Trash2 className="h-4 w-4" />
                       {t("prepare.step2.removeSelected")}
@@ -929,7 +936,7 @@ export default function ImportPage() {
                         setDeleteMode("all")
                         setShowDeleteConfirm(true)
                       }}
-                      className="px-3 py-1.5 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors flex items-center gap-1"
+                      className="px-3 py-1.5 text-sm font-medium text-white bg-[var(--color-primary)] rounded-lg hover:opacity-90 transition-colors flex items-center gap-1"
                     >
                       <Trash2 className="h-4 w-4" />
                       {t("prepare.step2.removeAll")}
@@ -947,7 +954,7 @@ export default function ImportPage() {
                             type="checkbox"
                             checked={selectedVolumeFiles.size === volumeFiles.length && volumeFiles.length > 0}
                             onChange={toggleAllVolumeFiles}
-                            className="rounded border-gray-300 text-[#FF3621] focus:ring-[#FF3621]"
+                            className="rounded border-gray-300 text-[var(--color-primary)] focus:ring-[var(--color-primary)]"
                           />
                         </th>
                         <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">{t("common.files")}</th>
@@ -958,22 +965,22 @@ export default function ImportPage() {
                       {volumeFiles.map((file) => (
                         <tr 
                           key={file.name} 
-                          className={`hover:bg-gray-50 transition-colors ${selectedVolumeFiles.has(file.name) ? 'bg-red-50' : ''}`}
+                          className={`hover:bg-gray-50 transition-colors ${selectedVolumeFiles.has(file.name) ? 'bg-[var(--color-primary-light)]' : ''}`}
                         >
                           <td className="px-4 py-3">
                             <input
                               type="checkbox"
                               checked={selectedVolumeFiles.has(file.name)}
                               onChange={() => toggleVolumeFileSelection(file.name)}
-                              className="rounded border-gray-300 text-[#FF3621] focus:ring-[#FF3621]"
+                              className="rounded border-gray-300 text-[var(--color-primary)] focus:ring-[var(--color-primary)]"
                             />
                           </td>
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-2">
-                              <svg className="h-4 w-4 text-[#FF3621]" fill="currentColor" viewBox="0 0 20 20">
+                              <svg className="h-4 w-4 text-[var(--color-primary)]" fill="currentColor" viewBox="0 0 20 20">
                                 <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" />
                               </svg>
-                              <span className="text-sm text-[#1B1B1D] truncate max-w-md" title={file.name}>
+                              <span className="text-sm text-[var(--color-text)] truncate max-w-md" title={file.name}>
                                 {file.name}
                               </span>
                             </div>
@@ -1038,14 +1045,14 @@ export default function ImportPage() {
             border-2 border-dashed rounded-xl p-12 text-center
             transition-all duration-200 cursor-pointer block
             ${isDragging 
-              ? "border-[#FF3621] bg-red-50 shadow-sm" 
-              : "border-gray-300 hover:border-[#FF3621]/50 hover:bg-gray-50"
+              ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] shadow-sm" 
+              : "border-gray-300 hover:border-[var(--color-primary)]/50 hover:bg-gray-50"
             }
           `}
         >
           <Upload className="mx-auto h-12 w-12 text-gray-400" />
           <div className="mt-4">
-            <span className="text-base text-[#FF3621] hover:text-[#FF3621]/80 font-medium">
+            <span className="text-base text-[var(--color-primary)] hover:text-[var(--color-primary)]/80 font-medium">
               {t("import.uploadArea.subtitle")}
             </span>
             <span className="text-base text-gray-600"> {t("import.uploadArea.title").toLowerCase()}</span>
@@ -1076,7 +1083,7 @@ export default function ImportPage() {
             {!isUploading && (
               <div className="flex justify-center">
                 <label htmlFor="file-upload-more" className="cursor-pointer">
-                  <div className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-[#FF3621] bg-red-50 border border-[#FF3621]/30 rounded-lg hover:bg-red-100 transition-colors">
+                  <div className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-[var(--color-primary)] bg-[var(--color-primary-light)] border border-[var(--color-primary)]/30 rounded-lg hover:bg-[var(--color-primary-lighter)] transition-colors">
                     <Upload className="h-4 w-4" />
                     {t("import.uploadArea.subtitle")}
                   </div>
@@ -1095,8 +1102,8 @@ export default function ImportPage() {
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
               <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <FileStack className="h-5 w-5 text-[#FF3621]" />
-                <h3 className="text-lg font-semibold text-[#1B1B1D]">
+                <FileStack className="h-5 w-5 text-[var(--color-primary)]" />
+                <h3 className="text-lg font-semibold text-[var(--color-text)]">
                   {t("import.fileList.title")} ({files.length})
                 </h3>
               </div>
@@ -1136,21 +1143,21 @@ export default function ImportPage() {
                     {/* Status Icon */}
                     <div className="flex-shrink-0">
                       {file.status === "pending" && (
-                        <svg className="h-5 w-5 text-[#FF3621]" fill="currentColor" viewBox="0 0 20 20">
+                        <svg className="h-5 w-5 text-[var(--color-primary)]" fill="currentColor" viewBox="0 0 20 20">
                           <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" />
                         </svg>
                       )}
                       {file.status === "uploading" && (
-                        <Loader2 className="h-5 w-5 text-[#FF3621] animate-spin" />
+                        <Loader2 className="h-5 w-5 text-[var(--color-primary)] animate-spin" />
                       )}
                       {file.status === "extracting" && (
-                        <Loader2 className="h-5 w-5 text-blue-500 animate-spin" />
+                        <Loader2 className="h-5 w-5 text-[var(--color-accent)] animate-spin" />
                       )}
                       {file.status === "success" && (
-                        <CheckCircle2 className="h-5 w-5 text-[#00A972]" />
+                        <CheckCircle2 className="h-5 w-5 text-[var(--color-success)]" />
                       )}
                       {file.status === "error" && (
-                        <XCircle className="h-5 w-5 text-red-600" />
+                        <XCircle className="h-5 w-5 text-[var(--color-primary)]" />
                       )}
                       {file.status === "skipped" && (
                         <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1161,7 +1168,7 @@ export default function ImportPage() {
 
                     {/* File Info */}
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-[#1B1B1D] truncate">
+                      <p className="text-sm font-medium text-[var(--color-text)] truncate">
                         {file.name}
                       </p>
                       <div className="flex items-center gap-2 flex-wrap">
@@ -1170,9 +1177,9 @@ export default function ImportPage() {
                         </p>
                         {file.status === "uploading" && (
                           <span className="text-xs flex items-center gap-1.5">
-                            <span className="text-[#FF3621]">{t("import.fileList.importing")}...</span>
+                            <span className="text-[var(--color-primary)]">{t("import.fileList.importing")}...</span>
                             <span className="font-mono text-[10px] flex items-center gap-0.5">
-                              <span className="bg-red-100 text-red-600 px-1 py-0.5 rounded">
+                              <span className="bg-[var(--color-primary-lighter)] text-[var(--color-primary)] px-1 py-0.5 rounded">
                                 {formatElapsedTime(file.uploadDuration || 0)}
                               </span>
                             </span>
@@ -1180,13 +1187,13 @@ export default function ImportPage() {
                         )}
                         {file.status === "extracting" && (
                           <span className="text-xs flex items-center gap-1.5">
-                            <span className="text-blue-500">{t("common.processing")}...</span>
+                            <span className="text-[var(--color-accent)]">{t("common.processing")}...</span>
                             <span className="font-mono text-[10px] flex items-center gap-0.5">
-                              <span className="bg-red-100 text-red-600 px-1 py-0.5 rounded">
+                              <span className="bg-[var(--color-primary-lighter)] text-[var(--color-primary)] px-1 py-0.5 rounded">
                                 {formatElapsedTime(file.uploadDuration || 0)}
                               </span>
                               <span className="text-gray-400">|</span>
-                              <span className="bg-blue-100 text-blue-600 px-1 py-0.5 rounded">
+                              <span className="bg-[var(--color-accent-lighter)] text-[var(--color-accent)] px-1 py-0.5 rounded">
                                 {formatElapsedTime(file.extractDuration || 0)}
                               </span>
                             </span>
@@ -1194,19 +1201,19 @@ export default function ImportPage() {
                         )}
                         {file.status === "success" && (
                           <span className="text-xs flex items-center gap-1.5">
-                            <span className="text-[#00A972]">
+                            <span className="text-[var(--color-success)]">
                               ✓ {file.textLength?.toLocaleString() || 0} chars • {file.pageCount || 0} pgs
                             </span>
                             <span className="font-mono text-[10px] flex items-center gap-0.5">
-                              <span className="bg-red-100 text-red-600 px-1 py-0.5 rounded">
+                              <span className="bg-[var(--color-primary-lighter)] text-[var(--color-primary)] px-1 py-0.5 rounded">
                                 {formatElapsedTime(file.uploadDuration || 0)}
                               </span>
                               <span className="text-gray-400">|</span>
-                              <span className="bg-blue-100 text-blue-600 px-1 py-0.5 rounded">
+                              <span className="bg-[var(--color-accent-lighter)] text-[var(--color-accent)] px-1 py-0.5 rounded">
                                 {formatElapsedTime(file.extractDuration || 0)}
                               </span>
                               <span className="text-gray-400">|</span>
-                              <span className="bg-green-100 text-green-600 px-1 py-0.5 rounded">
+                              <span className="bg-[var(--color-success-lighter)] text-[var(--color-success)] px-1 py-0.5 rounded">
                                 {formatElapsedTime(file.totalDuration || 0)}
                               </span>
                             </span>
@@ -1214,18 +1221,18 @@ export default function ImportPage() {
                         )}
                         {file.status === "error" && (
                           <span className="text-xs flex items-center gap-1.5">
-                            <span className="text-red-600">✕ {file.error || t("common.error")}</span>
+                            <span className="text-[var(--color-primary)]">✕ {file.error || t("common.error")}</span>
                             {(file.uploadDuration || file.extractDuration) && (
                               <span className="font-mono text-[10px] flex items-center gap-0.5">
                                 {file.uploadDuration !== undefined && (
-                                  <span className="bg-red-100 text-red-600 px-1 py-0.5 rounded">
+                                  <span className="bg-[var(--color-primary-lighter)] text-[var(--color-primary)] px-1 py-0.5 rounded">
                                     {formatElapsedTime(file.uploadDuration)}
                                   </span>
                                 )}
                                 {file.extractDuration !== undefined && (
                                   <>
                                     <span className="text-gray-400">|</span>
-                                    <span className="bg-blue-100 text-blue-600 px-1 py-0.5 rounded">
+                                    <span className="bg-[var(--color-accent-lighter)] text-[var(--color-accent)] px-1 py-0.5 rounded">
                                       {formatElapsedTime(file.extractDuration)}
                                     </span>
                                   </>
@@ -1256,7 +1263,7 @@ export default function ImportPage() {
                           return newFiles
                         })
                       }}
-                      className="text-[#FF3621] hover:text-[#FF3621]/80 text-sm font-medium transition-colors ml-4"
+                      className="text-[var(--color-primary)] hover:text-[var(--color-primary)]/80 text-sm font-medium transition-colors ml-4"
                     >
                       {t("common.remove")}
                     </button>
@@ -1275,21 +1282,21 @@ export default function ImportPage() {
                 <div className="px-4 py-2 bg-gray-100 border-t border-gray-200 flex items-center justify-end gap-4 text-[10px] font-mono">
                   <span className="text-gray-500 text-xs">Total:</span>
                   <span className="flex items-center gap-1">
-                    <span className="bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-semibold">
+                    <span className="bg-[var(--color-primary-lighter)] text-[var(--color-primary)] px-1.5 py-0.5 rounded font-semibold">
                       {formatElapsedTime(totalUpload)}
                     </span>
                     <span className="text-gray-500">Upload</span>
                   </span>
                   <span className="text-gray-400">|</span>
                   <span className="flex items-center gap-1">
-                    <span className="bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded font-semibold">
+                    <span className="bg-[var(--color-accent-lighter)] text-[var(--color-accent)] px-1.5 py-0.5 rounded font-semibold">
                       {formatElapsedTime(totalExtract)}
                     </span>
                     <span className="text-gray-500">Extract</span>
                   </span>
                   <span className="text-gray-400">|</span>
                   <span className="flex items-center gap-1">
-                    <span className="bg-green-100 text-green-600 px-1.5 py-0.5 rounded font-semibold">
+                    <span className="bg-[var(--color-success-lighter)] text-[var(--color-success)] px-1.5 py-0.5 rounded font-semibold">
                       {formatElapsedTime(totalTime)}
                     </span>
                     <span className="text-gray-500">Total</span>
@@ -1304,7 +1311,7 @@ export default function ImportPage() {
                     setFiles([])
                     setCurrentPage(1)
                   }}
-                  className="px-4 py-2 text-sm font-medium text-white bg-[#00A972] rounded-lg hover:bg-[#00A972]/90 transition-colors shadow-sm flex items-center gap-2"
+                  className="px-4 py-2 text-sm font-medium text-white bg-[var(--color-success)] rounded-lg hover:bg-[var(--color-success)]/90 transition-colors shadow-sm flex items-center gap-2"
                 >
                   <CheckCircle2 className="h-4 w-4" />
                   {t("import.fileList.completed")}
@@ -1329,7 +1336,7 @@ export default function ImportPage() {
                       <button
                         onClick={handleImport}
                         disabled={isUploading || hasNoPending}
-                        className="px-4 py-2 text-sm font-medium text-white bg-[#FF3621] rounded-lg hover:bg-[#FF3621]/90 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                        className="px-4 py-2 text-sm font-medium text-white bg-[var(--color-primary)] rounded-lg hover:bg-[var(--color-primary)]/90 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                       >
                         {isUploading && <Loader2 className="h-4 w-4 animate-spin" />}
                         {isUploading

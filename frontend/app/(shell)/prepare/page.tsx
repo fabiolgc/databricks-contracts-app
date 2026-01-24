@@ -921,7 +921,7 @@ export default function PreparePage() {
             {/* Header */}
             <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
               <div>
-                <h3 className="text-xl font-bold text-[#1B1B1D]">
+                <h3 className="text-xl font-bold text-[var(--color-text)]">
                   {t("prepare.preview.title")}
                 </h3>
                 <p className="text-sm text-gray-600">
@@ -944,7 +944,7 @@ export default function PreparePage() {
                   <select
                     value={selectedStrategy}
                     onChange={(e) => setSelectedStrategy(e.target.value)}
-                    className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FF3621]/20 focus:border-[#FF3621]"
+                    className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
                   >
                     {CHUNKING_STRATEGIES.map((s) => (
                       <option key={s.id} value={s.id}>{s.name}</option>
@@ -963,7 +963,7 @@ export default function PreparePage() {
                         min={100}
                         max={4000}
                         step={100}
-                        className="w-20 px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FF3621]/20 focus:border-[#FF3621]"
+                        className="w-20 px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
                       />
                     </div>
                     <div className="flex items-center gap-2">
@@ -975,7 +975,7 @@ export default function PreparePage() {
                         min={0}
                         max={500}
                         step={50}
-                        className="w-20 px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FF3621]/20 focus:border-[#FF3621]"
+                        className="w-20 px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
                       />
                     </div>
                   </>
@@ -988,7 +988,7 @@ export default function PreparePage() {
                     loadChunkingPreview()
                   }}
                   disabled={isLoadingChunkPreview}
-                  className="px-4 py-1.5 text-sm font-medium text-white bg-[#FF3621] rounded-lg hover:bg-[#FF3621]/90 transition-colors disabled:opacity-50 flex items-center gap-2"
+                  className="px-4 py-1.5 text-sm font-medium text-white bg-[var(--color-primary)] rounded-lg hover:bg-[var(--color-primary)]/90 transition-colors disabled:opacity-50 flex items-center gap-2"
                 >
                   {isLoadingChunkPreview ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -1014,7 +1014,7 @@ export default function PreparePage() {
                       }}
                       className={`px-3 py-1.5 text-xs font-medium rounded-full transition-colors ${
                         previewDocIndex === idx
-                          ? "bg-[#FF3621] text-white"
+                          ? "bg-[var(--color-primary)] text-white"
                           : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-100"
                       }`}
                     >
@@ -1064,7 +1064,7 @@ export default function PreparePage() {
               {chunkPreviewData[previewDocIndex] && (
                 <div className="bg-gray-50 rounded-lg border border-gray-200 h-full flex flex-col">
                   <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
-                    <span className="text-sm font-medium text-[#FF3621]">
+                    <span className="text-sm font-medium text-[var(--color-primary)]">
                       Segmento #{previewChunkIndex + 1}
                     </span>
                     <span className="text-sm text-gray-500">
@@ -1096,7 +1096,7 @@ export default function PreparePage() {
                     setShowProcessConfirmModal(true)
                   }}
                   disabled={processingStatus.status === "processing"}
-                  className="px-6 py-2 text-sm font-medium text-white bg-[#FF3621] rounded-lg hover:bg-[#FF3621]/90 transition-colors shadow-sm disabled:opacity-50 flex items-center gap-2"
+                  className="px-6 py-2 text-sm font-medium text-white bg-[var(--color-primary)] rounded-lg hover:bg-[var(--color-primary)]/90 transition-colors shadow-sm disabled:opacity-50 flex items-center gap-2"
                 >
                   <Play className="h-4 w-4" />
                   {t("prepare.step3.confirmProcess")}
@@ -1114,7 +1114,7 @@ export default function PreparePage() {
             {/* Header */}
             <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
               <div>
-                <h3 className="text-xl font-bold text-[#1B1B1D]">
+                <h3 className="text-xl font-bold text-[var(--color-text)]">
                   {t("prepare.preview.generatedTitle")}
                 </h3>
                 <p className="text-sm text-gray-600">
@@ -1143,7 +1143,7 @@ export default function PreparePage() {
                       }}
                       className={`px-3 py-1.5 text-xs font-medium rounded-full transition-colors ${
                         existingDocIndex === idx
-                          ? "bg-[#FF3621] text-white"
+                          ? "bg-[var(--color-primary)] text-white"
                           : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-100"
                       }`}
                       title={docName}
@@ -1188,7 +1188,7 @@ export default function PreparePage() {
               {currentExistingChunk ? (
                 <div className="bg-gray-50 rounded-lg border border-gray-200 h-full flex flex-col">
                   <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
-                    <span className="text-sm font-medium text-[#FF3621]">
+                    <span className="text-sm font-medium text-[var(--color-primary)]">
                       Segmento #{existingChunkIndex + 1}
                     </span>
                     <span className="text-sm text-gray-500">
@@ -1226,7 +1226,7 @@ export default function PreparePage() {
       <div className="space-y-6">
         {/* Header */}
         <div>
-          <h1 className="text-3xl font-bold text-[#1B1B1D]">{t("prepare.title")}</h1>
+          <h1 className="text-3xl font-bold text-[var(--color-text)]">{t("prepare.title")}</h1>
           <p className="mt-2 text-base text-gray-600">
             {t("prepare.subtitle")}
           </p>
@@ -1234,7 +1234,7 @@ export default function PreparePage() {
 
         {/* Step 1: Table Configuration */}
         <div className={`bg-white rounded-xl border shadow-sm overflow-hidden transition-all ${
-          activeStep === 1 ? 'border-[#FF3621]' : 'border-gray-200'
+          activeStep === 1 ? 'border-[var(--color-primary)]' : 'border-gray-200'
         }`}>
           <button
             onClick={() => setActiveStep(activeStep === 1 ? null : 1)}
@@ -1242,15 +1242,15 @@ export default function PreparePage() {
           >
             <div className="flex items-center gap-2">
               {completedSteps.has(1) ? (
-                <CheckCircle2 className="h-5 w-5 text-[#00A972]" />
+                <CheckCircle2 className="h-5 w-5 text-[var(--color-success)]" />
               ) : (
-                <Database className="h-5 w-5 text-[#FF3621]" />
+                <Database className="h-5 w-5 text-[var(--color-primary)]" />
               )}
-              <h2 className="text-lg font-semibold text-[#1B1B1D]">{t("prepare.step1.title")}</h2>
+              <h2 className="text-lg font-semibold text-[var(--color-text)]">{t("prepare.step1.title")}</h2>
             </div>
             <div className="flex items-center gap-2">
               {completedSteps.has(1) && (
-                <span className="text-sm text-[#00A972]">{t("prepare.step2.completed")}</span>
+                <span className="text-sm text-[var(--color-success)]">{t("prepare.step2.completed")}</span>
               )}
               <ChevronRight className={`h-5 w-5 text-gray-400 transition-transform ${activeStep === 1 ? 'rotate-90' : ''}`} />
             </div>
@@ -1272,7 +1272,7 @@ export default function PreparePage() {
                       setCompletedSteps(prev => { const newSet = new Set(prev); newSet.delete(1); return newSet })
                     }}
                     placeholder="ex: fabio_goncalves"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#FF3621]/20 focus:border-[#FF3621]"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
                   />
                 </div>
                 <div>
@@ -1288,7 +1288,7 @@ export default function PreparePage() {
                       setCompletedSteps(prev => { const newSet = new Set(prev); newSet.delete(1); return newSet })
                     }}
                     placeholder="ex: customer_cielo"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#FF3621]/20 focus:border-[#FF3621]"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
                   />
                 </div>
                 <div>
@@ -1304,24 +1304,24 @@ export default function PreparePage() {
                       setCompletedSteps(prev => { const newSet = new Set(prev); newSet.delete(1); return newSet })
                     }}
                     placeholder="ex: contracts"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#FF3621]/20 focus:border-[#FF3621]"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
                   />
                 </div>
               </div>
 
               {/* Preview das tabelas que serão criadas/usadas */}
               {tableConfig.tableName && (
-                <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <div className="mt-3 p-3 bg-[var(--color-accent-light)] border border-[var(--color-accent-lighter)] rounded-lg">
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <p className="text-xs font-medium text-blue-800 mb-1">Tabela que será criada:</p>
-                      <code className="bg-blue-100 text-blue-900 px-2 py-1 rounded text-xs font-mono">
+                      <p className="text-xs font-medium text-[var(--color-accent)] mb-1">Tabela que será criada:</p>
+                      <code className="bg-[var(--color-accent-lighter)] text-[var(--color-accent)] px-2 py-1 rounded text-xs font-mono">
                         {tableConfig.catalog || "catalogo"}.{tableConfig.schema || "schema"}.{tableConfig.tableName}_chunks
                       </code>
                     </div>
                     <div>
-                      <p className="text-xs font-medium text-blue-800 mb-1">Tabela que será utilizada:</p>
-                      <code className="bg-blue-100 text-blue-900 px-2 py-1 rounded text-xs font-mono">
+                      <p className="text-xs font-medium text-[var(--color-accent)] mb-1">Tabela que será utilizada:</p>
+                      <code className="bg-[var(--color-accent-lighter)] text-[var(--color-accent)] px-2 py-1 rounded text-xs font-mono">
                         {initialTableConfig.catalog || "catalogo"}.{initialTableConfig.schema || "schema"}.{initialTableConfig.tableName}_raw
                       </code>
                     </div>
@@ -1332,7 +1332,7 @@ export default function PreparePage() {
               <div className="mt-4 pt-4 border-t border-gray-200 flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   {isConfigSaved && (
-                    <span className="flex items-center gap-2 text-sm text-[#00A972]">
+                    <span className="flex items-center gap-2 text-sm text-[var(--color-success)]">
                       <CheckCircle2 className="h-4 w-4" />
                       {t("prepare.step1.configValid")}
                     </span>
@@ -1356,7 +1356,7 @@ export default function PreparePage() {
                           await checkTableExists()
                         }}
                         disabled={processingStatus.status === "checking" || !tableConfig.catalog || !tableConfig.schema || !tableConfig.tableName}
-                        className="px-4 py-2 text-sm font-medium text-white bg-[#FF3621] rounded-lg hover:bg-[#FF3621]/90 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                        className="px-4 py-2 text-sm font-medium text-white bg-[var(--color-primary)] rounded-lg hover:bg-[var(--color-primary)]/90 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                       >
                         {processingStatus.status === "checking" ? (
                           <Loader2 className="h-4 w-4 animate-spin" />
@@ -1372,7 +1372,7 @@ export default function PreparePage() {
                         setCompletedSteps(prev => new Set([...prev, 1]))
                         setActiveStep(2)
                       }}
-                      className="px-4 py-2 text-sm font-medium text-white bg-[#FF3621] rounded-lg hover:bg-[#FF3621]/90 transition-colors shadow-sm flex items-center gap-2"
+                      className="px-4 py-2 text-sm font-medium text-white bg-[var(--color-primary)] rounded-lg hover:bg-[var(--color-primary)]/90 transition-colors shadow-sm flex items-center gap-2"
                     >
                       {t("common.next")}
                       <ChevronRight className="h-4 w-4" />
@@ -1386,7 +1386,7 @@ export default function PreparePage() {
 
         {/* Step 2: Select Documents from _raw table */}
         <div className={`bg-white rounded-xl border shadow-sm overflow-hidden transition-all ${
-          activeStep === 2 ? 'border-[#FF3621]' : 'border-gray-200'
+          activeStep === 2 ? 'border-[var(--color-primary)]' : 'border-gray-200'
         }`}>
           <button
             onClick={() => setActiveStep(activeStep === 2 ? null : 2)}
@@ -1395,20 +1395,20 @@ export default function PreparePage() {
           >
             <div className="flex items-center gap-2">
               {completedSteps.has(2) ? (
-                <CheckCircle2 className="h-5 w-5 text-[#00A972]" />
+                <CheckCircle2 className="h-5 w-5 text-[var(--color-success)]" />
               ) : (
-                <FileText className="h-5 w-5 text-[#FF3621]" />
+                <FileText className="h-5 w-5 text-[var(--color-primary)]" />
               )}
-              <h2 className="text-lg font-semibold text-[#1B1B1D]">{t("prepare.step2.title")}</h2>
+              <h2 className="text-lg font-semibold text-[var(--color-text)]">{t("prepare.step2.title")}</h2>
             </div>
             <div className="flex items-center gap-3">
               {selectedDocuments.size > 0 && (
-                <span className="text-sm text-[#FF3621] font-medium">
+                <span className="text-sm text-[var(--color-primary)] font-medium">
                   {selectedDocuments.size} selecionado(s)
                 </span>
               )}
               {completedSteps.has(2) && (
-                <span className="text-sm text-[#00A972] font-medium">Concluído</span>
+                <span className="text-sm text-[var(--color-success)] font-medium">Concluído</span>
               )}
               <ChevronRight className={`h-5 w-5 text-gray-400 transition-transform ${activeStep === 2 ? 'rotate-90' : ''}`} />
             </div>
@@ -1423,14 +1423,14 @@ export default function PreparePage() {
                 </div>
               ) : tableNotFound ? (
                 <div className="text-center py-8">
-                  <AlertCircle className="h-12 w-12 text-amber-400 mx-auto mb-3" />
+                  <AlertCircle className="h-12 w-12 text-[var(--color-warning)] mx-auto mb-3" />
                   <p className="text-gray-700 font-medium">Tabela de documentos não encontrada</p>
                   <p className="text-gray-500 text-sm mt-1">
                     Importe documentos primeiro no Módulo 1 (Importar Documentos)
                   </p>
                   <button
                     onClick={() => loadRawDocuments()}
-                    className="mt-3 text-sm text-[#FF3621] hover:text-[#FF3621]/80 font-medium"
+                    className="mt-3 text-sm text-[var(--color-primary)] hover:text-[var(--color-primary)]/80 font-medium"
                   >
                     Tentar novamente
                   </button>
@@ -1441,7 +1441,7 @@ export default function PreparePage() {
                   <p className="text-gray-500">Nenhum documento na tabela</p>
                   <button
                     onClick={() => loadRawDocuments()}
-                    className="mt-3 text-sm text-[#FF3621] hover:text-[#FF3621]/80 font-medium"
+                    className="mt-3 text-sm text-[var(--color-primary)] hover:text-[var(--color-primary)]/80 font-medium"
                   >
                     Carregar documentos
                   </button>
@@ -1455,7 +1455,7 @@ export default function PreparePage() {
                         type="checkbox"
                         checked={rawDocuments.length > 0 && selectedDocuments.size === rawDocuments.length}
                         onChange={selectAllDocuments}
-                        className="w-4 h-4 text-[#FF3621] border-gray-300 rounded focus:ring-[#FF3621]"
+                        className="w-4 h-4 text-[var(--color-primary)] border-gray-300 rounded focus:ring-[var(--color-primary)]"
                       />
                       <span className="text-sm font-medium text-gray-700">
                         Selecionar todos ({rawDocuments.length})
@@ -1470,7 +1470,7 @@ export default function PreparePage() {
                       {selectedDocuments.size > 0 && (
                         <button
                           onClick={() => openDeleteModal(false)}
-                          className="px-2 py-1 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded hover:bg-red-100 transition-colors flex items-center gap-1"
+                          className="px-2 py-1 text-xs font-medium text-red-600 bg-[var(--color-primary-light)] border border-[var(--color-primary-lighter)] rounded hover:bg-[var(--color-primary-lighter)] transition-colors flex items-center gap-1"
                           title={`Remover ${selectedDocuments.size} selecionado(s)`}
                         >
                           <Trash2 className="h-3 w-3" />
@@ -1518,7 +1518,7 @@ export default function PreparePage() {
                         <div
                           key={doc.id}
                           className={`grid grid-cols-12 gap-2 px-4 py-3 items-center transition-colors ${
-                            selectedDocuments.has(doc.id) ? "bg-red-50" : "hover:bg-gray-50"
+                            selectedDocuments.has(doc.id) ? "bg-[var(--color-primary-light)]" : "hover:bg-gray-50"
                           }`}
                         >
                           <div className="col-span-1">
@@ -1526,7 +1526,7 @@ export default function PreparePage() {
                               type="checkbox"
                               checked={selectedDocuments.has(doc.id)}
                               onChange={() => toggleDocumentSelection(doc.id)}
-                              className="w-4 h-4 text-[#FF3621] border-gray-300 rounded focus:ring-[#FF3621]"
+                              className="w-4 h-4 text-[var(--color-primary)] border-gray-300 rounded focus:ring-[var(--color-primary)]"
                             />
                           </div>
                           <div className="col-span-5 flex items-center gap-2 min-w-0">
@@ -1551,8 +1551,8 @@ export default function PreparePage() {
                               disabled={isLoadingText}
                               className={`p-1.5 rounded transition-colors ${
                                 viewedDocuments.has(doc.id)
-                                  ? "text-[#00A972] bg-green-50"
-                                  : "text-[#FF3621] hover:bg-red-50"
+                                  ? "text-[var(--color-success)] bg-[var(--color-success-light)]"
+                                  : "text-[var(--color-primary)] hover:bg-[var(--color-primary-light)]"
                               }`}
                               title={viewedDocuments.has(doc.id) ? "Texto visualizado" : "Ver texto extraído"}
                             >
@@ -1570,7 +1570,7 @@ export default function PreparePage() {
                       <button
                         onClick={() => loadRawDocuments(true)}
                         disabled={isLoadingDocuments}
-                        className="px-4 py-2 text-sm font-medium text-[#FF3621] border border-[#FF3621] rounded-lg hover:bg-red-50 transition-colors flex items-center gap-2 mx-auto"
+                        className="px-4 py-2 text-sm font-medium text-[var(--color-primary)] border border-[var(--color-primary)] rounded-lg hover:bg-[var(--color-primary-light)] transition-colors flex items-center gap-2 mx-auto"
                       >
                         {isLoadingDocuments ? (
                           <Loader2 className="h-4 w-4 animate-spin" />
@@ -1585,7 +1585,7 @@ export default function PreparePage() {
                   {/* Loading indicator */}
                   {isLoadingDocuments && rawDocuments.length === 0 && (
                     <div className="text-center py-8">
-                      <Loader2 className="h-8 w-8 text-[#FF3621] animate-spin mx-auto mb-2" />
+                      <Loader2 className="h-8 w-8 text-[var(--color-primary)] animate-spin mx-auto mb-2" />
                       <p className="text-sm text-gray-500">Carregando documentos...</p>
                     </div>
                   )}
@@ -1606,7 +1606,7 @@ export default function PreparePage() {
                           setActiveStep(3)
                         }}
                         disabled={selectedDocuments.size === 0}
-                        className="px-4 py-2 text-sm font-medium text-white bg-[#FF3621] rounded-lg hover:bg-[#FF3621]/90 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                        className="px-4 py-2 text-sm font-medium text-white bg-[var(--color-primary)] rounded-lg hover:bg-[var(--color-primary)]/90 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                       >
                         Próximo
                         <ChevronRight className="h-4 w-4" />
@@ -1624,10 +1624,10 @@ export default function PreparePage() {
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
             <div className="bg-white rounded-xl shadow-2xl p-6 max-w-md w-full">
               <div className="flex items-center gap-3 mb-4">
-                <div className="p-2 bg-red-100 rounded-full">
+                <div className="p-2 bg-[var(--color-primary-lighter)] rounded-full">
                   <Trash2 className="h-6 w-6 text-red-600" />
                 </div>
-                <h3 className="text-xl font-bold text-[#1B1B1D]">
+                <h3 className="text-xl font-bold text-[var(--color-text)]">
                   {t("prepare.delete.title")}
                 </h3>
               </div>
@@ -1639,9 +1639,9 @@ export default function PreparePage() {
                 }
               </p>
               
-              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4">
-                <p className="text-sm text-amber-800">
-                  <strong>Atenção:</strong> Esta ação irá remover os documentos da tabela <code className="bg-amber-100 px-1 rounded">_raw</code> e 
+              <div className="bg-[var(--color-warning-light)] border border-[var(--color-warning)] rounded-lg p-3 mb-4">
+                <p className="text-sm text-[var(--color-warning)]">
+                  <strong>Atenção:</strong> Esta ação irá remover os documentos da tabela <code className="bg-[var(--color-warning-light)] px-1 rounded">_raw</code> e 
                   os segmentos correspondentes.
                 </p>
               </div>
@@ -1651,7 +1651,7 @@ export default function PreparePage() {
                   type="checkbox"
                   checked={deleteFromVolume}
                   onChange={(e) => setDeleteFromVolume(e.target.checked)}
-                  className="w-4 h-4 text-red-600 border-gray-300 rounded focus:ring-red-500"
+                  className="w-4 h-4 text-[var(--color-primary)] border-gray-300 rounded focus:ring-[var(--color-primary)]"
                 />
                 <span className="text-sm text-gray-700">
                   Também remover os arquivos PDF do volume
@@ -1673,7 +1673,7 @@ export default function PreparePage() {
                 <button
                   onClick={deleteDocuments}
                   disabled={isDeleting}
-                  className="flex-1 px-4 py-2.5 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                  className="flex-1 px-4 py-2.5 text-sm font-medium text-white bg-[var(--color-primary)] rounded-lg hover:opacity-90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
                 >
                   {isDeleting ? (
                     <>
@@ -1697,10 +1697,10 @@ export default function PreparePage() {
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
             <div className="bg-white rounded-xl shadow-2xl p-6 max-w-md w-full">
               <div className="flex items-center gap-3 mb-4">
-                <div className="p-2 bg-amber-100 rounded-full">
-                  <AlertCircle className="h-6 w-6 text-amber-600" />
+                <div className="p-2 bg-[var(--color-warning-light)] rounded-full">
+                  <AlertCircle className="h-6 w-6 text-[var(--color-warning)]" />
                 </div>
-                <h3 className="text-xl font-bold text-[#1B1B1D]">
+                <h3 className="text-xl font-bold text-[var(--color-text)]">
                   {t("prepare.processing.title")}
                 </h3>
               </div>
@@ -1710,8 +1710,8 @@ export default function PreparePage() {
                 com a estratégia <strong>{CHUNKING_STRATEGIES.find(s => s.id === selectedStrategy)?.name}</strong>.
               </p>
               
-              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-6">
-                <p className="text-sm text-amber-800">
+              <div className="bg-[var(--color-warning-light)] border border-[var(--color-warning)] rounded-lg p-3 mb-6">
+                <p className="text-sm text-[var(--color-warning)]">
                   <strong>Atenção:</strong> Os segmentos existentes serão 
                   <strong> apagados</strong> e novos segmentos serão gerados com a estratégia selecionada.
                 </p>
@@ -1731,7 +1731,7 @@ export default function PreparePage() {
                     setActiveStep(null)
                     startProcessing()
                   }}
-                  className="flex-1 px-4 py-2.5 text-sm font-medium text-white bg-[#FF3621] rounded-lg hover:bg-[#FF3621]/90 transition-colors flex items-center justify-center gap-2"
+                  className="flex-1 px-4 py-2.5 text-sm font-medium text-white bg-[var(--color-primary)] rounded-lg hover:bg-[var(--color-primary)]/90 transition-colors flex items-center justify-center gap-2"
                 >
                   <Play className="h-4 w-4" />
                   {t("common.confirm")}
@@ -1747,7 +1747,7 @@ export default function PreparePage() {
             <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col">
               <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
                 <div>
-                  <h3 className="text-lg font-bold text-[#1B1B1D]">Texto Extraído</h3>
+                  <h3 className="text-lg font-bold text-[var(--color-text)]">Texto Extraído</h3>
                   <p className="text-sm text-gray-500 mt-0.5">
                     {selectedDocumentText.fileName}
                   </p>
@@ -1782,7 +1782,7 @@ export default function PreparePage() {
 
         {/* Step 3: Chunking Strategy */}
         <div className={`bg-white rounded-xl border shadow-sm overflow-hidden transition-all ${
-          activeStep === 3 ? 'border-[#FF3621]' : 'border-gray-200'
+          activeStep === 3 ? 'border-[var(--color-primary)]' : 'border-gray-200'
         }`}>
           <button
             onClick={() => setActiveStep(activeStep === 3 ? null : 3)}
@@ -1791,15 +1791,15 @@ export default function PreparePage() {
           >
             <div className="flex items-center gap-2">
               {completedSteps.has(3) ? (
-                <CheckCircle2 className="h-5 w-5 text-[#00A972]" />
+                <CheckCircle2 className="h-5 w-5 text-[var(--color-success)]" />
               ) : (
-                <Layers className="h-5 w-5 text-[#FF3621]" />
+                <Layers className="h-5 w-5 text-[var(--color-primary)]" />
               )}
-              <h2 className="text-lg font-semibold text-[#1B1B1D]">{t("prepare.step3.title")}</h2>
+              <h2 className="text-lg font-semibold text-[var(--color-text)]">{t("prepare.step3.title")}</h2>
             </div>
             <div className="flex items-center gap-2">
               {completedSteps.has(3) && (
-                <span className="text-sm text-[#00A972]">{t("prepare.step2.completed")}</span>
+                <span className="text-sm text-[var(--color-success)]">{t("prepare.step2.completed")}</span>
               )}
               {selectedStrategy && !completedSteps.has(3) && (
                 <span className="text-sm text-gray-500">
@@ -1827,11 +1827,11 @@ export default function PreparePage() {
                   }}
                   className={`p-4 rounded-lg border-2 text-left transition-all ${
                     selectedStrategy === strategy.id
-                      ? "border-[#FF3621] bg-red-50"
+                      ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]"
                       : "border-gray-200 hover:border-gray-300"
                   }`}
                 >
-                  <div className="font-semibold text-[#1B1B1D] mb-1">{strategy.name}</div>
+                  <div className="font-semibold text-[var(--color-text)] mb-1">{strategy.name}</div>
                   <div className="text-xs text-gray-600">{strategy.description}</div>
                 </button>
               ))}
@@ -1859,7 +1859,7 @@ export default function PreparePage() {
                           }))}
                           className={`px-3 py-2 text-xs font-medium rounded-lg border transition-colors ${
                             chunkingParams.separatorType === sep.id
-                              ? "border-[#FF3621] bg-red-50 text-[#FF3621]"
+                              ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] text-[var(--color-primary)]"
                               : "border-gray-300 bg-white text-gray-700 hover:border-gray-400"
                           }`}
                         >
@@ -1879,7 +1879,7 @@ export default function PreparePage() {
                           value={chunkingParams.customSeparator}
                           onChange={(e) => setChunkingParams(prev => ({ ...prev, customSeparator: e.target.value }))}
                           placeholder="Ex: --- ou ### ou ;"
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#FF3621]/20 focus:border-[#FF3621]"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
                         />
                         <p className="mt-1 text-xs text-gray-500">
                           Dica: Use \n para linha, \n\n para parágrafo, ou qualquer texto
@@ -1905,7 +1905,7 @@ export default function PreparePage() {
                       min={100}
                       max={10000}
                       step={100}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#FF3621]/20 focus:border-[#FF3621]"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
                     />
                     {selectedStrategy === "by_separator" && (
                       <p className="mt-1 text-xs text-gray-500">
@@ -1925,7 +1925,7 @@ export default function PreparePage() {
                         min={0}
                         max={500}
                         step={50}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#FF3621]/20 focus:border-[#FF3621]"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
                       />
                     </div>
                   )}
@@ -1939,7 +1939,7 @@ export default function PreparePage() {
                 <button
                   onClick={loadChunkingPreview}
                   disabled={isLoadingChunkPreview || selectedDocuments.size === 0}
-                  className="px-4 py-2 text-sm font-medium text-[#FF3621] border border-[#FF3621] rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                  className="px-4 py-2 text-sm font-medium text-[var(--color-primary)] border border-[var(--color-primary)] rounded-lg hover:bg-[var(--color-primary-light)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                 >
                   {isLoadingChunkPreview ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -1958,7 +1958,7 @@ export default function PreparePage() {
               <button
                 onClick={() => setShowProcessConfirmModal(true)}
                 disabled={processingStatus.status === "processing" || selectedDocuments.size === 0}
-                className="px-6 py-2.5 text-sm font-medium text-white bg-[#FF3621] rounded-lg hover:bg-[#FF3621]/90 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                className="px-6 py-2.5 text-sm font-medium text-white bg-[var(--color-primary)] rounded-lg hover:bg-[var(--color-primary)]/90 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
               >
                 {processingStatus.status === "processing" ? (
                   <>
@@ -1983,13 +1983,13 @@ export default function PreparePage() {
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
           <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center gap-2">
             {processingStatus.status === "completed" ? (
-              <CheckCircle2 className="h-5 w-5 text-[#00A972]" />
+              <CheckCircle2 className="h-5 w-5 text-[var(--color-success)]" />
             ) : processingStatus.status === "error" ? (
               <XCircle className="h-5 w-5 text-red-600" />
             ) : (
-              <Loader2 className="h-5 w-5 text-[#FF3621] animate-spin" />
+              <Loader2 className="h-5 w-5 text-[var(--color-primary)] animate-spin" />
             )}
-            <h2 className="text-lg font-semibold text-[#1B1B1D]">
+            <h2 className="text-lg font-semibold text-[var(--color-text)]">
               {processingStatus.status === "completed" ? "Processamento Concluído" :
                processingStatus.status === "error" ? "Erro no Processamento" :
                "Processando..."}
@@ -1999,24 +1999,24 @@ export default function PreparePage() {
           <div className="p-4">
             {/* Status Display */}
             <div className={`mb-4 p-4 rounded-lg ${
-              processingStatus.status === "completed" ? "bg-green-50 border border-green-200" :
-              processingStatus.status === "error" ? "bg-red-50 border border-red-200" :
-              "bg-blue-50 border border-blue-200"
+              processingStatus.status === "completed" ? "bg-[var(--color-success-light)] border border-[var(--color-success-lighter)]" :
+              processingStatus.status === "error" ? "bg-[var(--color-primary-light)] border border-[var(--color-primary-lighter)]" :
+              "bg-[var(--color-accent-light)] border border-[var(--color-accent-lighter)]"
             }`}>
               <div className="flex items-center gap-2">
                 {processingStatus.status === "processing" && (
-                  <Loader2 className="h-5 w-5 text-blue-600 animate-spin" />
+                  <Loader2 className="h-5 w-5 text-[var(--color-accent)] animate-spin" />
                 )}
                 {processingStatus.status === "completed" && (
-                  <CheckCircle2 className="h-5 w-5 text-[#00A972]" />
+                  <CheckCircle2 className="h-5 w-5 text-[var(--color-success)]" />
                 )}
                 {processingStatus.status === "error" && (
                   <XCircle className="h-5 w-5 text-red-600" />
                 )}
                 <span className={`text-sm font-medium ${
-                  processingStatus.status === "completed" ? "text-[#00A972]" :
+                  processingStatus.status === "completed" ? "text-[var(--color-success)]" :
                   processingStatus.status === "error" ? "text-red-600" :
-                  "text-blue-600"
+                  "text-[var(--color-accent)]"
                 }`}>
                   {processingStatus.message}
                 </span>
@@ -2028,13 +2028,13 @@ export default function PreparePage() {
               <div className="mb-4 flex items-center justify-center gap-6 text-sm">
                 <div className="flex items-center gap-2">
                   <span className="text-gray-500">Arquivo atual:</span>
-                  <span className="font-mono text-[#FF3621] font-medium bg-red-50 px-2 py-0.5 rounded">
+                  <span className="font-mono text-[var(--color-primary)] font-medium bg-[var(--color-primary-light)] px-2 py-0.5 rounded">
                     {formatTime(currentFileTime)}
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-gray-500">Tempo total:</span>
-                  <span className="font-mono text-blue-600 font-medium bg-blue-50 px-2 py-0.5 rounded">
+                  <span className="font-mono text-[var(--color-accent)] font-medium bg-[var(--color-accent-light)] px-2 py-0.5 rounded">
                     {formatTime(totalProcessingTime)}
                   </span>
                 </div>
@@ -2045,7 +2045,7 @@ export default function PreparePage() {
             {processingStatus.status === "completed" && totalProcessingTime > 0 && (
               <div className="mb-4 flex items-center justify-center gap-2 text-sm">
                 <span className="text-gray-500">Tempo total de processamento:</span>
-                <span className="font-mono text-[#00A972] font-medium bg-green-50 px-2 py-0.5 rounded">
+                <span className="font-mono text-[var(--color-success)] font-medium bg-[var(--color-success-light)] px-2 py-0.5 rounded">
                   {formatTime(totalProcessingTime)}
                 </span>
               </div>
@@ -2056,7 +2056,7 @@ export default function PreparePage() {
               <div className="mt-4">
                 <div className="w-full bg-gray-200 rounded-full h-2">
                   <div 
-                    className="bg-[#FF3621] h-2 rounded-full transition-all duration-300"
+                    className="bg-[var(--color-primary)] h-2 rounded-full transition-all duration-300"
                     style={{ width: `${processingStatus.progress}%` }}
                   />
                 </div>
@@ -2072,7 +2072,7 @@ export default function PreparePage() {
                 <button
                   onClick={loadExistingChunkPreviews}
                   disabled={isLoadingExistingPreview}
-                  className="px-4 py-2 text-sm font-medium text-[#FF3621] border border-[#FF3621] rounded-lg hover:bg-red-50 transition-colors flex items-center gap-2"
+                  className="px-4 py-2 text-sm font-medium text-[var(--color-primary)] border border-[var(--color-primary)] rounded-lg hover:bg-[var(--color-primary-light)] transition-colors flex items-center gap-2"
                 >
                   {isLoadingExistingPreview ? (
                     <Loader2 className="h-4 w-4 animate-spin" />

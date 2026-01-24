@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { DM_Sans, DM_Mono } from "next/font/google";
 import { Toaster } from "sonner";
 import { I18nProvider } from "@/lib/i18n";
+import { ThemeProvider } from "@/lib/theme";
 import "./globals.css";
 
 const dmSans = DM_Sans({
@@ -34,18 +35,20 @@ export default function RootLayout({
         className={`${dmSans.variable} ${dmMono.variable} font-sans antialiased`}
       >
         <I18nProvider>
-          {children}
-          <Toaster 
-            position="top-right" 
-            richColors 
-            closeButton
-            duration={6000}
-            toastOptions={{
-              style: {
-                padding: '16px',
-              },
-            }}
-          />
+          <ThemeProvider>
+            {children}
+            <Toaster 
+              position="top-right" 
+              richColors 
+              closeButton
+              duration={6000}
+              toastOptions={{
+                style: {
+                  padding: '16px',
+                },
+              }}
+            />
+          </ThemeProvider>
         </I18nProvider>
       </body>
     </html>
