@@ -1502,7 +1502,7 @@ async def get_chunking_preview(
                         }
                         for i, chunk in enumerate(chunks[:10])  # Limit to first 10 chunks per doc
                     ],
-                    "textLength": len(raw_text)
+                    "textLength": len(parsed_text)
                 })
         
         return {
