@@ -988,7 +988,7 @@ export default function PreparePage() {
                     loadChunkingPreview()
                   }}
                   disabled={isLoadingChunkPreview}
-                  className="px-4 py-1.5 text-sm font-medium text-white bg-[var(--color-primary)] rounded-lg hover:bg-[var(--color-primary)]/90 transition-colors disabled:opacity-50 flex items-center gap-2"
+                  className="px-4 py-2 text-sm font-medium text-white bg-[var(--color-primary)] rounded-lg hover:bg-[var(--color-primary)]/90 transition-colors disabled:opacity-50 flex items-center gap-2"
                 >
                   {isLoadingChunkPreview ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -1096,7 +1096,7 @@ export default function PreparePage() {
                     setShowProcessConfirmModal(true)
                   }}
                   disabled={processingStatus.status === "processing"}
-                  className="px-6 py-2 text-sm font-medium text-white bg-[var(--color-primary)] rounded-lg hover:bg-[var(--color-primary)]/90 transition-colors shadow-sm disabled:opacity-50 flex items-center gap-2"
+                  className="px-4 py-2 text-sm font-medium text-white bg-[var(--color-primary)] rounded-lg hover:bg-[var(--color-primary)]/90 transition-colors shadow-sm disabled:opacity-50 flex items-center gap-2"
                 >
                   <Play className="h-4 w-4" />
                   {t("prepare.step3.confirmProcess")}
@@ -1470,11 +1470,11 @@ export default function PreparePage() {
                       {selectedDocuments.size > 0 && (
                         <button
                           onClick={() => openDeleteModal(false)}
-                          className="px-2 py-1 text-xs font-medium text-red-600 bg-[var(--color-primary-light)] border border-[var(--color-primary-lighter)] rounded hover:bg-[var(--color-primary-lighter)] transition-colors flex items-center gap-1"
+                          className="px-3 py-1.5 text-sm font-medium text-[var(--color-primary)] bg-[var(--color-primary-light)] border border-[var(--color-primary-lighter)] rounded-lg hover:bg-[var(--color-primary-lighter)] transition-colors flex items-center gap-1"
                           title={`Remover ${selectedDocuments.size} selecionado(s)`}
                         >
-                          <Trash2 className="h-3 w-3" />
-                          Remover selecionados
+                          <Trash2 className="h-4 w-4" />
+                          {t("prepare.step2.removeSelected")}
                         </button>
                       )}
                       
@@ -1482,11 +1482,11 @@ export default function PreparePage() {
                       {rawDocuments.length > 0 && selectedDocuments.size === 0 && (
                         <button
                           onClick={() => openDeleteModal(true)}
-                          className="px-2 py-1 text-xs font-medium text-gray-600 bg-gray-100 border border-gray-200 rounded hover:bg-gray-200 transition-colors flex items-center gap-1"
-                          title="Remover todos os documentos"
+                          className="px-3 py-1.5 text-sm font-medium text-white bg-[var(--color-primary)] rounded-lg hover:opacity-90 transition-colors flex items-center gap-1"
+                          title={t("prepare.step2.removeAll")}
                         >
-                          <Trash2 className="h-3 w-3" />
-                          Remover todos
+                          <Trash2 className="h-4 w-4" />
+                          {t("prepare.step2.removeAll")}
                         </button>
                       )}
                       
@@ -1958,7 +1958,7 @@ export default function PreparePage() {
               <button
                 onClick={() => setShowProcessConfirmModal(true)}
                 disabled={processingStatus.status === "processing" || selectedDocuments.size === 0}
-                className="px-6 py-2.5 text-sm font-medium text-white bg-[var(--color-primary)] rounded-lg hover:bg-[var(--color-primary)]/90 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                className="px-4 py-2 text-sm font-medium text-white bg-[var(--color-primary)] rounded-lg hover:bg-[var(--color-primary)]/90 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
               >
                 {processingStatus.status === "processing" ? (
                   <>

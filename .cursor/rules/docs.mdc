@@ -12,62 +12,100 @@ A React/Next.js application with FastAPI backend deployed on Databricks Apps for
 - Reference the following files to stay on track with the project alignments:
   - `.cursor/rules/development-guidelines.mdc` - Development guidelines and best practices
 
-## Visual Identity
-- **Always follow Databricks Brand Guidelines**: https://brand.databricks.com/
-- Use Databricks official colors, typography, and design patterns
-- Maintain consistency with Databricks visual identity across all components
-- Reference the brand guide for:
-  - Color palette
-  - Typography (fonts and sizes)
-  - Logo usage
-  - Iconography
-  - Spacing and layout principles
+## Visual Identity & Dynamic Theme System
 
-### Databricks Color Palette
-Use these official Databricks colors in all components:
+### Theme System Overview
+This app uses a **dynamic theme system** that allows users to customize colors via the Settings modal. 
+**IMPORTANT: Never hardcode colors like `#FF3621`. Always use CSS variables.**
 
-**Primary Colors:**
-- **Databricks Red (Primary)**: `#FF3621` - Use for primary actions, active states, and brand emphasis
-  - Tailwind: `text-[#FF3621]`, `bg-[#FF3621]`, `border-[#FF3621]`
-  - Hover states: `hover:bg-[#FF3621]/90` or `hover:text-[#FF3621]/80`
-  
-- **Databricks Dark**: `#1B1B1D` - Use for headings, primary text, and dark backgrounds
-  - Tailwind: `text-[#1B1B1D]`, `bg-[#1B1B1D]`
+### ThemeProvider
+The theme is managed by `ThemeProvider` in `frontend/lib/theme/index.tsx`:
+- Loads theme from `/api/app-config` on mount
+- Applies CSS variables to `:root` element
+- Provides `useTheme()` hook for accessing theme in components
+- Auto-generates derived colors (light/lighter variants) from base colors
 
-**Secondary Colors:**
-- **Databricks Teal**: `#00A972` - Use for success states and secondary actions
-- **Databricks Blue**: `#1857B6` - Use for informational elements
+### CSS Variables (Theme Colors)
+All colors are defined as CSS variables in `globals.css` and updated dynamically:
 
-**Neutral Colors:**
-- Use standard Tailwind gray scale for neutral UI elements
-- `gray-50` through `gray-900` for backgrounds, borders, and secondary text
+**Primary Colors (User Configurable):**
+```css
+--color-primary     /* Main brand color - buttons, links, highlights */
+--color-text        /* Headings and important text */
+--color-success     /* Success states, confirmations */
+--color-accent      /* Info, secondary highlights */
+--color-warning     /* Alerts and warnings */
+```
+
+**Derived Colors (Auto-generated from primary):**
+```css
+--color-primary-light    /* Selection backgrounds, light tint (~92% lightness) */
+--color-primary-lighter  /* Hover states, borders (~85% lightness) */
+--color-success-light    /* Success backgrounds */
+--color-success-lighter  /* Success borders */
+--color-accent-light     /* Info backgrounds */
+--color-accent-lighter   /* Info borders */
+--color-warning-light    /* Warning backgrounds */
+```
+
+### Using Theme Colors in Components
+
+**ALWAYS use CSS variables, NEVER hardcode colors:**
+
+```tsx
+// ✅ CORRECT - Using CSS variables
+<button className="bg-[var(--color-primary)] text-white">
+<div className="bg-[var(--color-primary-light)] border-[var(--color-primary-lighter)]">
+<span className="text-[var(--color-success)]">
+
+// ❌ WRONG - Hardcoded colors
+<button className="bg-[#FF3621]">
+<div className="bg-red-50">
+<span className="text-green-600">
+```
+
+### Default Colors (Databricks Brand)
+When no custom theme is set, defaults to Databricks brand:
+- Primary: `#FF3621` (Databricks Red)
+- Text: `#1B1B1D` (Databricks Dark)
+- Success: `#00A972` (Databricks Teal)
+- Accent: `#1857B6` (Databricks Blue)
+- Warning: `#F59E0B` (Amber)
 
 ### Color Usage Guidelines
-1. **Primary Actions**: Use Databricks Red (#FF3621)
-   - Submit buttons, primary CTAs
+
+1. **Primary Actions (Buttons)**: `bg-[var(--color-primary)]`
+   - Submit, Save, Process, Confirm buttons
    - Active menu items, selected states
-   - Important links and interactive elements
+   - Important links
 
 2. **Text Hierarchy**:
-   - Headings: Databricks Dark (#1B1B1D)
+   - Headings: `text-[var(--color-text)]`
    - Body text: `text-gray-600` or `text-gray-700`
    - Secondary text: `text-gray-500`
 
 3. **Interactive States**:
-   - Default: Use Databricks Red for primary actions
-   - Hover: Use opacity variations (`/90`, `/80`)
-   - Active: Full Databricks Red with possible shadow
-   - Disabled: Use `opacity-50` with gray
+   - Default: `bg-[var(--color-primary)]`
+   - Hover: `hover:bg-[var(--color-primary)]/90` or `hover:opacity-90`
+   - Disabled: `disabled:opacity-50`
 
 4. **Backgrounds**:
    - Main background: `bg-gray-50`
-   - Card/Section backgrounds: `bg-white`
-   - Hover states: Light tints of primary color (e.g., `bg-red-50`)
+   - Card backgrounds: `bg-white`
+   - Selection/hover: `bg-[var(--color-primary-light)]`
+   - Info boxes: `bg-[var(--color-accent-light)]`
+   - Warning boxes: `bg-[var(--color-warning-light)]`
+   - Success boxes: `bg-[var(--color-success-light)]`
 
 5. **Borders**:
    - Default: `border-gray-300`
-   - Active/Focus: `border-[#FF3621]`
-   - Hover: `border-gray-400` or `border-[#FF3621]/50`
+   - Active/Focus: `border-[var(--color-primary)]`
+   - Info: `border-[var(--color-accent-lighter)]`
+
+### Neutral Colors (Non-themed)
+Gray colors remain static (not themed):
+- Use standard Tailwind gray scale: `gray-50` through `gray-900`
+- These provide consistent neutral UI elements regardless of theme
 
 ## Typography
 
@@ -830,55 +868,97 @@ python-multipart         # File upload support
 
 ## Component Library
 
-### Buttons
+### Buttons (Standardized)
 
-**Primary Button:**
+**IMPORTANT: All buttons must use CSS variables for colors and follow these size standards.**
+
+#### Button Sizes
+- **Normal**: `px-4 py-2 text-sm` - Default for most buttons
+- **Small**: `px-3 py-1.5 text-sm` - In tables, lists, compact areas
+- **Full-width**: `w-full px-4 py-2.5 text-sm` - Modal actions, forms
+
+#### Button Types
+
+**Primary Button (Salvar, Processar, Confirmar):**
 ```tsx
-<button className="px-4 py-2 text-sm font-medium text-white bg-[#FF3621] rounded-lg hover:bg-[#FF3621]/90 transition-colors shadow-sm">
-  Primary Action
+<button className="px-4 py-2 text-sm font-medium text-white bg-[var(--color-primary)] rounded-lg hover:bg-[var(--color-primary)]/90 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed">
+  Salvar
 </button>
 ```
-- Background: Databricks Red (#FF3621)
-- Text: White, font-medium
-- Padding: `px-4 py-2`
-- Border radius: `rounded-lg` (8px)
-- Hover: 90% opacity
-- Shadow: `shadow-sm`
+- Background: Primary theme color
+- Text: White
+- Use for: main actions (Save, Process, Confirm, Submit)
 
-**Success Button:**
+**Secondary Button (Cancelar, Voltar, Fechar):**
 ```tsx
-<button className="px-4 py-2 text-sm font-medium text-white bg-[#00A972] rounded-lg hover:bg-[#00A972]/90 transition-colors shadow-sm">
-  Success Action
-</button>
-```
-- Background: Databricks Teal (#00A972)
-- Use for: completion, confirmation states
-
-**Secondary Button:**
-```tsx
-<button className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 transition-colors">
-  Secondary Action
+<button className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
+  Cancelar
 </button>
 ```
 - Background: White with gray border
 - Text: Gray-700
-- Hover: Gray-100 background
+- Use for: cancel, back, close actions
 
-**Tertiary Button (Text/Link Style):**
+**Outline Button (Alternative Actions):**
 ```tsx
-<button className="px-4 py-2 text-sm font-medium text-[#FF3621] bg-red-50 rounded-lg hover:bg-red-100 transition-colors">
-  Tertiary Action
+<button className="px-4 py-2 text-sm font-medium text-[var(--color-primary)] border border-[var(--color-primary)] rounded-lg hover:bg-[var(--color-primary-light)] transition-colors">
+  Outline Action
 </button>
 ```
-- Background: Light red tint
-- Text: Databricks Red
-- Use for: less important actions
+- Background: Transparent → light primary on hover
+- Border & Text: Primary color
+- Use for: secondary positive actions
 
-**Disabled State:**
+**Light Button (Tertiary Actions):**
 ```tsx
+<button className="px-4 py-2 text-sm font-medium text-[var(--color-primary)] bg-[var(--color-primary-light)] rounded-lg hover:bg-[var(--color-primary-lighter)] transition-colors">
+  Light Action
+</button>
+```
+- Background: Light primary
+- Text: Primary color
+- Use for: less prominent actions
+
+**Success Button:**
+```tsx
+<button className="px-4 py-2 text-sm font-medium text-white bg-[var(--color-success)] rounded-lg hover:bg-[var(--color-success)]/90 transition-colors shadow-sm">
+  Concluir
+</button>
+```
+- Use for: completion, final confirmation states
+
+**Small Buttons (in tables/lists):**
+```tsx
+// Primary small
+<button className="px-3 py-1.5 text-sm font-medium text-white bg-[var(--color-primary)] rounded-lg hover:opacity-90 transition-colors flex items-center gap-1">
+  <Icon className="h-4 w-4" />
+  Action
+</button>
+
+// Light small
+<button className="px-3 py-1.5 text-sm font-medium text-[var(--color-primary)] bg-[var(--color-primary-light)] border border-[var(--color-primary-lighter)] rounded-lg hover:bg-[var(--color-primary-lighter)] transition-colors flex items-center gap-1">
+  <Icon className="h-4 w-4" />
+  Action
+</button>
+```
+
+#### Button States
+```tsx
+// Disabled
 disabled={isDisabled}
 className="... disabled:opacity-50 disabled:cursor-not-allowed"
+
+// Loading
+<button disabled={isLoading} className="...">
+  {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+  {isLoading ? "Processando..." : "Processar"}
+</button>
 ```
+
+#### Icon Usage in Buttons
+- Icon size: `h-4 w-4` (standard) or `h-5 w-5` (larger buttons)
+- Gap: `gap-1` (small) or `gap-2` (normal)
+- Always use `flex items-center gap-*` for alignment
 
 ### Cards & Containers
 

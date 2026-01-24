@@ -49,24 +49,60 @@ export default function ComponentName() {
 }
 ```
 
-### Styling (Tailwind CSS + Databricks Design)
+### Styling (Tailwind CSS + Dynamic Theme)
 
-**Always use Databricks colors:**
-- Primary: `#FF3621` (Databricks Red)
-- Success: `#00A972` (Databricks Teal)
-- Dark: `#1B1B1D` (Databricks Dark)
-- Neutral: Tailwind gray scale
+**IMPORTANT: Use CSS Variables for theming (not hardcoded colors):**
+The app supports dynamic theming where users can customize colors. Always use CSS variables:
+
+**Theme Colors (CSS Variables):**
+- Primary: `var(--color-primary)` - Main brand color (buttons, links)
+- Text: `var(--color-text)` - Headings and important text
+- Success: `var(--color-success)` - Success states
+- Accent: `var(--color-accent)` - Info and secondary highlights
+- Warning: `var(--color-warning)` - Alerts and warnings
+
+**Derived Colors (for backgrounds):**
+- `var(--color-primary-light)` - Light primary (selection backgrounds)
+- `var(--color-primary-lighter)` - Lighter primary (hover, borders)
+- `var(--color-success-light)` - Light success (success backgrounds)
+- `var(--color-accent-light)` - Light accent (info backgrounds)
+- `var(--color-accent-lighter)` - Lighter accent (info borders)
+- `var(--color-warning-light)` - Light warning (alert backgrounds)
 
 **Typography:**
 - Font: DM Sans (headings, body, UI) and DM Mono (code)
 - Sizes: `text-3xl` (H1), `text-2xl` (H2), `text-xl` (H3), `text-base` (body)
 
-**Example:**
+**Button Patterns (Standardized):**
+
 ```tsx
-<button className="px-4 py-2 text-sm font-medium text-white bg-[#FF3621] rounded-lg hover:bg-[#FF3621]/90 transition-colors shadow-sm">
+// Primary Button (Salvar, Processar, Confirmar)
+<button className="px-4 py-2 text-sm font-medium text-white bg-[var(--color-primary)] rounded-lg hover:bg-[var(--color-primary)]/90 transition-colors shadow-sm">
   Primary Action
 </button>
+
+// Secondary Button (Cancelar, Voltar)
+<button className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
+  Cancel
+</button>
+
+// Outline Button (Alternative actions)
+<button className="px-4 py-2 text-sm font-medium text-[var(--color-primary)] border border-[var(--color-primary)] rounded-lg hover:bg-[var(--color-primary-light)] transition-colors">
+  Outline Action
+</button>
+
+// Small Button (in tables/lists)
+<button className="px-3 py-1.5 text-sm font-medium text-[var(--color-primary)] bg-[var(--color-primary-light)] rounded-lg hover:bg-[var(--color-primary-lighter)] transition-colors">
+  Small Action
+</button>
 ```
+
+**Button Size Standards:**
+- Normal: `px-4 py-2 text-sm` (default for most buttons)
+- Small: `px-3 py-1.5 text-sm` (in tables, compact areas)
+- Full-width: `w-full px-4 py-2.5 text-sm` (modal actions)
+
+**NEVER use hardcoded colors like `#FF3621` directly. Always use CSS variables.**
 
 ### State Management
 

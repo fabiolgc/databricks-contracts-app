@@ -210,7 +210,8 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   const [aiError, setAiError] = useState<string | null>(null)
   const aiInputRef = useRef<HTMLInputElement>(null)
 
-  const colorFields = [
+  // Main colors
+  const mainColorFields = [
     { 
       key: "primary_color", 
       label: locale === "pt-BR" ? "Cor Primária" : "Primary Color",
@@ -230,11 +231,85 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
       key: "accent_color", 
       label: locale === "pt-BR" ? "Cor de Destaque" : "Accent Color",
       description: locale === "pt-BR" ? "Informações e acentos" : "Information and accents"
+    },
+    { 
+      key: "warning_color", 
+      label: locale === "pt-BR" ? "Cor de Alerta" : "Warning Color",
+      description: locale === "pt-BR" ? "Alertas e avisos" : "Warnings and alerts"
     }
   ]
 
+  // Derived colors (backgrounds)
+  const derivedColorFields = [
+    { 
+      key: "primary_light", 
+      label: locale === "pt-BR" ? "Primária Clara" : "Primary Light",
+      description: locale === "pt-BR" ? "Fundos de seleção" : "Selection backgrounds",
+      baseKey: "primary_color"
+    },
+    { 
+      key: "primary_lighter", 
+      label: locale === "pt-BR" ? "Primária Mais Clara" : "Primary Lighter",
+      description: locale === "pt-BR" ? "Bordas e hover" : "Borders and hover",
+      baseKey: "primary_color"
+    },
+    { 
+      key: "success_light", 
+      label: locale === "pt-BR" ? "Sucesso Clara" : "Success Light",
+      description: locale === "pt-BR" ? "Fundos de sucesso" : "Success backgrounds",
+      baseKey: "success_color"
+    },
+    { 
+      key: "accent_light", 
+      label: locale === "pt-BR" ? "Destaque Clara" : "Accent Light",
+      description: locale === "pt-BR" ? "Fundos informativos" : "Info backgrounds",
+      baseKey: "accent_color"
+    },
+    { 
+      key: "accent_lighter", 
+      label: locale === "pt-BR" ? "Destaque Mais Clara" : "Accent Lighter",
+      description: locale === "pt-BR" ? "Bordas informativas" : "Info borders",
+      baseKey: "accent_color"
+    },
+    { 
+      key: "warning_light", 
+      label: locale === "pt-BR" ? "Alerta Clara" : "Warning Light",
+      description: locale === "pt-BR" ? "Fundos de alerta" : "Alert backgrounds",
+      baseKey: "warning_color"
+    }
+  ]
+
+  // Helper to generate light color
+  const generateLightColor = (hex: string, factor: number): string => {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
+    if (!result) return hex
+    const [r, g, b] = [parseInt(result[1], 16), parseInt(result[2], 16), parseInt(result[3], 16)]
+    const newR = Math.round(r + (255 - r) * factor)
+    const newG = Math.round(g + (255 - g) * factor)
+    const newB = Math.round(b + (255 - b) * factor)
+    return '#' + [newR, newG, newB].map(x => x.toString(16).padStart(2, '0')).join('')
+  }
+
   const handleColorChange = (key: string, value: string) => {
-    setLocalTheme(prev => ({ ...prev, [key]: value }))
+    setLocalTheme(prev => {
+      const updated = { ...prev, [key]: value }
+      
+      // Auto-regenerate derived colors when main color changes
+      if (key === "primary_color") {
+        updated.primary_light = generateLightColor(value, 0.92)
+        updated.primary_lighter = generateLightColor(value, 0.85)
+      } else if (key === "success_color") {
+        updated.success_light = generateLightColor(value, 0.92)
+        updated.success_lighter = generateLightColor(value, 0.85)
+      } else if (key === "accent_color") {
+        updated.accent_light = generateLightColor(value, 0.92)
+        updated.accent_lighter = generateLightColor(value, 0.85)
+      } else if (key === "warning_color") {
+        updated.warning_light = generateLightColor(value, 0.92)
+      }
+      
+      return updated
+    })
     setHasChanges(true)
   }
 
@@ -260,8 +335,16 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
         text_color: "#1B1B1D",
         success_color: "#00A972",
         accent_color: "#1857B6",
+        warning_color: "#F59E0B",
         logo_url: "",
-        app_name: "Contracts App"
+        app_name: "Contracts App",
+        primary_light: "#FFEBE8",
+        primary_lighter: "#FFD5CF",
+        success_light: "#E6F7F1",
+        success_lighter: "#CCF0E3",
+        accent_light: "#E8EEF7",
+        accent_lighter: "#D1DEEF",
+        warning_light: "#FEF3C7"
       })
       setHasChanges(false)
     } catch (error) {
@@ -288,14 +371,23 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
       const data = await response.json()
       
       if (data.success && data.config) {
-        // Apply AI-generated config to local theme
+        // Apply AI-generated config to local theme (including derived colors)
         setLocalTheme(prev => ({
           ...prev,
           primary_color: data.config.primary_color || prev.primary_color,
           text_color: data.config.text_color || prev.text_color,
           success_color: data.config.success_color || prev.success_color,
           accent_color: data.config.accent_color || prev.accent_color,
-          app_name: data.config.app_name || prev.app_name
+          warning_color: data.config.warning_color || prev.warning_color,
+          app_name: data.config.app_name || prev.app_name,
+          // Derived colors from AI or auto-generated
+          primary_light: data.config.primary_light || generateLightColor(data.config.primary_color || prev.primary_color, 0.92),
+          primary_lighter: data.config.primary_lighter || generateLightColor(data.config.primary_color || prev.primary_color, 0.85),
+          success_light: data.config.success_light || generateLightColor(data.config.success_color || prev.success_color, 0.92),
+          success_lighter: data.config.success_lighter || generateLightColor(data.config.success_color || prev.success_color, 0.85),
+          accent_light: data.config.accent_light || generateLightColor(data.config.accent_color || prev.accent_color, 0.92),
+          accent_lighter: data.config.accent_lighter || generateLightColor(data.config.accent_color || prev.accent_color, 0.85),
+          warning_light: data.config.warning_light || generateLightColor(data.config.warning_color || prev.warning_color || "#F59E0B", 0.92)
         }))
         setHasChanges(true)
         setShowAIAssistant(false)
@@ -449,32 +541,75 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
             </p>
           </div>
 
-          {/* Color Palette */}
+          {/* Main Colors */}
           <div className="mb-4">
             <h3 className="text-sm font-medium text-gray-700 mb-3">
-              {locale === "pt-BR" ? "Paleta de Cores" : "Color Palette"}
+              {locale === "pt-BR" ? "Cores Principais" : "Main Colors"}
             </h3>
-            <div className="grid grid-cols-2 gap-4">
-              {colorFields.map((field) => (
+            <div className="grid grid-cols-2 gap-3">
+              {mainColorFields.map((field) => (
                 <div key={field.key} className="bg-gray-50 rounded-lg p-3">
                   <div className="flex items-center gap-3 mb-2">
                     <input
                       type="color"
-                      value={localTheme[field.key as keyof typeof localTheme] as string}
+                      value={(localTheme[field.key as keyof typeof localTheme] as string) || "#000000"}
                       onChange={(e) => handleColorChange(field.key, e.target.value)}
-                      className="w-10 h-10 rounded-lg border border-gray-300 cursor-pointer"
+                      className="w-8 h-8 rounded-lg border border-gray-300 cursor-pointer"
                       style={{ padding: 0 }}
                     />
                     <div>
-                      <p className="text-sm font-medium text-gray-900">{field.label}</p>
-                      <p className="text-xs text-gray-500">{field.description}</p>
+                      <p className="text-xs font-medium text-gray-900">{field.label}</p>
+                      <p className="text-[10px] text-gray-500">{field.description}</p>
                     </div>
                   </div>
                   <input
                     type="text"
-                    value={localTheme[field.key as keyof typeof localTheme] as string}
+                    value={(localTheme[field.key as keyof typeof localTheme] as string) || ""}
                     onChange={(e) => handleColorChange(field.key, e.target.value)}
                     className="w-full px-2 py-1 text-xs font-mono border border-gray-200 rounded bg-white"
+                    placeholder="#FFFFFF"
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Derived Colors (Backgrounds) */}
+          <div className="mb-4">
+            <h3 className="text-sm font-medium text-gray-700 mb-2">
+              {locale === "pt-BR" ? "Cores de Fundo" : "Background Colors"}
+            </h3>
+            <p className="text-xs text-gray-500 mb-3">
+              {locale === "pt-BR" 
+                ? "Estas cores são geradas automaticamente mas podem ser ajustadas manualmente." 
+                : "These colors are auto-generated but can be manually adjusted."}
+            </p>
+            <div className="grid grid-cols-3 gap-2">
+              {derivedColorFields.map((field) => (
+                <div key={field.key} className="bg-gray-50 rounded-lg p-2">
+                  <div className="flex items-center gap-2 mb-1">
+                    <input
+                      type="color"
+                      value={(localTheme[field.key as keyof typeof localTheme] as string) || "#FFFFFF"}
+                      onChange={(e) => {
+                        setLocalTheme(prev => ({ ...prev, [field.key]: e.target.value }))
+                        setHasChanges(true)
+                      }}
+                      className="w-6 h-6 rounded border border-gray-300 cursor-pointer"
+                      style={{ padding: 0 }}
+                    />
+                    <div>
+                      <p className="text-[10px] font-medium text-gray-900">{field.label}</p>
+                    </div>
+                  </div>
+                  <input
+                    type="text"
+                    value={(localTheme[field.key as keyof typeof localTheme] as string) || ""}
+                    onChange={(e) => {
+                      setLocalTheme(prev => ({ ...prev, [field.key]: e.target.value }))
+                      setHasChanges(true)
+                    }}
+                    className="w-full px-1.5 py-0.5 text-[10px] font-mono border border-gray-200 rounded bg-white"
                     placeholder="#FFFFFF"
                   />
                 </div>
@@ -487,31 +622,79 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
             <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-3">
               {locale === "pt-BR" ? "Prévia" : "Preview"}
             </p>
-            <div className="flex items-center gap-3 flex-wrap">
-              <button
-                className="px-4 py-2 text-sm font-medium text-white rounded-lg"
-                style={{ backgroundColor: localTheme.primary_color }}
-              >
-                {locale === "pt-BR" ? "Botão Primário" : "Primary Button"}
-              </button>
-              <span 
-                className="text-sm font-semibold"
-                style={{ color: localTheme.text_color }}
-              >
-                {locale === "pt-BR" ? "Texto Principal" : "Main Text"}
-              </span>
-              <span 
-                className="text-sm font-medium"
-                style={{ color: localTheme.success_color }}
-              >
-                {locale === "pt-BR" ? "Sucesso" : "Success"}
-              </span>
-              <span 
-                className="text-sm font-medium"
-                style={{ color: localTheme.accent_color }}
-              >
-                {locale === "pt-BR" ? "Destaque" : "Accent"}
-              </span>
+            <div className="space-y-3">
+              {/* Buttons and text */}
+              <div className="flex items-center gap-3 flex-wrap">
+                <button
+                  className="px-3 py-1.5 text-xs font-medium text-white rounded-lg"
+                  style={{ backgroundColor: localTheme.primary_color }}
+                >
+                  {locale === "pt-BR" ? "Botão" : "Button"}
+                </button>
+                <span 
+                  className="text-xs font-semibold"
+                  style={{ color: localTheme.text_color }}
+                >
+                  {locale === "pt-BR" ? "Texto" : "Text"}
+                </span>
+                <span 
+                  className="text-xs font-medium"
+                  style={{ color: localTheme.success_color }}
+                >
+                  {locale === "pt-BR" ? "Sucesso" : "Success"}
+                </span>
+                <span 
+                  className="text-xs font-medium"
+                  style={{ color: localTheme.accent_color }}
+                >
+                  {locale === "pt-BR" ? "Info" : "Info"}
+                </span>
+                <span 
+                  className="text-xs font-medium"
+                  style={{ color: localTheme.warning_color || "#F59E0B" }}
+                >
+                  {locale === "pt-BR" ? "Alerta" : "Warning"}
+                </span>
+              </div>
+              {/* Background boxes */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <div 
+                  className="px-2 py-1 rounded text-[10px]"
+                  style={{ 
+                    backgroundColor: localTheme.primary_light || "#FFEBE8",
+                    color: localTheme.primary_color
+                  }}
+                >
+                  {locale === "pt-BR" ? "Fundo Primário" : "Primary BG"}
+                </div>
+                <div 
+                  className="px-2 py-1 rounded text-[10px]"
+                  style={{ 
+                    backgroundColor: localTheme.success_light || "#E6F7F1",
+                    color: localTheme.success_color
+                  }}
+                >
+                  {locale === "pt-BR" ? "Fundo Sucesso" : "Success BG"}
+                </div>
+                <div 
+                  className="px-2 py-1 rounded text-[10px]"
+                  style={{ 
+                    backgroundColor: localTheme.accent_light || "#E8EEF7",
+                    color: localTheme.accent_color
+                  }}
+                >
+                  {locale === "pt-BR" ? "Fundo Info" : "Info BG"}
+                </div>
+                <div 
+                  className="px-2 py-1 rounded text-[10px]"
+                  style={{ 
+                    backgroundColor: localTheme.warning_light || "#FEF3C7",
+                    color: localTheme.warning_color || "#F59E0B"
+                  }}
+                >
+                  {locale === "pt-BR" ? "Fundo Alerta" : "Warning BG"}
+                </div>
+              </div>
             </div>
           </div>
         </div>

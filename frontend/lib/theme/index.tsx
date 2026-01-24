@@ -2,22 +2,22 @@
 
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react"
 
-// Helper functions to generate color variations
-function hexToRgb(hex: string): [number, number, number] {
+// Helper functions to generate color variations - exported for use in settings
+export function hexToRgb(hex: string): [number, number, number] {
   const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
   return result 
     ? [parseInt(result[1], 16), parseInt(result[2], 16), parseInt(result[3], 16)]
     : [0, 0, 0]
 }
 
-function rgbToHex(r: number, g: number, b: number): string {
+export function rgbToHex(r: number, g: number, b: number): string {
   return '#' + [r, g, b].map(x => {
     const hex = Math.round(x).toString(16)
     return hex.length === 1 ? '0' + hex : hex
   }).join('')
 }
 
-function lightenColor(hex: string, factor: number): string {
+export function lightenColor(hex: string, factor: number): string {
   const [r, g, b] = hexToRgb(hex)
   const newR = r + (255 - r) * factor
   const newG = g + (255 - g) * factor
