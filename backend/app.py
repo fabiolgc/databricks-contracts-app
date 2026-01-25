@@ -360,7 +360,7 @@ CONTEÚDO (amostra):
 
 EXTRAIA E RETORNE APENAS um JSON válido com:
 {{
-  "document_type": "tipo do documento (contrato, NDA, acordo, aditivo, procuração, etc)",
+  "document_type": "tipo do documento (arquivo demo, contrato, NDA, acordo, aditivo, procuração, etc)",
   "language": "idioma principal (pt-BR, en-US, es, etc)",
   "parties": ["lista de partes envolvidas"],
   "subject": "assunto principal em 1-2 frases",
