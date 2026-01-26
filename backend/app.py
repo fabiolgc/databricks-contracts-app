@@ -400,7 +400,9 @@ IMPORTANTE: Retorne APENAS o JSON, sem texto adicional."""
                 metadata = json.loads(clean_str)
                 print(f"✅ [{request_id}] AI metadata extracted successfully")
                 print(f"   Type: {metadata.get('document_type', 'N/A')}")
-                print(f"   Subject: {metadata.get('subject', 'N/A')[:50]}...")
+                print(f"   Subject: {metadata.get('subject', 'N/A')[:50] if metadata.get('subject') else 'N/A'}...")
+                print(f"   Parties: {metadata.get('parties', [])}")
+                print(f"   Keywords: {metadata.get('keywords', [])}")
                 return metadata
             except json.JSONDecodeError as e:
                 print(f"⚠️ [{request_id}] Could not parse AI metadata as JSON: {str(e)}")
@@ -1719,14 +1721,14 @@ async def process_single_file(
             )
             
             # Build context string for chunk enrichment
-            if doc_metadata and not doc_metadata.get("error"):
+            if doc_metadata and not doc_metadata.get("error") and not doc_metadata.get("parse_error"):
                 doc_type = doc_metadata.get("document_type", "documento")
                 subject = doc_metadata.get("subject", "")
                 parties = doc_metadata.get("parties", [])
                 summary = doc_metadata.get("summary", "")
                 
                 parties_str = ", ".join(parties) if parties else ""
-                doc_context = f"[Documento: {doc_type}]"
+                doc_context = f"[Tipo: {doc_type}]"
                 if parties_str:
                     doc_context += f" [Partes: {parties_str}]"
                 if subject:
