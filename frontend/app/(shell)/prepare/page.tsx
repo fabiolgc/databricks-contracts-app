@@ -244,11 +244,16 @@ export default function PreparePage() {
   
   // State for process confirmation modal
   const [showProcessConfirmModal, setShowProcessConfirmModal] = useState(false)
+  
+  // State for Vector Search endpoint
+  const [vsEndpointName, setVsEndpointName] = useState("")
+  const [initialVsEndpointName, setInitialVsEndpointName] = useState("")
 
   // Load environment config on mount - use base table name (without _parsed or _chunks suffix)
   useEffect(() => {
     const loadConfig = async () => {
       try {
+        // Load environment config
         const response = await fetch("/api/config")
         if (response.ok) {
           const config = await response.json()
@@ -268,6 +273,17 @@ export default function PreparePage() {
             setIsConfigSaved(true)
             // Mark step 1 as completed since config is auto-loaded
             setCompletedSteps(prev => new Set([...prev, 1]))
+          }
+        }
+        
+        // Load app config (including vs_endpoint_name)
+        const appConfigResponse = await fetch("/api/app-config")
+        if (appConfigResponse.ok) {
+          const appConfigData = await appConfigResponse.json()
+          if (appConfigData.success && appConfigData.config) {
+            const endpointName = appConfigData.config.vs_endpoint_name || ""
+            setVsEndpointName(endpointName)
+            setInitialVsEndpointName(endpointName)
           }
         }
       } catch (error) {
@@ -303,6 +319,7 @@ export default function PreparePage() {
     }
   }, [processingStatus.status, processingStartTime, currentFileStartTime])
 
+  // Load Vector Search endpoints
   // Load files from volume
   async function loadVolumeFiles() {
     setIsLoadingFiles(true)
@@ -355,6 +372,20 @@ export default function PreparePage() {
       setTableExists(data.exists)
       setExistingRecords(data.recordCount || 0)
       setIsConfigSaved(true)
+      
+      // Save vs_endpoint_name if changed
+      if (vsEndpointName !== initialVsEndpointName) {
+        try {
+          await fetch("/api/app-config", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ vs_endpoint_name: vsEndpointName })
+          })
+          setInitialVsEndpointName(vsEndpointName)
+        } catch (e) {
+          console.error("Error saving vs_endpoint_name:", e)
+        }
+      }
       
       if (data.exists) {
         toast.success("Tabela encontrada!", {
@@ -1304,21 +1335,46 @@ export default function PreparePage() {
                   />
                 </div>
               </div>
+              
+              {/* Vector Search Endpoint */}
+              <div className="mt-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  {t("prepare.step1.vsEndpoint")}
+                </label>
+                <input
+                  type="text"
+                  value={vsEndpointName}
+                  onChange={(e) => {
+                    setVsEndpointName(e.target.value)
+                    setIsConfigSaved(false)
+                    setCompletedSteps(prev => { const newSet = new Set(prev); newSet.delete(1); return newSet })
+                  }}
+                  placeholder="ex: one-env-shared-endpoint-1"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
+                />
+                <p className="mt-1 text-xs text-gray-500">{t("prepare.step1.vsEndpointHint")}</p>
+              </div>
 
               {/* Preview das tabelas que serão criadas/usadas */}
               {tableConfig.tableName && (
                 <div className="mt-3 p-3 bg-[var(--color-accent-light)] border border-[var(--color-accent-lighter)] rounded-lg">
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-3 gap-4">
                     <div>
-                      <p className="text-xs font-medium text-[var(--color-accent)] mb-1">Tabela que será criada:</p>
+                      <p className="text-xs font-medium text-[var(--color-accent)] mb-1">{t("prepare.step1.tableCreated")}</p>
                       <code className="bg-[var(--color-accent-lighter)] text-[var(--color-accent)] px-2 py-1 rounded text-xs font-mono">
                         {tableConfig.catalog || "catalogo"}.{tableConfig.schema || "schema"}.{tableConfig.tableName}_chunks
                       </code>
                     </div>
                     <div>
-                      <p className="text-xs font-medium text-[var(--color-accent)] mb-1">Tabela que será utilizada:</p>
+                      <p className="text-xs font-medium text-[var(--color-accent)] mb-1">{t("prepare.step1.tableUsed")}</p>
                       <code className="bg-[var(--color-accent-lighter)] text-[var(--color-accent)] px-2 py-1 rounded text-xs font-mono">
                         {initialTableConfig.catalog || "catalogo"}.{initialTableConfig.schema || "schema"}.{initialTableConfig.tableName}_parsed
+                      </code>
+                    </div>
+                    <div>
+                      <p className="text-xs font-medium text-[var(--color-accent)] mb-1">{t("prepare.step1.indexCreated")}</p>
+                      <code className="bg-[var(--color-accent-lighter)] text-[var(--color-accent)] px-2 py-1 rounded text-xs font-mono">
+                        {tableConfig.catalog || "catalogo"}.{tableConfig.schema || "schema"}.{tableConfig.tableName}_vs
                       </code>
                     </div>
                   </div>

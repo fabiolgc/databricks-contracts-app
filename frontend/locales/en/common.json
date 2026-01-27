@@ -112,7 +112,10 @@
       "title": "1. Where to Save Text Segments",
       "tableUsed": "Table that will be used:",
       "tableCreated": "Table that will be created:",
-      "configValid": "Configuration valid"
+      "indexCreated": "Index that will be created:",
+      "configValid": "Configuration valid",
+      "vsEndpoint": "Vector Search Endpoint",
+      "vsEndpointHint": "Vector Search endpoint name that will be used to create the index"
     },
     "step2": {
       "title": "2. Select Documents",

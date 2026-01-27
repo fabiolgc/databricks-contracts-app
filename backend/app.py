@@ -1969,6 +1969,7 @@ class AppConfigRequest(BaseModel):
     accent_color: Optional[str] = None  # Blue accent
     logo_url: Optional[str] = None  # Custom logo URL
     app_name: Optional[str] = None  # Custom app name
+    vs_endpoint_name: Optional[str] = None  # Vector Search endpoint name
 
 
 class AIConfigRequest(BaseModel):
@@ -2081,7 +2082,8 @@ async def get_app_config(
         "success_color": "#00A972",  # Green
         "accent_color": "#1857B6",  # Blue
         "logo_url": "",  # Empty = use default
-        "app_name": "Contracts App"
+        "app_name": "Contracts App",
+        "vs_endpoint_name": ""  # Vector Search endpoint - empty by default
     }
     
     try:
@@ -2160,6 +2162,8 @@ async def save_app_config(
             new_values["logo_url"] = request.logo_url
         if request.app_name is not None:
             new_values["app_name"] = request.app_name
+        if request.vs_endpoint_name is not None:
+            new_values["vs_endpoint_name"] = request.vs_endpoint_name
         
         if not new_values:
             print(f"ℹ️ [{request_id}] No values to save")

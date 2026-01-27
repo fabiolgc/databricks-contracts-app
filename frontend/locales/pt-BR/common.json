@@ -112,7 +112,10 @@
       "title": "1. Onde Salvar os Segmentos de Texto",
       "tableUsed": "Tabela que será utilizada:",
       "tableCreated": "Tabela que será criada:",
-      "configValid": "Configuração válida"
+      "indexCreated": "Índice que será criado:",
+      "configValid": "Configuração válida",
+      "vsEndpoint": "Endpoint do Vector Search",
+      "vsEndpointHint": "Nome do endpoint do Vector Search que será usado para criar o índice"
     },
     "step2": {
       "title": "2. Selecionar Documentos",
