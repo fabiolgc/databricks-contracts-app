@@ -24,8 +24,10 @@ import { useTranslation } from "@/lib/i18n"
 
 // Helper function to format time in MM:SS
 function formatTime(seconds: number): string {
-  const mins = Math.floor(seconds / 60)
-  const secs = seconds % 60
+  // Ensure non-negative values
+  const safeSeconds = Math.max(0, Math.floor(seconds))
+  const mins = Math.floor(safeSeconds / 60)
+  const secs = safeSeconds % 60
   return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
 }
 
@@ -53,19 +55,6 @@ interface TableConfig {
   tableName: string
 }
 
-interface ChunkingStrategy {
-  id: string
-  name: string
-  description: string
-  params: {
-    chunkSize?: number
-    chunkOverlap?: number
-    separator?: string
-    separatorType?: string
-    customSeparator?: string
-  }
-}
-
 interface ChunkPreview {
   documentName: string
   chunkIndex: number
@@ -82,14 +71,56 @@ interface ProcessingStatus {
   processedFiles: number
 }
 
+interface SampleChunk {
+  file_name: string
+  chunk_index: number
+  total_chunks: number
+  content: string
+  char_count: number
+}
+
+interface StrategyEvaluation {
+  strategy: string
+  label?: string
+  avg_score: number
+  precision: number
+  chunks_count: number
+  sample_chunks?: SampleChunk[]
+}
+
 interface AutoProcessStatus {
-  step: "idle" | "generating_questions" | "chunking_a" | "chunking_b" | "evaluating" | "selecting" | "creating_index" | "completed" | "error"
+  step: "idle" | "generating_questions" | "chunking_a" | "chunking_b" | "chunking_c" | "evaluating" | "selecting" | "applying" | "creating_index" | "completed" | "error"
   message: string
   progress: number
-  evaluationA?: { strategy: string; avg_score: number; precision: number; chunks_count: number }
-  evaluationB?: { strategy: string; avg_score: number; precision: number; chunks_count: number }
+  evaluationA?: StrategyEvaluation
+  evaluationB?: StrategyEvaluation
+  evaluationC?: StrategyEvaluation
   bestStrategy?: string
   finalChunks?: number
+  sampleFiles?: number
+  // Step timing
+  stepTimes?: {
+    questions?: number
+    chunking_a?: number
+    chunking_b?: number
+    chunking_c?: number
+    evaluating?: number
+    applying?: number
+    index?: number
+  }
+  // Current file being processed
+  currentFile?: string
+  currentFileIndex?: number
+  totalFiles?: number
+  // Additional info
+  questions?: string[]
+  tables?: {
+    chunks: string
+    tempRecursive: string
+    tempFixedSize: string
+    tempStructural: string
+  }
+  indexName?: string
 }
 
 interface FileProcessingResult {
@@ -113,53 +144,11 @@ interface ChunkPreviewData {
   textLength: number
 }
 
-// Chunking Strategies based on Databricks best practices
-const CHUNKING_STRATEGIES: ChunkingStrategy[] = [
-  {
-    id: "fixed_size",
-    name: "Tamanho Fixo",
-    description: "Divide o texto em partes iguais com sobreposição configurável. Simples e eficiente.",
-    params: { chunkSize: 1000, chunkOverlap: 200 }
-  },
-  {
-    id: "recursive",
-    name: "Recursivo por Caractere",
-    description: "Divide respeitando parágrafos e quebras de linha. Mantém o contexto do texto.",
-    params: { chunkSize: 1000, chunkOverlap: 200, separator: "\\n\\n" }
-  },
-  {
-    id: "by_separator",
-    name: "Por Separador",
-    description: "Divide por marcadores específicos (parágrafo, linha, ponto). Flexível e adaptável.",
-    params: { chunkSize: 800, separatorType: "paragraph", customSeparator: "" }
-  },
-  {
-    id: "by_sentence",
-    name: "Por Sentença",
-    description: "Agrupa frases completas até atingir o tamanho máximo. Preserva a estrutura do texto.",
-    params: { chunkSize: 1000, chunkOverlap: 100 }
-  },
-  {
-    id: "semantic",
-    name: "Semântico",
-    description: "Identifica automaticamente onde o assunto muda. Maior precisão, mais lento.",
-    params: { chunkSize: 1500 }
-  },
-  {
-    id: "hybrid_ai",
-    name: "Híbrido + IA",
-    description: "Combina chunking recursivo com extração de metadados por IA. Ideal para RAG com contratos e documentos jurídicos.",
-    params: { chunkSize: 1200, chunkOverlap: 150 }
-  }
-]
-
-// Separator types for the "by_separator" strategy
-const SEPARATOR_TYPES = [
-  { id: "paragraph", name: "Parágrafo (linha dupla)", separator: "\\n\\n" },
-  { id: "line", name: "Linha (Enter)", separator: "\\n" },
-  { id: "sentence", name: "Sentença (ponto final)", separator: ". " },
-  { id: "custom", name: "Personalizado", separator: "" }
-]
+// Auto-processing uses 3 strategies optimized for legal contracts:
+// A: Recursivo - standard recursive text splitting
+// B: Tamanho Fixo - fixed-size with sentence boundaries
+// C: Estrutural - clause-aware (BEST for contracts)
+// The system evaluates all 3 and picks the best
 
 export default function PreparePage() {
   const { t } = useTranslation()
@@ -213,6 +202,9 @@ export default function PreparePage() {
     message: "",
     progress: 0
   })
+  const [showQuestions, setShowQuestions] = useState(false)
+  const [showEvaluationResults, setShowEvaluationResults] = useState(false)
+  const [viewingChunksStrategy, setViewingChunksStrategy] = useState<"A" | "B" | "C" | null>(null)
   
   // State for processing
   const [processingStatus, setProcessingStatus] = useState<ProcessingStatus>({
@@ -228,6 +220,12 @@ export default function PreparePage() {
   const [currentFileStartTime, setCurrentFileStartTime] = useState<number | null>(null)
   const [currentFileTime, setCurrentFileTime] = useState(0)
   const [totalProcessingTime, setTotalProcessingTime] = useState(0)
+  
+  // Step timing
+  const [stepStartTimes, setStepStartTimes] = useState<{[key: string]: number}>({})
+  const [stepEndTimes, setStepEndTimes] = useState<{[key: string]: number}>({})
+  const [currentStepTime, setCurrentStepTime] = useState(0)
+  const currentStepRef = useRef<string | null>(null) // Ref for sync tracking
   
   // State for tracking processed files (to filter "Ver Chunks" view)
   const [lastProcessedFiles, setLastProcessedFiles] = useState<string[]>([])
@@ -257,9 +255,6 @@ export default function PreparePage() {
   const [deleteFromVolume, setDeleteFromVolume] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
   
-  // State for process confirmation modal
-  const [showProcessConfirmModal, setShowProcessConfirmModal] = useState(false)
-  
   // State for Vector Search endpoint (loaded from environment)
   const [vsEndpointName, setVsEndpointName] = useState("")
   
@@ -279,13 +274,6 @@ export default function PreparePage() {
       index?: number
     }
   }>({ step: "idle", message: "", progress: 0, stepTimes: {} })
-  
-  // Track step start times
-  const [stepStartTimes, setStepStartTimes] = useState<{
-    endpoint?: number
-    chunks?: number
-    index?: number
-  }>({})
 
   // Load environment config on mount - use base table name (without _parsed or _chunks suffix)
   useEffect(() => {
@@ -322,7 +310,7 @@ export default function PreparePage() {
           }
         }
         
-        // Load app config (embedding_model, index_sync_type)
+        // Load app config (embedding_model, index_sync_type, vs_endpoint)
         const appConfigResponse = await fetch("/api/app-config")
         if (appConfigResponse.ok) {
           const appConfigData = await appConfigResponse.json()
@@ -333,6 +321,10 @@ export default function PreparePage() {
             }
             if (appConfigData.config.index_sync_type) {
               setIndexSyncType(appConfigData.config.index_sync_type as "TRIGGERED" | "CONTINUOUS")
+            }
+            // Override vsEndpoint from app-config if available
+            if (appConfigData.config.vs_endpoint) {
+              setVsEndpointName(appConfigData.config.vs_endpoint)
             }
           }
         }
@@ -361,13 +353,18 @@ export default function PreparePage() {
         if (currentFileStartTime) {
           setCurrentFileTime(Math.floor((now - currentFileStartTime) / 1000))
         }
+        // Update current step time based on active step
+        const currentStep = autoProcessStatus.step
+        if (currentStep && stepStartTimes[currentStep] && !stepEndTimes[currentStep]) {
+          setCurrentStepTime(Math.floor((now - stepStartTimes[currentStep]) / 1000))
+        }
       }, 1000)
     }
     
     return () => {
       if (interval) clearInterval(interval)
     }
-  }, [processingStatus.status, processingStartTime, currentFileStartTime])
+  }, [processingStatus.status, processingStartTime, currentFileStartTime, autoProcessStatus.step, stepStartTimes, stepEndTimes])
 
   // Auto-scroll file list to current processing file
   useEffect(() => {
@@ -649,63 +646,6 @@ export default function PreparePage() {
     setShowDeleteModal(true)
   }
 
-  // Load chunking preview from backend
-  async function loadChunkingPreview() {
-    if (selectedDocuments.size === 0) {
-      toast.warning("Selecione pelo menos um documento para visualizar a prévia")
-      return
-    }
-    
-    setIsLoadingChunkPreview(true)
-    setPreviewDocIndex(0)
-    setPreviewChunkIndex(0)
-    
-    try {
-      // Get up to 3 document IDs for preview
-      const docIds = Array.from(selectedDocuments).slice(0, 3)
-      
-      const response = await fetch("/api/chunking/preview", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          catalog: tableConfig.catalog,
-          schema_name: tableConfig.schema,
-          tableName: tableConfig.tableName,
-          documentIds: docIds,
-          strategy: selectedStrategy,
-          chunkSize: chunkingParams.chunkSize,
-          chunkOverlap: chunkingParams.chunkOverlap,
-          separatorType: chunkingParams.separatorType,
-          customSeparator: chunkingParams.customSeparator
-        })
-      })
-      
-      if (!response.ok) {
-        throw new Error("Erro ao gerar prévia de chunking")
-      }
-      
-      const data = await response.json()
-      
-      if (data.success && data.documents) {
-        setChunkPreviewData(data.documents)
-        setShowChunkingPreview(true)
-        
-        // Calculate total chunks across all documents
-        const totalChunks = data.documents.reduce((sum: number, doc: ChunkPreviewData) => sum + doc.totalChunks, 0)
-        toast.success(`Prévia gerada: ${totalChunks} segmentos em ${data.documents.length} documento(s)`, {
-          duration: 4000
-        })
-      }
-    } catch (error) {
-      console.error("Error loading chunking preview:", error)
-      toast.error("Erro ao gerar prévia", {
-        description: error instanceof Error ? error.message : "Erro desconhecido"
-      })
-    } finally {
-      setIsLoadingChunkPreview(false)
-    }
-  }
-
   // Toggle file selection
   function toggleFileSelection(fileName: string) {
     setSelectedFiles(prev => {
@@ -753,12 +693,18 @@ export default function PreparePage() {
     const startTime = Date.now()
     setProcessingStartTime(startTime)
     setTotalProcessingTime(0)
+    setCurrentStepTime(0)
+    setStepStartTimes({ generating_questions: startTime })
+    setStepEndTimes({})
+    currentStepRef.current = "generating_questions" // Initialize ref
     
     // Reset status
     setAutoProcessStatus({
       step: "generating_questions",
-      message: "Gerando perguntas de avaliação...",
-      progress: 5
+      message: t("prepare.autoProcess.generatingQuestions"),
+      progress: 5,
+      totalFiles: filesToProcess.length,
+      currentFileIndex: 0
     })
     
     setProcessingStatus({
@@ -770,31 +716,41 @@ export default function PreparePage() {
     })
     
     try {
+      // Step timing helper
+      const markStepStart = (step: string) => {
+        setStepStartTimes(prev => ({ ...prev, [step]: Date.now() }))
+      }
+      const markStepEnd = (step: string) => {
+        setStepEndTimes(prev => ({ ...prev, [step]: Date.now() }))
+      }
+      
+      // Mark generating_questions done, start chunking_a
+      markStepEnd("generating_questions")
+      markStepStart("chunking_a")
+      
+      // Evaluation uses only 3 RANDOM sample files (backend picks them)
+      const sampleCount = Math.min(3, filesToProcess.length)
+      const totalFilesCount = filesToProcess.length
+      // Get sample file names for display (first 3 files as example)
+      const sampleFileNames = filesToProcess.slice(0, sampleCount)
+      
       // Call the auto process endpoint
       setAutoProcessStatus(prev => ({
         ...prev,
         step: "chunking_a",
-        message: "Processando com Método A (Recursivo)...",
-        progress: 15
+        message: `Recursivo: ${sampleFileNames[0]} (1/${sampleCount})`,
+        progress: 15,
+        currentFileIndex: 1,
+        currentFile: sampleFileNames[0],
+        sampleFiles: sampleCount,
+        totalFiles: totalFilesCount
       }))
       
-      // Simulate progress updates (the actual processing happens server-side)
-      const progressInterval = setInterval(() => {
-        setAutoProcessStatus(prev => {
-          if (prev.step === "chunking_a" && prev.progress < 35) {
-            return { ...prev, progress: prev.progress + 2 }
-          }
-          if (prev.step === "chunking_b" && prev.progress < 55) {
-            return { ...prev, progress: prev.progress + 2 }
-          }
-          if (prev.step === "evaluating" && prev.progress < 80) {
-            return { ...prev, progress: prev.progress + 1 }
-          }
-          return prev
-        })
-      }, 1000)
+      console.log("[AutoProcess] Starting background job via /api/process/auto/start")
+      console.log("[AutoProcess] Request payload:", { tableConfig, files: filesToProcess })
       
-      const response = await fetch("/api/process/auto", {
+      // Start background job
+      const startResponse = await fetch("/api/process/auto/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -803,717 +759,477 @@ export default function PreparePage() {
         })
       })
       
-      clearInterval(progressInterval)
-      
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.detail || "Falha no processamento automático")
+      if (!startResponse.ok) {
+        const errorText = await startResponse.text()
+        throw new Error(`Falha ao iniciar processamento: HTTP ${startResponse.status}`)
       }
       
-      const result = await response.json()
+      const { jobId } = await startResponse.json()
+      console.log("[AutoProcess] Job started with ID:", jobId)
+      
+      // Poll for job status
+      let result: {
+        success: boolean
+        bestStrategy?: string
+        evaluations?: Record<string, StrategyEvaluation>
+        finalChunks?: number
+        sampleFilesUsed?: number
+        questions?: string[]
+        tables?: { chunks: string; tempRecursive: string; tempFixedSize: string; tempStructural: string }
+        indexName?: string
+        error?: string
+      } | null = null
+      let pollCount = 0
+      const maxPolls = 300 // 5 minutes max (1 poll per second)
+      
+      while (pollCount < maxPolls) {
+        await new Promise(resolve => setTimeout(resolve, 1000)) // Poll every 1 second
+        pollCount++
+        
+        try {
+          const statusResponse = await fetch(`/api/process/auto/status/${jobId}`)
+          if (!statusResponse.ok) {
+            console.warn(`[AutoProcess] Status poll failed: ${statusResponse.status}`)
+            continue
+          }
+          
+          const jobStatus = await statusResponse.json()
+          console.log(`[AutoProcess] Poll ${pollCount}: ${jobStatus.status} - ${jobStatus.step}`)
+          
+          // Update UI based on backend status
+          if (jobStatus.step && jobStatus.message) {
+            // Map backend step to frontend step
+            const stepMap: Record<string, string> = {
+              generating_questions: "generating_questions",
+              chunking_a: "chunking_a",
+              chunking_b: "chunking_b",
+              chunking_c: "chunking_c",
+              evaluating: "evaluating",
+              applying: "applying"
+            }
+            const frontendStep = stepMap[jobStatus.step] || jobStatus.step
+            
+            // Update step times using ref for sync comparison
+            const prevStep = currentStepRef.current
+            if (frontendStep !== prevStep) {
+              const now = Date.now()
+              if (prevStep) {
+                setStepEndTimes(prev => ({ ...prev, [prevStep]: now }))
+              }
+              setStepStartTimes(prev => {
+                // Only set if not already set
+                if (!prev[frontendStep]) {
+                  return { ...prev, [frontendStep]: now }
+                }
+                return prev
+              })
+              currentStepRef.current = frontendStep
+            }
+            
+            setAutoProcessStatus(prev => ({
+              ...prev,
+              step: frontendStep,
+              message: jobStatus.message,
+              progress: jobStatus.progress || prev.progress,
+              currentFile: jobStatus.currentFile,
+              currentFileIndex: jobStatus.currentFileIndex,
+              sampleFiles: jobStatus.sampleFiles,
+              totalFiles: jobStatus.totalFiles,
+              questions: jobStatus.questions || prev.questions,
+              // Update evaluation results and tables in real-time
+              evaluationA: jobStatus.evaluationA || prev.evaluationA,
+              evaluationB: jobStatus.evaluationB || prev.evaluationB,
+              evaluationC: jobStatus.evaluationC || prev.evaluationC,
+              bestStrategy: jobStatus.bestStrategy || prev.bestStrategy,
+              tables: jobStatus.tables || prev.tables
+            }))
+          }
+          
+          if (jobStatus.status === "completed" && jobStatus.result) {
+            result = jobStatus.result
+            break
+          }
+          
+          if (jobStatus.status === "failed") {
+            throw new Error(jobStatus.error || "Processamento falhou")
+          }
+        } catch (pollError) {
+          if (pollError instanceof Error && pollError.message.includes("Processamento falhou")) {
+            throw pollError
+          }
+          console.warn(`[AutoProcess] Poll error (continuing):`, pollError)
+        }
+      }
+      
+      if (!result) {
+        throw new Error("Timeout aguardando processamento")
+      }
+      
+      console.log("[AutoProcess] Final result:", result)
       
       if (result.success) {
-        // Update with evaluation results
+        // Mark all processing steps as complete (backend already did chunking + evaluation + applying)
+        const now = Date.now()
+        setStepEndTimes(prev => ({
+          ...prev,
+          chunking_a: prev.chunking_a || now - 6000,
+          chunking_b: prev.chunking_b || now - 5000,
+          chunking_c: prev.chunking_c || now - 4000,
+          evaluating: prev.evaluating || now - 2000,
+          applying: now
+        }))
+        setStepStartTimes(prev => ({
+          ...prev,
+          chunking_c: prev.chunking_c || now - 5000,
+          applying: prev.applying || now - 2000
+        }))
+        
+        // Strategy labels
+        const strategyLabels: Record<string, string> = {
+          recursive: t("prepare.autoProcess.steps.recursive"),
+          fixed_size: t("prepare.autoProcess.steps.fixedSize"),
+          structural: t("prepare.autoProcess.steps.structural")
+        }
+        
+        const bestStrategyKey = result.bestStrategy || "recursive"
+        const bestStrategyLabel = strategyLabels[bestStrategyKey] || bestStrategyKey
+        
+        // Update with evaluation results - backend already applied best strategy
         setAutoProcessStatus({
-          step: "selecting",
-          message: `Melhor estratégia: ${result.bestStrategy === "recursive" ? "Recursivo" : "Tamanho Fixo"}`,
+          step: "applying",
+          message: `Estratégia ${bestStrategyLabel} aplicada: ${result.finalChunks} chunks`,
           progress: 85,
           evaluationA: result.evaluations?.recursive,
           evaluationB: result.evaluations?.fixed_size,
+          evaluationC: result.evaluations?.structural,
           bestStrategy: result.bestStrategy,
-          finalChunks: result.finalChunks
+          finalChunks: result.finalChunks,
+          sampleFiles: result.sampleFilesUsed,
+          questions: result.questions,
+          tables: result.tables,
+          indexName: result.indexName
         })
         
         // Now create Vector Index
-        await createVectorIndexAfterProcessing(result.finalChunks)
+        await createVectorIndexAfterProcessing(result.finalChunks || 0)
         
       } else {
         throw new Error(result.error || "Processamento falhou")
       }
       
     } catch (error) {
-      console.error("Auto processing error:", error)
+      const errorMessage = error instanceof Error ? error.message : "Erro desconhecido"
+      const errorStack = error instanceof Error ? error.stack : undefined
+      
+      console.error("=".repeat(60))
+      console.error("[AutoProcess] ERROR CAUGHT")
+      console.error("[AutoProcess] Error message:", errorMessage)
+      console.error("[AutoProcess] Error stack:", errorStack)
+      console.error("[AutoProcess] Error object:", error)
+      console.error("=".repeat(60))
+      
       setAutoProcessStatus({
         step: "error",
-        message: error instanceof Error ? error.message : "Erro desconhecido",
+        message: errorMessage,
         progress: 0
       })
       setProcessingStatus({
         status: "error",
-        message: error instanceof Error ? error.message : "Erro desconhecido",
+        message: errorMessage,
         progress: 0,
         totalFiles: filesToProcess.length,
         processedFiles: 0
       })
       toast.error("Erro no processamento", {
-        description: error instanceof Error ? error.message : "Erro desconhecido"
+        description: errorMessage,
+        duration: 10000
       })
     }
   }
   
+  // Monitor Vector Index status until ready
+  async function monitorIndexStatus(chunksCount: number): Promise<void> {
+    const maxAttempts = 60 // Max 5 minutes (5s intervals)
+    let attempts = 0
+    
+    while (attempts < maxAttempts) {
+      try {
+        const statusResponse = await fetch("/api/vector-search/index/status", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            tableConfig,
+            endpoint_name: vsEndpointName,
+            embedding_model: embeddingModel,
+            sync_type: indexSyncType
+          })
+        })
+        
+        const statusResult = await statusResponse.json()
+        
+        if (statusResult.success) {
+          const { ready, detailed_state, indexed_row_count } = statusResult
+          
+          setAutoProcessStatus(prev => ({
+            ...prev,
+            message: ready 
+              ? `Index pronto! ${indexed_row_count || chunksCount} segmentos indexados.`
+              : `Sincronizando: ${detailed_state || "processando"}...`
+          }))
+          
+          if (ready) {
+            // Index is ready!
+            const endTime = Date.now()
+            const totalTime = Math.floor((endTime - (processingStartTime || endTime)) / 1000)
+            setTotalProcessingTime(totalTime)
+            setStepEndTimes(prev => ({ ...prev, creating_index: endTime }))
+            
+            setAutoProcessStatus(prev => ({
+              ...prev,
+              step: "completed",
+              message: `Concluído! ${indexed_row_count || chunksCount} segmentos indexados.`,
+              progress: 100
+            }))
+            
+            setProcessingStatus({
+              status: "completed",
+              message: `Processamento concluído com sucesso!`,
+              progress: 100,
+              totalFiles: selectedDocuments.size,
+              processedFiles: selectedDocuments.size
+            })
+            
+            toast.success("Processamento concluído!", {
+              description: `${indexed_row_count || chunksCount} segmentos indexados.`,
+              duration: 6000
+            })
+            return
+          }
+        } else {
+          console.log("Index status check failed:", statusResult.error)
+        }
+        
+        // Wait 5 seconds before next check
+        await new Promise(resolve => setTimeout(resolve, 5000))
+        attempts++
+        
+      } catch (error) {
+        console.error("Error checking index status:", error)
+        attempts++
+        await new Promise(resolve => setTimeout(resolve, 5000))
+      }
+    }
+    
+    // Timeout - mark as completed with warning
+    const endTime = Date.now()
+    const totalTime = Math.floor((endTime - (processingStartTime || endTime)) / 1000)
+    setTotalProcessingTime(totalTime)
+    setStepEndTimes(prev => ({ ...prev, creating_index: endTime }))
+    
+    setAutoProcessStatus(prev => ({
+      ...prev,
+      step: "completed",
+      message: `Chunks criados. Sync em andamento (timeout).`,
+      progress: 100
+    }))
+    
+    toast.warning("Sync ainda em andamento", {
+      description: "O índice está sendo sincronizado em background.",
+      duration: 8000
+    })
+  }
+
   // Create Vector Index after auto processing
+  // Logic: if index exists with same endpoint -> sync, different endpoint -> delete & recreate, not exists -> create
   async function createVectorIndexAfterProcessing(chunksCount: number) {
     const indexName = `${tableConfig.catalog}.${tableConfig.schema}.${tableConfig.tableName}_vs`
+    const configuredEndpoint = vsEndpointName // From app.yaml VECTOR_SEARCH_ENDPOINT
+    
+    // Mark index creation start time
+    setStepStartTimes(prev => ({ ...prev, creating_index: Date.now() }))
     
     setAutoProcessStatus(prev => ({
       ...prev,
       step: "creating_index",
-      message: "Criando Vector Index...",
+      message: "Verificando Vector Index...",
       progress: 90
     }))
     
     try {
-      // Check if index exists and should be recreated
-      if (recreateIndex) {
-        const deleteResponse = await fetch("/api/vector-search/index/delete", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            endpointName: vsEndpointName,
-            indexName
-          })
-        })
-        if (deleteResponse.ok) {
-          console.log("Existing index deleted for recreation")
-        }
-      }
-      
-      // Create the index
-      const createResponse = await fetch("/api/vector-search/index/create", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          endpointName: vsEndpointName,
-          indexName,
-          sourceTable: `${tableConfig.catalog}.${tableConfig.schema}.${tableConfig.tableName}_chunks`,
-          embeddingModel,
-          syncType: indexSyncType
-        })
-      })
-      
-      const createResult = await createResponse.json()
-      
-      const endTime = Date.now()
-      const totalTime = Math.floor((endTime - (processingStartTime || endTime)) / 1000)
-      setTotalProcessingTime(totalTime)
-      
-      if (createResult.success || createResult.alreadyExists) {
-        setAutoProcessStatus(prev => ({
-          ...prev,
-          step: "completed",
-          message: createResult.alreadyExists 
-            ? `Index já existe. ${chunksCount} segmentos processados.`
-            : `Concluído! ${chunksCount} segmentos indexados.`,
-          progress: 100
-        }))
-        
-        setProcessingStatus({
-          status: "completed",
-          message: `Processamento concluído com sucesso!`,
-          progress: 100,
-          totalFiles: selectedDocuments.size,
-          processedFiles: selectedDocuments.size
-        })
-        
-        toast.success("Processamento concluído!", {
-          description: `${chunksCount} segmentos criados e indexados.`,
-          duration: 6000
-        })
-      } else {
-        throw new Error(createResult.error || "Falha ao criar index")
-      }
-      
-    } catch (error) {
-      console.error("Vector index creation error:", error)
-      // Still mark as completed if chunking worked but index failed
-      setAutoProcessStatus(prev => ({
-        ...prev,
-        step: "completed",
-        message: `Chunks criados. Index: ${error instanceof Error ? error.message : "erro"}`,
-        progress: 95
-      }))
-      
-      setProcessingStatus({
-        status: "completed",
-        message: "Chunks criados. Vector Index com erro.",
-        progress: 100,
-        totalFiles: selectedDocuments.size,
-        processedFiles: selectedDocuments.size
-      })
-    }
-  }
-
-  // Execute the actual processing - file by file
-  // Always deletes existing chunks for selected documents and creates new ones
-  async function executeProcessing() {
-    
-    const strategy = CHUNKING_STRATEGIES.find(s => s.id === selectedStrategy)
-    // Get file names from selected document IDs
-    const selectedDocs = parsedDocuments.filter(d => selectedDocuments.has(d.id))
-    const filesToProcess = selectedDocs.map(d => d.fileName)
-    
-    // Initialize timers
-    const startTime = Date.now()
-    setProcessingStartTime(startTime)
-    setCurrentFileStartTime(startTime)
-    setCurrentFileTime(0)
-    setTotalProcessingTime(0)
-    
-    // Reset vectorization status and step times
-    setVectorizationStatus({ step: "idle", message: "", progress: 0, stepTimes: {} })
-    setStepStartTimes({})
-    
-    setProcessingStatus({
-      status: "processing",
-      message: "Verificando Vector Search endpoint...",
-      progress: 0,
-      totalFiles: filesToProcess.length,
-      processedFiles: 0
-    })
-    
-    // Track if we can use Vector Search
-    let canUseVectorSearch = vsEndpointName ? true : false
-    let vectorSearchError = vsEndpointName ? "" : "Endpoint não configurado"
-    
-    // Track step times locally
-    const stepTimesLocal: { endpoint?: number; chunks?: number; index?: number } = {}
-    let chunksStartTime = Date.now()
-    
-    try {
-      // =========================================================================
-      // Vector Search: Skip endpoint check, assume it exists (configured in app.yaml)
-      // =========================================================================
-      if (vsEndpointName) {
-        // Endpoint is pre-configured, mark as instant
-        stepTimesLocal.endpoint = 0
-        chunksStartTime = Date.now()
-        setStepStartTimes({ endpoint: startTime, chunks: chunksStartTime })
-        setVectorizationStatus({
-          step: "processing_chunks",
-          message: `Usando endpoint: ${vsEndpointName}`,
-          progress: 10,
-          stepTimes: { endpoint: 0 }
-        })
-      }
-      
-      // =========================================================================
-      // STEP 1: Initialize tables (always overwrite mode - delete existing chunks and create new)
-      // =========================================================================
-      setProcessingStatus({
-        status: "processing",
-        message: "Inicializando tabelas...",
-        progress: 0,
-        totalFiles: filesToProcess.length,
-        processedFiles: 0
-      })
-      
-      const initResponse = await fetch("/api/process/init", {
+      // Step 1: Check if index already exists
+      const checkResponse = await fetch("/api/vector-search/index/check", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           tableConfig,
-          files: filesToProcess,
-          strategy: selectedStrategy,
-          params: { ...strategy?.params, ...chunkingParams }
+          endpoint_name: configuredEndpoint,
+          embedding_model: embeddingModel,
+          sync_type: indexSyncType
         })
       })
       
-      if (!initResponse.ok) {
-        const error = await initResponse.json()
-        throw new Error(error.detail || "Falha ao inicializar tabelas")
-      }
+      const checkResult = await checkResponse.json()
       
-      const initResult = await initResponse.json()
-      const actualFilesToProcess = initResult.filesToProcess || filesToProcess
-      
-      if (initResult.skippedFiles?.length > 0) {
-        toast.info(`${initResult.skippedFiles.length} arquivo(s) já processado(s), serão pulados`, {
-          duration: 4000
-        })
-      }
-      
-      if (actualFilesToProcess.length === 0) {
-        setProcessingStatus({
-          status: "completed",
-          message: "Nenhum arquivo novo para processar",
-          progress: 100,
-          totalFiles: filesToProcess.length,
-          processedFiles: filesToProcess.length
-        })
-        return
-      }
-      
-      // Step 2: Process each file individually
-      let processedCount = 0
-      let totalChunks = 0
-      const errors: Array<{ file: string; error: string }> = []
-      const totalFiles = actualFilesToProcess.length
-      
-      // Initialize file processing results
-      const initialResults: FileProcessingResult[] = actualFilesToProcess.map((f: string) => ({
-        fileName: f,
-        status: "pending" as const
-      }))
-      setFileProcessingResults(initialResults)
-      
-      for (let i = 0; i < totalFiles; i++) {
-        const fileName = actualFilesToProcess[i]
-        const fileNumber = i + 1
+      if (checkResult.exists) {
+        const existingEndpoint = checkResult.endpoint_name || ""
+        console.log(`Index exists with endpoint: ${existingEndpoint}, configured: ${configuredEndpoint}`)
         
-        // Reset file timer for each new file
-        const fileStartTime = Date.now()
-        setCurrentFileStartTime(fileStartTime)
-        setCurrentFileTime(0)
-        
-        // Update file status to processing
-        setFileProcessingResults(prev => prev.map((r, idx) => 
-          idx === i ? { ...r, status: "processing" as const } : r
-        ))
-        
-        // Update status BEFORE processing - show which file is being processed
-        setProcessingStatus({
-          status: "processing",
-          message: `Processando arquivo ${fileNumber} de ${totalFiles}: ${fileName}`,
-          progress: Math.round((i / totalFiles) * 100),
-          totalFiles: totalFiles,
-          processedFiles: processedCount
-        })
-        
-        try {
-          const fileResponse = await fetch("/api/process/file", {
+        if (existingEndpoint === configuredEndpoint) {
+          // Same endpoint -> just sync
+          setAutoProcessStatus(prev => ({
+            ...prev,
+            message: "Index existe. Sincronizando..."
+          }))
+          
+          const syncResponse = await fetch("/api/vector-search/index/sync", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               tableConfig,
-              fileName,
-              strategy: selectedStrategy,
-              params: { ...strategy?.params, ...chunkingParams }
-            })
-          })
-          
-          if (!fileResponse.ok) {
-            const error = await fileResponse.json()
-            throw new Error(error.detail || "Falha ao processar arquivo")
-          }
-          
-          const fileResult = await fileResponse.json()
-          const fileTime = Math.floor((Date.now() - fileStartTime) / 1000)
-          
-          if (fileResult.success) {
-            processedCount++
-            totalChunks += fileResult.chunksCreated || 0
-            
-            // Update file result with success
-            setFileProcessingResults(prev => prev.map((r, idx) => 
-              idx === i ? { 
-                ...r, 
-                status: "success" as const, 
-                chunks: fileResult.chunksCreated || 0,
-                time: fileTime
-              } : r
-            ))
-            
-            // Update progress AFTER processing - show completion
-            setProcessingStatus({
-              status: "processing",
-              message: `✓ ${fileName} - ${fileResult.chunksCreated} segmentos criados`,
-              progress: Math.round((fileNumber / totalFiles) * 100),
-              totalFiles: totalFiles,
-              processedFiles: processedCount
-            })
-          } else {
-            errors.push({ file: fileName, error: fileResult.error || "Erro desconhecido" })
-            
-            // Update file result with error
-            setFileProcessingResults(prev => prev.map((r, idx) => 
-              idx === i ? { 
-                ...r, 
-                status: "error" as const, 
-                error: fileResult.error || "Erro desconhecido",
-                time: fileTime
-              } : r
-            ))
-            
-            // Update progress even on error
-            setProcessingStatus({
-              status: "processing",
-              message: `✗ Erro em ${fileName}`,
-              progress: Math.round((fileNumber / totalFiles) * 100),
-              totalFiles: totalFiles,
-              processedFiles: processedCount
-            })
-          }
-        } catch (fileError) {
-          const errorMsg = fileError instanceof Error ? fileError.message : "Erro desconhecido"
-          errors.push({ file: fileName, error: errorMsg })
-          const fileTime = Math.floor((Date.now() - fileStartTime) / 1000)
-          
-          // Update file result with error
-          setFileProcessingResults(prev => prev.map((r, idx) => 
-            idx === i ? { 
-              ...r, 
-              status: "error" as const, 
-              error: errorMsg,
-              time: fileTime
-            } : r
-          ))
-          
-          // Update progress even on exception
-          setProcessingStatus({
-            status: "processing",
-            message: `✗ Erro em ${fileName}`,
-            progress: Math.round((fileNumber / totalFiles) * 100),
-            totalFiles: totalFiles,
-            processedFiles: processedCount
-          })
-        }
-      }
-      
-      // Chunking status
-      const chunkingSuccess = errors.length === 0
-      
-      // Save the list of successfully processed files (those without errors)
-      const successfullyProcessed = actualFilesToProcess.filter(
-        (f: string) => !errors.some(e => e.file === f)
-      )
-      setLastProcessedFiles(successfullyProcessed)
-      
-      if (!chunkingSuccess) {
-        setProcessingStatus({
-          status: "error",
-          message: `Concluído com ${errors.length} erro(s). ${totalChunks} segmentos criados.`,
-          progress: 100,
-          totalFiles: actualFilesToProcess.length,
-          processedFiles: processedCount
-        })
-        setVectorizationStatus(prev => ({
-          step: "error",
-          message: "Erros no processamento dos chunks. Vector Index não será criado.",
-          progress: 0,
-          stepTimes: prev.stepTimes
-        }))
-        return
-      }
-      
-      // =========================================================================
-      // STEP 3: Create Vector Index (only if Vector Search is available)
-      // =========================================================================
-      let indexCreated = false
-      const indexName = `${tableConfig.catalog}.${tableConfig.schema}.${tableConfig.tableName}_vs`
-      
-      // Calculate chunks processing time
-      const chunksEndTime = Date.now()
-      stepTimesLocal.chunks = Math.floor((chunksEndTime - chunksStartTime) / 1000)
-      const indexStartTime = Date.now()
-      
-      if (canUseVectorSearch && vsEndpointName) {
-        setStepStartTimes(prev => ({ ...prev, index: indexStartTime }))
-        setVectorizationStatus(prev => ({
-          step: "creating_index",
-          message: "Criando Vector Index...",
-          progress: 80,
-          stepTimes: { ...prev.stepTimes, endpoint: stepTimesLocal.endpoint, chunks: stepTimesLocal.chunks }
-        }))
-        
-        setProcessingStatus({
-          status: "processing",
-          message: `Segmentos criados! Criando Vector Index...`,
-          progress: 95,
-          totalFiles: actualFilesToProcess.length,
-          processedFiles: processedCount
-        })
-        
-        try {
-          // Helper function to wait for index sync
-          const waitForIndexSync = async (maxWaitSeconds: number = 300): Promise<{ success: boolean; message: string }> => {
-            const pollInterval = 5000 // 5 seconds
-            const maxAttempts = Math.ceil((maxWaitSeconds * 1000) / pollInterval)
-            let attempts = 0
-            
-            while (attempts < maxAttempts) {
-              attempts++
-              
-              const statusResponse = await fetch("/api/vector-search/index/status", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  tableConfig,
-                  endpoint_name: vsEndpointName,
-                  embedding_model: embeddingModel,
-                  sync_type: indexSyncType
-                })
-              })
-              
-              const statusResult = await statusResponse.json()
-              
-              if (statusResult.success) {
-                const indexStatus = statusResult.index_status || ""
-                
-                // Update UI with current status
-                setVectorizationStatus(prev => ({
-                  ...prev,
-                  message: `Sincronizando index... (${indexStatus})`,
-                }))
-                
-                // Check if sync is complete
-                if (statusResult.ready || indexStatus === "ONLINE") {
-                  return { success: true, message: "Sync completed" }
-                }
-                
-                // Check for error states
-                if (indexStatus === "FAILED" || indexStatus === "ERROR") {
-                  return { success: false, message: `Sync failed: ${statusResult.message || indexStatus}` }
-                }
-              }
-              
-              // Wait before next poll
-              await new Promise(resolve => setTimeout(resolve, pollInterval))
-            }
-            
-            return { success: false, message: "Sync timeout - index may still be syncing in background" }
-          }
-          
-          // First check if index already exists
-          const indexCheckResponse = await fetch("/api/vector-search/index/check", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              tableConfig,
-              endpoint_name: vsEndpointName,
+              endpoint_name: configuredEndpoint,
               embedding_model: embeddingModel,
               sync_type: indexSyncType
             })
           })
           
-          const indexCheckResult = await indexCheckResponse.json()
+          const syncResult = await syncResponse.json()
           
-          if (indexCheckResult.exists && !recreateIndex) {
-            // Index already exists and user wants to sync only
-            setVectorizationStatus(prev => ({
+          if (!syncResult.success) {
+            // Sync trigger failed - show error
+            const endTime = Date.now()
+            const totalTime = Math.floor((endTime - (processingStartTime || endTime)) / 1000)
+            setTotalProcessingTime(totalTime)
+            setStepEndTimes(prev => ({ ...prev, creating_index: endTime }))
+            
+            setAutoProcessStatus(prev => ({
               ...prev,
-              message: `Index "${indexName}" já existe. Sincronizando...`,
+              step: "error",
+              message: `Erro no sync: ${syncResult.error || "Falha desconhecida"}`,
+              progress: 95
             }))
             
-            // Trigger sync
-            const syncResponse = await fetch("/api/vector-search/index/sync", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                tableConfig,
-                endpoint_name: vsEndpointName,
-                embedding_model: embeddingModel,
-                sync_type: indexSyncType
-              })
+            toast.error("Erro ao sincronizar índice", {
+              description: syncResult.error,
+              duration: 8000
             })
-            
-            const syncResult = await syncResponse.json()
-            
-            if (syncResult.success) {
-              // Wait for sync to complete
-              const syncWaitResult = await waitForIndexSync(180) // 3 min max for existing index
-              
-              const indexEndTime = Date.now()
-              stepTimesLocal.index = Math.floor((indexEndTime - indexStartTime) / 1000)
-              
-              if (syncWaitResult.success) {
-                setVectorizationStatus(prev => ({
-                  step: "completed",
-                  message: `✓ Vector Index "${indexName}" sincronizado!`,
-                  progress: 100,
-                  stepTimes: { ...prev.stepTimes, index: stepTimesLocal.index }
-                }))
-                toast.success(`Vector Index "${indexName}" sincronizado!`, {
-                  duration: 6000
-                })
-              } else {
-                setVectorizationStatus(prev => ({
-                  step: "completed",
-                  message: `✓ Vector Index "${indexName}" - sync em andamento`,
-                  progress: 100,
-                  stepTimes: { ...prev.stepTimes, index: stepTimesLocal.index }
-                }))
-                toast.info(`Sync do index iniciado. Pode continuar em background.`, {
-                  duration: 6000
-                })
-              }
-              indexCreated = true
-            } else {
-              // Sync trigger failed, but index exists
-              const indexEndTime = Date.now()
-              stepTimesLocal.index = Math.floor((indexEndTime - indexStartTime) / 1000)
-              setVectorizationStatus(prev => ({
-                step: "completed",
-                message: `✓ Vector Index "${indexName}" já existe (sync automático)`,
-                progress: 100,
-                stepTimes: { ...prev.stepTimes, index: stepTimesLocal.index }
-              }))
-              toast.info(`Vector Index "${indexName}" já existe. Sync será automático.`)
-              indexCreated = true
-            }
-          } else {
-            // Delete existing index if recreateIndex is enabled
-            if (indexCheckResult.exists && recreateIndex) {
-              setVectorizationStatus(prev => ({
-                ...prev,
-                message: `Deletando index existente "${indexName}"...`,
-              }))
-              
-              const deleteResponse = await fetch("/api/vector-search/index/delete", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  tableConfig,
-                  endpoint_name: vsEndpointName,
-                  embedding_model: embeddingModel,
-                  sync_type: indexSyncType
-                })
-              })
-              
-              const deleteResult = await deleteResponse.json()
-              
-              if (!deleteResult.success) {
-                toast.warning(`Erro ao deletar index: ${deleteResult.error}`)
-              } else {
-                toast.info(`Index "${indexName}" deletado. Recriando...`)
-                // Wait a bit for deletion to propagate
-                await new Promise(resolve => setTimeout(resolve, 3000))
-              }
-            }
-            
-            // Create new index
-            const indexCreateResponse = await fetch("/api/vector-search/index/create", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                tableConfig,
-                endpoint_name: vsEndpointName,
-                embedding_model: embeddingModel,
-                sync_type: indexSyncType
-              })
-            })
-            
-            const indexCreateResult = await indexCreateResponse.json()
-            
-            if (indexCreateResult.success) {
-              // Wait for sync to complete
-              setVectorizationStatus(prev => ({
-                ...prev,
-                message: `Index criado! Aguardando sync...`,
-              }))
-              
-              const syncWaitResult = await waitForIndexSync(300) // 5 min max for new index
-              
-              const indexEndTime = Date.now()
-              stepTimesLocal.index = Math.floor((indexEndTime - indexStartTime) / 1000)
-              
-              if (syncWaitResult.success) {
-                setVectorizationStatus(prev => ({
-                  step: "completed",
-                  message: `✓ Vector Index "${indexName}" criado e sincronizado!`,
-                  progress: 100,
-                  stepTimes: { ...prev.stepTimes, index: stepTimesLocal.index }
-                }))
-                toast.success(`Vector Index "${indexName}" pronto!`, {
-                  description: `Modelo: ${embeddingModel}, Sync: ${indexSyncType}`,
-                  duration: 6000
-                })
-              } else {
-                setVectorizationStatus(prev => ({
-                  step: "completed",
-                  message: `✓ Vector Index "${indexName}" criado - sync em andamento`,
-                  progress: 100,
-                  stepTimes: { ...prev.stepTimes, index: stepTimesLocal.index }
-                }))
-                toast.info(`Index criado! Sync pode continuar em background.`, {
-                  description: syncWaitResult.message,
-                  duration: 8000
-                })
-              }
-              indexCreated = true
-            } else {
-              setVectorizationStatus(prev => ({
-                step: "error",
-                message: `Erro ao criar Vector Index: ${indexCreateResult.error}`,
-                progress: 0,
-                stepTimes: prev.stepTimes
-              }))
-              toast.warning("Erro ao criar Vector Index", {
-                description: indexCreateResult.error,
-                duration: 8000
-              })
-            }
+            return
           }
-        } catch (indexError) {
-          setVectorizationStatus(prev => ({
-            step: "error",
-            message: `Erro ao criar Vector Index: ${indexError instanceof Error ? indexError.message : "Erro desconhecido"}`,
-            progress: 0,
-            stepTimes: prev.stepTimes
+          
+          // Monitor sync status until ready
+          await monitorIndexStatus(chunksCount)
+          return
+        } else {
+          // Different endpoint -> delete and recreate
+          setAutoProcessStatus(prev => ({
+            ...prev,
+            message: `Endpoint diferente (${existingEndpoint}). Recriando...`
           }))
-          toast.warning("Erro ao criar Vector Index", {
-            description: "Os chunks foram criados com sucesso.",
-            duration: 6000
+          
+          toast.info(`Index usa endpoint diferente. Recriando com ${configuredEndpoint}...`)
+          
+          const deleteResponse = await fetch("/api/vector-search/index/delete", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              tableConfig,
+              endpoint_name: configuredEndpoint,
+              embedding_model: embeddingModel,
+              sync_type: indexSyncType
+            })
           })
+          
+          if (deleteResponse.ok) {
+            console.log("Index deleted, waiting before recreation...")
+            await new Promise(resolve => setTimeout(resolve, 3000))
+          }
         }
-      } else {
-        // Vector Search not available - chunks only
-        setVectorizationStatus(prev => ({
-          step: "completed",
-          message: vectorSearchError || "Vector Search não configurado. Apenas chunks foram criados.",
-          progress: 100,
-          stepTimes: { ...prev.stepTimes, chunks: stepTimesLocal.chunks }
-        }))
       }
       
-      // Final status
-      const finalSuccess = canUseVectorSearch ? indexCreated : true // Success if chunks created (even without index)
-      setProcessingStatus({
-        status: finalSuccess ? "completed" : "error",
-        message: canUseVectorSearch 
-          ? (indexCreated 
-            ? `Processamento concluído! ${totalChunks} segmentos criados e Vector Index pronto.`
-            : `Segmentos criados mas erro no Vector Index.`)
-          : `Processamento concluído! ${totalChunks} segmentos criados. (Vector Index não disponível)`,
-        progress: 100,
-        totalFiles: actualFilesToProcess.length,
-        processedFiles: processedCount
-      })
-      
-      if (finalSuccess) {
-        toast.success("Processamento concluído!", {
-          description: canUseVectorSearch && indexCreated
-            ? `${processedCount} arquivos → ${totalChunks} segmentos → Vector Index pronto`
-            : `${processedCount} arquivos → ${totalChunks} segmentos criados`,
-          duration: 6000
-        })
-      }
-      
-      // Refresh file list to show imported status
-      await loadVolumeFiles()
-      
-      // Update table info with total chunks created
-      setExistingRecords(totalChunks)
-      
-    } catch (error) {
-      console.error("Processing error:", error)
-      setProcessingStatus({
-        status: "error",
-        message: error instanceof Error ? error.message : "Erro no processamento",
-        progress: 0,
-        totalFiles: filesToProcess.length,
-        processedFiles: 0
-      })
-      
-      setVectorizationStatus(prev => ({
-        step: "error",
-        message: error instanceof Error ? error.message : "Erro no processamento",
-        progress: 0,
-        stepTimes: prev.stepTimes
+      // Step 2: Create new index (either doesn't exist or was deleted)
+      setAutoProcessStatus(prev => ({
+        ...prev,
+        message: t("prepare.autoProcess.creatingIndex")
       }))
       
-      toast.error("Erro no processamento", {
-        description: error instanceof Error ? error.message : "Erro desconhecido",
-        duration: 6000
+      // Use AbortController for timeout handling
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 55000) // 55s to avoid gateway timeout
+      
+      try {
+        const createResponse = await fetch("/api/vector-search/index/create", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            tableConfig,
+            endpoint_name: configuredEndpoint,
+            embedding_model: embeddingModel,
+            sync_type: indexSyncType
+          }),
+          signal: controller.signal
+        })
+        
+        clearTimeout(timeoutId)
+        const createResult = await createResponse.json()
+        
+        if (createResult.success || createResult.timeout) {
+          // Index creation initiated (or timed out but may still be creating)
+          setAutoProcessStatus(prev => ({
+            ...prev,
+            message: createResult.timeout 
+              ? "Criação iniciada. Aguardando sincronização..." 
+              : "Index criado. Aguardando sincronização..."
+          }))
+          
+          // Wait a bit before polling
+          await new Promise(resolve => setTimeout(resolve, 3000))
+          await monitorIndexStatus(chunksCount)
+        } else {
+          throw new Error(createResult.error || "Falha ao criar index")
+        }
+      } catch (fetchError) {
+        clearTimeout(timeoutId)
+        
+        // If aborted due to timeout, still try to monitor (index may be creating)
+        if (fetchError instanceof Error && fetchError.name === "AbortError") {
+          console.log("Create request timed out, will poll status anyway...")
+          setAutoProcessStatus(prev => ({
+            ...prev,
+            message: "Timeout na requisição. Verificando status..."
+          }))
+          
+          // Wait a bit then check if index was created
+          await new Promise(resolve => setTimeout(resolve, 5000))
+          await monitorIndexStatus(chunksCount)
+          return
+        }
+        
+        throw fetchError
+      }
+      
+    } catch (error) {
+      console.error("Vector index creation error:", error)
+      setStepEndTimes(prev => ({ ...prev, creating_index: Date.now() }))
+      
+      const errorMsg = error instanceof Error ? error.message : "erro desconhecido"
+      
+      setAutoProcessStatus(prev => ({
+        ...prev,
+        step: "error",
+        message: `Erro no índice: ${errorMsg}`,
+        progress: 95
+      }))
+      
+      setProcessingStatus({
+        status: "error",
+        message: `Chunks criados. Vector Index com erro: ${errorMsg}`,
+        progress: 100,
+        totalFiles: selectedDocuments.size,
+        processedFiles: selectedDocuments.size
+      })
+      
+      toast.error("Erro na criação do Vector Index", {
+        description: errorMsg,
+        duration: 8000
       })
     }
   }
@@ -1563,195 +1279,6 @@ export default function PreparePage() {
     <>
       <Toaster position="top-right" richColors closeButton />
       
-      {/* Chunking Preview Modal */}
-      {showChunkingPreview && chunkPreviewData.length > 0 && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-xl shadow-2xl max-w-5xl w-full max-h-[90vh] flex flex-col">
-            {/* Header */}
-            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-              <div>
-                <h3 className="text-xl font-bold text-[var(--color-text)]">
-                  {t("prepare.preview.title")}
-                </h3>
-                <p className="text-sm text-gray-600">
-                  Ajuste a estratégia e visualize os resultados antes de processar
-                </p>
-              </div>
-              <button
-                onClick={() => setShowChunkingPreview(false)}
-                className="text-gray-400 hover:text-gray-600 transition-colors"
-              >
-                <XCircle className="h-6 w-6" />
-              </button>
-            </div>
-
-            {/* Strategy controls */}
-            <div className="px-6 py-3 bg-gray-50 border-b border-gray-200">
-              <div className="flex items-center gap-4 flex-wrap">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium text-gray-700">Estratégia:</span>
-                  <select
-                    value={selectedStrategy}
-                    onChange={(e) => setSelectedStrategy(e.target.value)}
-                    className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
-                  >
-                    {CHUNKING_STRATEGIES.map((s) => (
-                      <option key={s.id} value={s.id}>{s.name}</option>
-                    ))}
-                  </select>
-                </div>
-                
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-gray-600">Tamanho:</span>
-                  <input
-                    type="number"
-                    value={chunkingParams.chunkSize}
-                    onChange={(e) => setChunkingParams(prev => ({ ...prev, chunkSize: parseInt(e.target.value) || 500 }))}
-                    min={100}
-                    max={4000}
-                    step={100}
-                    className="w-20 px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
-                  />
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-gray-600">Sobreposição:</span>
-                  <input
-                    type="number"
-                    value={chunkingParams.chunkOverlap}
-                    onChange={(e) => setChunkingParams(prev => ({ ...prev, chunkOverlap: parseInt(e.target.value) || 0 }))}
-                    min={0}
-                    max={500}
-                    step={50}
-                    className="w-20 px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
-                  />
-                </div>
-                
-                <button
-                  onClick={() => {
-                    setPreviewDocIndex(0)
-                    setPreviewChunkIndex(0)
-                    loadChunkingPreview()
-                  }}
-                  disabled={isLoadingChunkPreview}
-                  className="px-4 py-2 text-sm font-medium text-white bg-[var(--color-primary)] rounded-lg hover:bg-[var(--color-primary)]/90 transition-colors disabled:opacity-50 flex items-center gap-2"
-                >
-                  {isLoadingChunkPreview ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <RefreshCw className="h-4 w-4" />
-                  )}
-                  Atualizar Prévia
-                </button>
-              </div>
-            </div>
-
-            {/* Document selector */}
-            <div className="px-6 py-3 border-b border-gray-200">
-              <div className="flex items-center gap-3">
-                <span className="text-sm font-medium text-gray-700">Documento:</span>
-                <div className="flex gap-1">
-                  {chunkPreviewData.map((doc, idx) => (
-                    <button
-                      key={doc.id}
-                      onClick={() => {
-                        setPreviewDocIndex(idx)
-                        setPreviewChunkIndex(0)
-                      }}
-                      className={`px-3 py-1.5 text-xs font-medium rounded-full transition-colors ${
-                        previewDocIndex === idx
-                          ? "bg-[var(--color-primary)] text-white"
-                          : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-100"
-                      }`}
-                    >
-                      Doc {idx + 1}
-                    </button>
-                  ))}
-                </div>
-                <span className="text-sm text-gray-500 ml-2 truncate max-w-sm">
-                  {chunkPreviewData[previewDocIndex]?.fileName}
-                </span>
-              </div>
-            </div>
-
-            {/* Chunk navigation */}
-            {chunkPreviewData[previewDocIndex] && (
-              <div className="px-6 py-3 border-b border-gray-200 flex items-center justify-between">
-                <span className="text-sm text-gray-600">
-                  Segmento {previewChunkIndex + 1} de {chunkPreviewData[previewDocIndex].totalChunks}
-                  {chunkPreviewData[previewDocIndex].totalChunks > 10 && (
-                    <span className="text-xs text-gray-400 ml-1">(mostrando até 10)</span>
-                  )}
-                </span>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setPreviewChunkIndex(Math.max(0, previewChunkIndex - 1))}
-                    disabled={previewChunkIndex === 0}
-                    className="p-1.5 rounded-lg hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                  >
-                    <ChevronLeft className="h-5 w-5" />
-                  </button>
-                  <button
-                    onClick={() => setPreviewChunkIndex(Math.min(
-                      chunkPreviewData[previewDocIndex].chunks.length - 1,
-                      previewChunkIndex + 1
-                    ))}
-                    disabled={previewChunkIndex >= chunkPreviewData[previewDocIndex].chunks.length - 1}
-                    className="p-1.5 rounded-lg hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                  >
-                    <ChevronRight className="h-5 w-5" />
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Chunk content - larger and scrollable */}
-            <div className="flex-1 overflow-y-auto p-6">
-              {chunkPreviewData[previewDocIndex] && (
-                <div className="bg-gray-50 rounded-lg border border-gray-200 h-full flex flex-col">
-                  <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
-                    <span className="text-sm font-medium text-[var(--color-primary)]">
-                      Segmento #{previewChunkIndex + 1}
-                    </span>
-                    <span className="text-sm text-gray-500">
-                      {chunkPreviewData[previewDocIndex].chunks[previewChunkIndex]?.length || 0} caracteres
-                    </span>
-                  </div>
-                  <pre className="flex-1 whitespace-pre-wrap text-sm text-gray-700 font-mono p-4 overflow-y-auto min-h-[300px] max-h-[50vh]">
-                    {chunkPreviewData[previewDocIndex].chunks[previewChunkIndex]?.content || ""}
-                  </pre>
-                </div>
-              )}
-            </div>
-
-            {/* Footer */}
-            <div className="px-6 py-4 border-t border-gray-200 bg-gray-50 flex items-center justify-between">
-              <span className="text-sm text-gray-500">
-                Total: {chunkPreviewData.reduce((sum, doc) => sum + doc.totalChunks, 0)} segmentos em {chunkPreviewData.length} documento(s)
-              </span>
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={() => setShowChunkingPreview(false)}
-                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 transition-colors"
-                >
-                  {t("common.close")}
-                </button>
-                <button
-                  onClick={() => {
-                    setShowChunkingPreview(false)
-                    setShowProcessConfirmModal(true)
-                  }}
-                  disabled={processingStatus.status === "processing"}
-                  className="px-4 py-2 text-sm font-medium text-white bg-[var(--color-primary)] rounded-lg hover:bg-[var(--color-primary)]/90 transition-colors shadow-sm disabled:opacity-50 flex items-center gap-2"
-                >
-                  <Play className="h-4 w-4" />
-                  {t("prepare.step3.confirmProcess")}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Existing Chunk Preview Modal (from database) */}
       {showExistingPreview && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
@@ -1877,228 +1404,13 @@ export default function PreparePage() {
           </p>
         </div>
 
-        {/* Step 1: Table Configuration */}
-        <div className={`bg-white rounded-xl border shadow-sm overflow-hidden transition-all ${
-          activeStep === 1 ? 'border-[var(--color-primary)]' : 'border-gray-200'
-        }`}>
-          <button
-            onClick={() => setActiveStep(activeStep === 1 ? null : 1)}
-            className="w-full px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between hover:bg-gray-100 transition-colors"
-          >
-            <div className="flex items-center gap-2">
-              {completedSteps.has(1) ? (
-                <CheckCircle2 className="h-5 w-5 text-[var(--color-success)]" />
-              ) : (
-                <Database className="h-5 w-5 text-[var(--color-primary)]" />
-              )}
-              <h2 className="text-lg font-semibold text-[var(--color-text)]">{t("prepare.step1.title")}</h2>
-            </div>
-            <div className="flex items-center gap-2">
-              {completedSteps.has(1) && (
-                <span className="text-sm text-[var(--color-success)]">{t("prepare.step2.completed")}</span>
-              )}
-              <ChevronRight className={`h-5 w-5 text-gray-400 transition-transform ${activeStep === 1 ? 'rotate-90' : ''}`} />
-            </div>
-          </button>
-          
-          {activeStep === 1 && (
-            <div className="p-4">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {t("common.catalog")}
-                  </label>
-                  <input
-                    type="text"
-                    value={tableConfig.catalog}
-                    onChange={(e) => {
-                      setTableConfig(prev => ({ ...prev, catalog: e.target.value }))
-                      setIsConfigSaved(false)
-                      setCompletedSteps(prev => { const newSet = new Set(prev); newSet.delete(1); return newSet })
-                    }}
-                    placeholder="ex: fabio_goncalves"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {t("common.schema")}
-                  </label>
-                  <input
-                    type="text"
-                    value={tableConfig.schema}
-                    onChange={(e) => {
-                      setTableConfig(prev => ({ ...prev, schema: e.target.value }))
-                      setIsConfigSaved(false)
-                      setCompletedSteps(prev => { const newSet = new Set(prev); newSet.delete(1); return newSet })
-                    }}
-                    placeholder="ex: customer_cielo"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {t("common.tableName")}
-                  </label>
-                  <input
-                    type="text"
-                    value={tableConfig.tableName}
-                    onChange={(e) => {
-                      setTableConfig(prev => ({ ...prev, tableName: e.target.value }))
-                      setIsConfigSaved(false)
-                      setCompletedSteps(prev => { const newSet = new Set(prev); newSet.delete(1); return newSet })
-                    }}
-                    placeholder="ex: contracts"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
-                  />
-                </div>
-              </div>
-              
-              {/* Vector Search Configuration */}
-              <div className="mt-4 grid grid-cols-2 gap-4">
-                {/* Embedding Model */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {t("prepare.step1.embeddingModel")}
-                  </label>
-                  <select
-                    value={embeddingModel}
-                    onChange={(e) => {
-                      setEmbeddingModel(e.target.value)
-                      setIsConfigSaved(false)
-                      setCompletedSteps(prev => { const newSet = new Set(prev); newSet.delete(1); return newSet })
-                    }}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)] bg-white"
-                  >
-                    <option value="databricks-gte-large-en">databricks-gte-large-en</option>
-                    <option value="databricks-bge-large-en">databricks-bge-large-en</option>
-                  </select>
-                  <p className="mt-1 text-xs text-gray-500">{t("prepare.step1.embeddingModelHint")}</p>
-                </div>
-                
-                {/* Sync Type */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {t("prepare.step1.indexSyncType")}
-                  </label>
-                  <select
-                    value={indexSyncType}
-                    onChange={(e) => {
-                      setIndexSyncType(e.target.value as "TRIGGERED" | "CONTINUOUS")
-                      setIsConfigSaved(false)
-                      setCompletedSteps(prev => { const newSet = new Set(prev); newSet.delete(1); return newSet })
-                    }}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)] bg-white"
-                  >
-                    <option value="TRIGGERED">{t("prepare.step1.syncTriggered")}</option>
-                    <option value="CONTINUOUS">{t("prepare.step1.syncContinuous")}</option>
-                  </select>
-                  <p className="mt-1 text-xs text-gray-500">{t("prepare.step1.indexSyncTypeHint")}</p>
-                </div>
-              </div>
-              
-              {/* Recreate Index Option */}
-              <div className="mt-4">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={recreateIndex}
-                    onChange={(e) => setRecreateIndex(e.target.checked)}
-                    className="rounded border-gray-300 text-[var(--color-primary)] focus:ring-[var(--color-primary)]"
-                  />
-                  <span className="text-sm text-gray-700">{t("prepare.step1.recreateIndex")}</span>
-                </label>
-                <p className="mt-1 text-xs text-gray-500 ml-6">{t("prepare.step1.recreateIndexHint")}</p>
-              </div>
-
-              {/* Preview das tabelas que serão criadas/usadas */}
-              {tableConfig.tableName && (
-                <div className="mt-3 p-3 bg-[var(--color-accent-light)] border border-[var(--color-accent-lighter)] rounded-lg">
-                  <div className="grid grid-cols-3 gap-4">
-                    <div>
-                      <p className="text-xs font-medium text-[var(--color-accent)] mb-1">{t("prepare.step1.tableCreated")}</p>
-                      <code className="bg-[var(--color-accent-lighter)] text-[var(--color-accent)] px-2 py-1 rounded text-xs font-mono">
-                        {tableConfig.catalog || "catalogo"}.{tableConfig.schema || "schema"}.{tableConfig.tableName}_chunks
-                      </code>
-                    </div>
-                    <div>
-                      <p className="text-xs font-medium text-[var(--color-accent)] mb-1">{t("prepare.step1.tableUsed")}</p>
-                      <code className="bg-[var(--color-accent-lighter)] text-[var(--color-accent)] px-2 py-1 rounded text-xs font-mono">
-                        {initialTableConfig.catalog || "catalogo"}.{initialTableConfig.schema || "schema"}.{initialTableConfig.tableName}_parsed
-                      </code>
-                    </div>
-                    <div>
-                      <p className="text-xs font-medium text-[var(--color-accent)] mb-1">{t("prepare.step1.indexCreated")}</p>
-                      <code className="bg-[var(--color-accent-lighter)] text-[var(--color-accent)] px-2 py-1 rounded text-xs font-mono">
-                        {tableConfig.catalog || "catalogo"}.{tableConfig.schema || "schema"}.{tableConfig.tableName}_vs
-                      </code>
-                    </div>
-                  </div>
-                </div>
-              )}
-              
-              <div className="mt-4 pt-4 border-t border-gray-200 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  {isConfigSaved && (
-                    <span className="flex items-center gap-2 text-sm text-[var(--color-success)]">
-                      <CheckCircle2 className="h-4 w-4" />
-                      {t("prepare.step1.configValid")}
-                    </span>
-                  )}
-                </div>
-                
-                <div className="flex items-center gap-3">
-                  {!isConfigSaved ? (
-                    <>
-                      <button
-                        onClick={() => {
-                          setTableConfig(initialTableConfig)
-                        }}
-                        className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors flex items-center gap-2"
-                      >
-                        <X className="h-4 w-4" />
-                        {t("common.cancel")}
-                      </button>
-                      <button
-                        onClick={async () => {
-                          await checkTableExists()
-                        }}
-                        disabled={processingStatus.status === "checking" || !tableConfig.catalog || !tableConfig.schema || !tableConfig.tableName}
-                        className="px-4 py-2 text-sm font-medium text-white bg-[var(--color-primary)] rounded-lg hover:bg-[var(--color-primary)]/90 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                      >
-                        {processingStatus.status === "checking" ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <Check className="h-4 w-4" />
-                        )}
-                        {t("common.verifySave")}
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      onClick={() => {
-                        setCompletedSteps(prev => new Set([...prev, 1]))
-                        setActiveStep(2)
-                      }}
-                      className="px-4 py-2 text-sm font-medium text-white bg-[var(--color-primary)] rounded-lg hover:bg-[var(--color-primary)]/90 transition-colors shadow-sm flex items-center gap-2"
-                    >
-                      {t("common.next")}
-                      <ChevronRight className="h-4 w-4" />
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Step 2: Select Documents from _parsed table */}
+        {/* Step 1: Select Documents from _parsed table */}
         <div className={`bg-white rounded-xl border shadow-sm overflow-hidden transition-all ${
           activeStep === 2 ? 'border-[var(--color-primary)]' : 'border-gray-200'
         }`}>
           <button
             onClick={() => setActiveStep(activeStep === 2 ? null : 2)}
-            disabled={!completedSteps.has(1) && !isConfigSaved}
+            disabled={!isConfigSaved}
             className="w-full px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <div className="flex items-center gap-2">
@@ -2450,444 +1762,535 @@ export default function PreparePage() {
           </div>
         )}
 
-        {/* Step 3: Chunking Strategy */}
-        <div className={`bg-white rounded-xl border shadow-sm overflow-hidden transition-all ${
-          activeStep === 3 ? 'border-[var(--color-primary)]' : 'border-gray-200'
-        }`}>
-          <button
-            onClick={() => setActiveStep(activeStep === 3 ? null : 3)}
-            disabled={!completedSteps.has(2)}
-            className="w-full px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <div className="flex items-center gap-2">
-              {completedSteps.has(3) ? (
-                <CheckCircle2 className="h-5 w-5 text-[var(--color-success)]" />
-              ) : (
-                <Layers className="h-5 w-5 text-[var(--color-primary)]" />
-              )}
-              <h2 className="text-lg font-semibold text-[var(--color-text)]">{t("prepare.step3.title")}</h2>
-            </div>
-            <div className="flex items-center gap-2">
-              {completedSteps.has(3) && (
-                <span className="text-sm text-[var(--color-success)]">{t("prepare.step2.completed")}</span>
-              )}
-              {selectedStrategy && !completedSteps.has(3) && (
-                <span className="text-sm text-gray-500">
-                  {CHUNKING_STRATEGIES.find(s => s.id === selectedStrategy)?.name}
-                </span>
-              )}
-              <ChevronRight className={`h-5 w-5 text-gray-400 transition-transform ${activeStep === 3 ? 'rotate-90' : ''}`} />
-            </div>
-          </button>
-          
-          {activeStep === 3 && (
-          <div className="p-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {CHUNKING_STRATEGIES.map((strategy) => (
+        {/* Strategy Chunks Preview Modal */}
+        {viewingChunksStrategy && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+            <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col">
+              <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between bg-gray-50">
+                <div>
+                  <h3 className="text-lg font-semibold text-[var(--color-text)]">
+                    Prévia dos Chunks - Estratégia {viewingChunksStrategy}: {
+                      viewingChunksStrategy === "A" ? t("prepare.autoProcess.steps.recursive") :
+                      viewingChunksStrategy === "B" ? t("prepare.autoProcess.steps.fixedSize") :
+                      t("prepare.autoProcess.steps.structural")
+                    }
+                  </h3>
+                  <p className="text-sm text-gray-500 mt-0.5">
+                    {viewingChunksStrategy === "A" && autoProcessStatus.evaluationA && (
+                      <>{autoProcessStatus.evaluationA.chunks_count} chunks totais • Score: {autoProcessStatus.evaluationA.avg_score.toFixed(1)}/10</>
+                    )}
+                    {viewingChunksStrategy === "B" && autoProcessStatus.evaluationB && (
+                      <>{autoProcessStatus.evaluationB.chunks_count} chunks totais • Score: {autoProcessStatus.evaluationB.avg_score.toFixed(1)}/10</>
+                    )}
+                    {viewingChunksStrategy === "C" && autoProcessStatus.evaluationC && (
+                      <>{autoProcessStatus.evaluationC.chunks_count} chunks totais • Score: {autoProcessStatus.evaluationC.avg_score.toFixed(1)}/10</>
+                    )}
+                  </p>
+                </div>
                 <button
-                  key={strategy.id}
-                  onClick={() => {
-                    setSelectedStrategy(strategy.id)
-                    if (strategy.params.chunkSize) {
-                      setChunkingParams(prev => ({ ...prev, chunkSize: strategy.params.chunkSize! }))
-                    }
-                    if (strategy.params.chunkOverlap !== undefined) {
-                      setChunkingParams(prev => ({ ...prev, chunkOverlap: strategy.params.chunkOverlap! }))
-                    }
-                  }}
-                  className={`p-4 rounded-lg border-2 text-left transition-all ${
-                    selectedStrategy === strategy.id
-                      ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]"
-                      : "border-gray-200 hover:border-gray-300"
-                  }`}
+                  onClick={() => setViewingChunksStrategy(null)}
+                  className="p-2 text-gray-400 hover:text-gray-600 transition-colors"
                 >
-                  <div className="font-semibold text-[var(--color-text)] mb-1">{strategy.name}</div>
-                  <div className="text-xs text-gray-600">{strategy.description}</div>
+                  <X className="h-5 w-5" />
                 </button>
-              ))}
-            </div>
-            
-            {/* Chunking Parameters */}
-            <div className="mt-4 pt-4 border-t border-gray-200">
-              <h3 className="text-sm font-medium text-gray-700 mb-3">Parâmetros</h3>
-                
-                {/* Separator controls for by_separator strategy */}
-                {selectedStrategy === "by_separator" && (
-                  <div className="mb-4 p-3 bg-gray-50 rounded-lg">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Tipo de Separador
-                    </label>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
-                      {SEPARATOR_TYPES.map((sep) => (
-                        <button
-                          key={sep.id}
-                          onClick={() => setChunkingParams(prev => ({ 
-                            ...prev, 
-                            separatorType: sep.id,
-                            customSeparator: sep.id === "custom" ? prev.customSeparator : ""
-                          }))}
-                          className={`px-3 py-2 text-xs font-medium rounded-lg border transition-colors ${
-                            chunkingParams.separatorType === sep.id
-                              ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] text-[var(--color-primary)]"
-                              : "border-gray-300 bg-white text-gray-700 hover:border-gray-400"
-                          }`}
-                        >
-                          {sep.name}
-                        </button>
-                      ))}
-                    </div>
+              </div>
+              <div className="flex-1 overflow-auto p-4">
+                <div className="space-y-3">
+                  {(() => {
+                    const chunks = viewingChunksStrategy === "A" ? autoProcessStatus.evaluationA?.sample_chunks :
+                                   viewingChunksStrategy === "B" ? autoProcessStatus.evaluationB?.sample_chunks :
+                                   autoProcessStatus.evaluationC?.sample_chunks
                     
-                    {/* Custom separator input */}
-                    {chunkingParams.separatorType === "custom" && (
-                      <div>
-                        <label className="block text-sm text-gray-600 mb-1">
-                          Separador personalizado
-                        </label>
-                        <input
-                          type="text"
-                          value={chunkingParams.customSeparator}
-                          onChange={(e) => setChunkingParams(prev => ({ ...prev, customSeparator: e.target.value }))}
-                          placeholder="Ex: --- ou ### ou ;"
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
-                        />
-                        <p className="mt-1 text-xs text-gray-500">
-                          Dica: Use \n para linha, \n\n para parágrafo, ou qualquer texto
-                        </p>
+                    if (!chunks || chunks.length === 0) {
+                      return <p className="text-gray-500 text-sm">Nenhum chunk disponível para visualização</p>
+                    }
+                    
+                    // Group by file
+                    const byFile = chunks.reduce((acc, chunk) => {
+                      if (!acc[chunk.file_name]) acc[chunk.file_name] = []
+                      acc[chunk.file_name].push(chunk)
+                      return acc
+                    }, {} as Record<string, SampleChunk[]>)
+                    
+                    return Object.entries(byFile).map(([fileName, fileChunks]) => (
+                      <div key={fileName} className="border border-gray-200 rounded-lg overflow-hidden">
+                        <div className="px-3 py-2 bg-gray-50 border-b border-gray-200">
+                          <span className="text-sm font-medium text-gray-700">{fileName}</span>
+                          <span className="text-xs text-gray-500 ml-2">({fileChunks[0]?.total_chunks} chunks)</span>
+                        </div>
+                        <div className="divide-y divide-gray-100">
+                          {fileChunks.map((chunk, idx) => (
+                            <div key={idx} className="p-3">
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className="text-xs font-mono bg-gray-100 px-1.5 py-0.5 rounded text-gray-600">
+                                  #{chunk.chunk_index + 1}
+                                </span>
+                                <span className="text-xs text-gray-400">{chunk.char_count} caracteres</span>
+                              </div>
+                              <pre className="text-xs text-gray-600 whitespace-pre-wrap font-mono bg-gray-50 p-2 rounded">
+                                {chunk.content}
+                              </pre>
+                            </div>
+                          ))}
+                        </div>
                       </div>
-                    )}
-                    
-                    <p className="mt-2 text-xs text-gray-500">
-                      ⚡ Fallback automático: se não encontrar o separador, tentará: parágrafo → linha → ponto → espaço
-                    </p>
-                  </div>
-                )}
-                
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm text-gray-600 mb-1">
-                      Tamanho máximo do segmento (caracteres)
-                    </label>
-                    <input
-                      type="number"
-                      value={chunkingParams.chunkSize}
-                      onChange={(e) => setChunkingParams(prev => ({ ...prev, chunkSize: parseInt(e.target.value) || 1000 }))}
-                      min={100}
-                      max={10000}
-                      step={100}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
-                    />
-                    {selectedStrategy === "by_separator" && (
-                      <p className="mt-1 text-xs text-gray-500">
-                        Se um bloco ultrapassar este limite, será subdividido
-                      </p>
-                    )}
-                  </div>
-                  {selectedStrategy !== "semantic" && selectedStrategy !== "by_separator" && (
-                    <div>
-                      <label className="block text-sm text-gray-600 mb-1">
-                        Sobreposição (caracteres)
-                      </label>
-                      <input
-                        type="number"
-                        value={chunkingParams.chunkOverlap}
-                        onChange={(e) => setChunkingParams(prev => ({ ...prev, chunkOverlap: parseInt(e.target.value) || 0 }))}
-                        min={0}
-                        max={500}
-                        step={50}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
-                      />
-                    </div>
-                  )}
+                    ))
+                  })()}
                 </div>
               </div>
-            
-            {/* Preview button */}
-            <div className="mt-4 pt-4 border-t border-gray-200 flex items-center justify-between">
-              <div className="flex items-center gap-3">
+              <div className="px-4 py-3 border-t border-gray-200 bg-gray-50 flex justify-end">
                 <button
-                  onClick={loadChunkingPreview}
-                  disabled={isLoadingChunkPreview || selectedDocuments.size === 0}
-                  className="px-4 py-2 text-sm font-medium text-[var(--color-primary)] border border-[var(--color-primary)] rounded-lg hover:bg-[var(--color-primary-light)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                  onClick={() => setViewingChunksStrategy(null)}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
                 >
-                  {isLoadingChunkPreview ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Eye className="h-4 w-4" />
-                  )}
-                    {t("prepare.step3.preview")}
+                  Fechar
                 </button>
-                <span className="text-sm text-gray-500">
-                  {CHUNKING_STRATEGIES.find(s => s.id === selectedStrategy)?.name}
-                  {" "} • {chunkingParams.chunkSize} chars, {chunkingParams.chunkOverlap} sobreposição
-                </span>
               </div>
-              <button
-                onClick={() => setShowProcessConfirmModal(true)}
-                disabled={processingStatus.status === "processing" || selectedDocuments.size === 0}
-                className="px-4 py-2 text-sm font-medium text-white bg-[var(--color-primary)] rounded-lg hover:bg-[var(--color-primary)]/90 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-              >
-                {processingStatus.status === "processing" ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Processando...
-                  </>
-                ) : (
-                  <>
-                    <Play className="h-4 w-4" />
-                    Confirmar e Processar
-                  </>
-                )}
-              </button>
             </div>
-            
           </div>
-          )}
-        </div>
+        )}
 
-        {/* Processing Status */}
-        {processingStatus.status !== "idle" && (
+        {/* Auto Processing Status */}
+        {autoProcessStatus.step !== "idle" && (
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
           <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center gap-2">
-            {processingStatus.status === "completed" ? (
+            {autoProcessStatus.step === "completed" ? (
               <CheckCircle2 className="h-5 w-5 text-[var(--color-success)]" />
-            ) : processingStatus.status === "error" ? (
+            ) : autoProcessStatus.step === "error" ? (
               <XCircle className="h-5 w-5 text-red-600" />
             ) : (
               <Loader2 className="h-5 w-5 text-[var(--color-primary)] animate-spin" />
             )}
             <h2 className="text-lg font-semibold text-[var(--color-text)]">
-              {processingStatus.status === "completed" ? "Processamento Concluído" :
-               processingStatus.status === "error" ? "Erro no Processamento" :
-               "Processando..."}
+              {autoProcessStatus.step === "completed" ? "Processamento Concluído" :
+               autoProcessStatus.step === "error" ? "Erro no Processamento" :
+               "Processamento Automático"}
             </h2>
+            {totalProcessingTime > 0 && (
+              <span className={`ml-auto font-mono text-sm px-2 py-0.5 rounded ${
+                autoProcessStatus.step === "completed"
+                  ? "bg-[var(--color-success-light)] text-[var(--color-success)]"
+                  : "bg-gray-100 text-gray-600"
+              }`}>
+                {formatTime(totalProcessingTime)}
+              </span>
+            )}
           </div>
           
           <div className="p-4">
-            {/* File Processing Results - Card Arquivos */}
-            {fileProcessingResults.length > 0 && (
-              <div className="mb-4 p-4 rounded-lg bg-white border border-gray-200">
-                <div className="flex items-center gap-2 mb-3">
-                  <FileText className="h-4 w-4 text-gray-500" />
-                  <span className="text-sm font-medium text-gray-700">Arquivos</span>
-                  <span className="text-sm text-gray-500">
-                    {fileProcessingResults.filter(f => f.status === "success").length} de {fileProcessingResults.length}
-                  </span>
-                </div>
-                <div ref={fileListRef} className="space-y-2 max-h-48 overflow-y-auto">
-                  {fileProcessingResults.map((file, idx) => (
-                    <div key={idx} className="flex items-center gap-3 text-sm py-1.5">
-                      {/* Time first (like in image) */}
-                      {file.status === "processing" && (
-                        <span className="font-mono text-[var(--color-primary)] font-medium min-w-[45px]">
-                          {formatTime(currentFileTime)}
-                        </span>
-                      )}
-                      {file.status === "success" && file.time !== undefined && (
-                        <span className="font-mono text-[var(--color-success)] font-medium min-w-[45px]">
-                          {formatTime(file.time)}
-                        </span>
-                      )}
-                      {file.status === "error" && file.time !== undefined && (
-                        <span className="font-mono text-red-500 font-medium min-w-[45px]">
-                          {formatTime(file.time)}
-                        </span>
-                      )}
-                      {file.status === "pending" && (
-                        <span className="min-w-[45px]" />
-                      )}
-                      
-                      {/* Status icon */}
-                      {file.status === "pending" && (
-                        <div className="h-4 w-4 rounded-full border-2 border-gray-300 flex-shrink-0" />
-                      )}
-                      {file.status === "processing" && (
-                        <Loader2 className="h-4 w-4 text-[var(--color-primary)] animate-spin flex-shrink-0" />
-                      )}
-                      {file.status === "success" && (
-                        <CheckCircle2 className="h-4 w-4 text-[var(--color-success)] flex-shrink-0" />
-                      )}
-                      {file.status === "error" && (
-                        <XCircle className="h-4 w-4 text-red-500 flex-shrink-0" />
-                      )}
-                      
-                      {/* File name */}
-                      <span className={`truncate ${
-                        file.status === "processing" ? "text-[var(--color-primary)] font-medium" :
-                        file.status === "success" ? "text-[var(--color-success)]" :
-                        file.status === "error" ? "text-red-600" : "text-gray-500"
-                      }`}>
-                        {file.fileName}
-                      </span>
-                      
-                      {/* Chunks count (success only) */}
-                      {file.status === "success" && file.chunks !== undefined && (
-                        <span className="text-xs text-gray-500 ml-auto">{file.chunks} segmentos</span>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            
-            {/* Vectorization Progress - Card Vector Search */}
-            {vectorizationStatus.step !== "idle" && (
-              <div className="p-4 rounded-lg bg-white border border-gray-200">
-                <div className="flex items-center gap-2 mb-3">
-                  <Database className="h-4 w-4 text-[var(--color-accent)]" />
-                  <span className="text-sm font-medium text-gray-700">Vector Search</span>
-                </div>
-                
-                {/* Vectorization Steps */}
-                <div className="space-y-3">
-                  {/* Step 1: Endpoint */}
-                  <div className="flex items-center gap-2 text-sm">
-                    {vectorizationStatus.step === "checking_endpoint" ? (
-                      <Loader2 className="h-4 w-4 text-[var(--color-accent)] animate-spin" />
-                    ) : vectorizationStatus.step === "creating_endpoint" || vectorizationStatus.step === "waiting_endpoint" ? (
-                      <Loader2 className="h-4 w-4 text-amber-500 animate-spin" />
-                    ) : ["processing_chunks", "creating_index", "completed"].includes(vectorizationStatus.step) ? (
-                      <CheckCircle2 className="h-4 w-4 text-[var(--color-success)]" />
-                    ) : vectorizationStatus.step === "error" ? (
-                      <XCircle className="h-4 w-4 text-red-500" />
-                    ) : (
-                      <div className="h-4 w-4 rounded-full border-2 border-gray-300" />
-                    )}
-                    <span className={
-                      ["checking_endpoint", "creating_endpoint", "waiting_endpoint"].includes(vectorizationStatus.step)
-                        ? "text-[var(--color-accent)] font-medium"
-                        : ["processing_chunks", "creating_index", "completed"].includes(vectorizationStatus.step)
-                        ? "text-[var(--color-success)]"
-                        : "text-gray-500"
-                    }>
-                      Endpoint: {vsEndpointName}
-                    </span>
-                  </div>
-                  
-                  {/* Step 2: Chunks - with time and progress bar */}
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2 text-sm">
-                      {vectorizationStatus.step === "processing_chunks" ? (
-                        <Loader2 className="h-4 w-4 text-[var(--color-accent)] animate-spin" />
-                      ) : ["creating_index", "completed"].includes(vectorizationStatus.step) ? (
-                        <CheckCircle2 className="h-4 w-4 text-[var(--color-success)]" />
-                      ) : vectorizationStatus.step === "error" && vectorizationStatus.message.includes("chunks") ? (
-                        <XCircle className="h-4 w-4 text-red-500" />
-                      ) : (
-                        <div className="h-4 w-4 rounded-full border-2 border-gray-300" />
-                      )}
-                      <span className={
-                        vectorizationStatus.step === "processing_chunks"
-                          ? "text-[var(--color-accent)] font-medium"
-                          : ["creating_index", "completed"].includes(vectorizationStatus.step)
-                          ? "text-[var(--color-success)]"
-                          : "text-gray-500"
-                      }>
-                        Processamento de Segmentos
-                      </span>
-                      {/* Time badge - show live time when processing, final time when completed */}
-                      {vectorizationStatus.step === "processing_chunks" && (
-                        <span className="font-mono text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded">
-                          {formatTime(totalProcessingTime)}
-                        </span>
-                      )}
-                      {["creating_index", "completed"].includes(vectorizationStatus.step) && vectorizationStatus.stepTimes.chunks !== undefined && (
-                        <span className="font-mono text-xs bg-[var(--color-success-light)] text-[var(--color-success)] px-2 py-0.5 rounded">
-                          {formatTime(vectorizationStatus.stepTimes.chunks)}
-                        </span>
-                      )}
-                    </div>
-                    {/* Progress bar for chunks processing */}
-                    {vectorizationStatus.step === "processing_chunks" && processingStatus.totalFiles > 0 && (
-                      <div className="ml-6 flex items-center gap-2">
-                        <div className="flex-1 bg-gray-200 rounded-full h-1.5">
-                          <div 
-                            className="bg-[var(--color-accent)] h-1.5 rounded-full transition-all duration-300"
-                            style={{ width: `${processingStatus.progress}%` }}
-                          />
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                  
-                  {/* Step 3: Vector Index */}
-                  <div className="flex items-center gap-2 text-sm">
-                    {vectorizationStatus.step === "creating_index" ? (
-                      <Loader2 className="h-4 w-4 text-[var(--color-accent)] animate-spin" />
-                    ) : vectorizationStatus.step === "completed" ? (
-                      <CheckCircle2 className="h-4 w-4 text-[var(--color-success)]" />
-                    ) : vectorizationStatus.step === "error" && vectorizationStatus.message.includes("Index") ? (
-                      <XCircle className="h-4 w-4 text-red-500" />
-                    ) : (
-                      <div className="h-4 w-4 rounded-full border-2 border-gray-300" />
-                    )}
-                    <span className={
-                      vectorizationStatus.step === "creating_index"
-                        ? "text-[var(--color-accent)] font-medium"
-                        : vectorizationStatus.step === "completed"
-                        ? "text-[var(--color-success)]"
-                        : "text-gray-500"
-                    }>
-                      Vector Index: {tableConfig.catalog}.{tableConfig.schema}.{tableConfig.tableName}_vs
-                    </span>
-                    {/* Time badge for index creation */}
-                    {vectorizationStatus.step === "completed" && vectorizationStatus.stepTimes.index !== undefined && (
-                      <span className="font-mono text-xs bg-[var(--color-success-light)] text-[var(--color-success)] px-2 py-0.5 rounded">
-                        {formatTime(vectorizationStatus.stepTimes.index)}
-                      </span>
-                    )}
-                  </div>
-                </div>
-                
-                {/* Status message and total time in footer */}
-                <div className="mt-3 flex items-center justify-between">
-                  {vectorizationStatus.message && (
-                    <div className={`text-xs px-2 py-1 rounded ${
-                      vectorizationStatus.step === "error" 
-                        ? "bg-red-50 text-red-600"
-                        : vectorizationStatus.step === "completed"
-                        ? "bg-[var(--color-success-light)] text-[var(--color-success)]"
-                        : "bg-[var(--color-accent-light)] text-[var(--color-accent)]"
-                    }`}>
-                      {vectorizationStatus.message}
-                    </div>
-                  )}
-                  {/* Total time in bottom right - show during processing and after completion */}
-                  {(processingStatus.status === "processing" || processingStatus.status === "completed") && totalProcessingTime > 0 && (
-                    <div className="flex items-center gap-2 ml-auto">
-                      <span className="text-xs text-gray-500">Tempo total:</span>
-                      <span className={`font-mono text-xs px-2 py-0.5 rounded ${
-                        processingStatus.status === "completed"
-                          ? "bg-[var(--color-success-light)] text-[var(--color-success)]"
-                          : "bg-[var(--color-accent-light)] text-[var(--color-accent)]"
-                      }`}>
-                        {formatTime(totalProcessingTime)}
-                      </span>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-            
-            {/* Preview button after completion */}
-            {processingStatus.status === "completed" && existingRecords > 0 && (
-              <div className="mt-4 flex justify-center">
-                <button
-                  onClick={loadExistingChunkPreviews}
-                  disabled={isLoadingExistingPreview}
-                  className="px-4 py-2 text-sm font-medium text-[var(--color-primary)] border border-[var(--color-primary)] rounded-lg hover:bg-[var(--color-primary-light)] transition-colors flex items-center gap-2"
-                >
-                  {isLoadingExistingPreview ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
+            {/* Progress Steps */}
+            <div className="space-y-3">
+              {/* Step 1: Generating Questions */}
+              <div>
+                <div className="flex items-center gap-3">
+                  {autoProcessStatus.step === "generating_questions" ? (
+                    <Loader2 className="h-5 w-5 text-[var(--color-primary)] animate-spin flex-shrink-0" />
+                  ) : ["chunking_a", "chunking_b", "chunking_c", "evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) ? (
+                    <CheckCircle2 className="h-5 w-5 text-[var(--color-success)] flex-shrink-0" />
                   ) : (
-                    <Eye className="h-4 w-4" />
+                    <div className="h-5 w-5 rounded-full border-2 border-gray-300 flex-shrink-0" />
                   )}
-                  Ver Chunks Gerados
-                </button>
+                  <span className={`text-sm flex-1 ${
+                    autoProcessStatus.step === "generating_questions" ? "text-[var(--color-primary)] font-medium" :
+                    ["chunking_a", "chunking_b", "chunking_c", "evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) ? "text-[var(--color-success)]" :
+                    "text-gray-500"
+                  }`}>
+                    {["chunking_a", "chunking_b", "chunking_c", "evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) 
+                      ? "Perguntas de teste geradas" 
+                      : "Gerando perguntas de teste"}
+                  </span>
+                  {autoProcessStatus.questions && autoProcessStatus.questions.length > 0 && (
+                    <button 
+                      onClick={() => setShowQuestions(!showQuestions)}
+                      className="text-xs text-gray-400 hover:text-gray-600 flex items-center gap-1"
+                    >
+                      <ChevronRight className={`h-4 w-4 transition-transform ${showQuestions ? "rotate-90" : ""}`} />
+                    </button>
+                  )}
+                  {autoProcessStatus.step === "generating_questions" && stepStartTimes.generating_questions && !stepEndTimes.generating_questions && (
+                    <span className="text-xs font-mono text-[var(--color-primary)] bg-[var(--color-primary-light)] px-2 py-0.5 rounded">
+                      {formatTime(currentStepTime)}
+                    </span>
+                  )}
+                  {stepEndTimes.generating_questions && stepStartTimes.generating_questions && autoProcessStatus.step !== "generating_questions" && (
+                    <span className="text-xs font-mono text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
+                      {formatTime(Math.floor((stepEndTimes.generating_questions - stepStartTimes.generating_questions) / 1000))}
+                    </span>
+                  )}
+                </div>
+                {/* Expandable questions list */}
+                {showQuestions && autoProcessStatus.questions && autoProcessStatus.questions.length > 0 && (
+                  <div className="ml-8 mt-2 p-2 bg-gray-50 rounded-lg text-xs text-gray-600 space-y-1">
+                    {autoProcessStatus.questions.map((q, i) => (
+                      <div key={i} className="flex gap-2">
+                        <span className="text-gray-400">{i + 1}.</span>
+                        <span>{q}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              
+              {/* Step 2: Chunking Method A - Recursivo */}
+              <div className="flex items-center gap-3">
+                {autoProcessStatus.step === "chunking_a" ? (
+                  <Loader2 className="h-5 w-5 text-[var(--color-primary)] animate-spin flex-shrink-0" />
+                ) : ["chunking_b", "chunking_c", "evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) ? (
+                  <CheckCircle2 className="h-5 w-5 text-[var(--color-success)] flex-shrink-0" />
+                ) : (
+                  <div className="h-5 w-5 rounded-full border-2 border-gray-300 flex-shrink-0" />
+                )}
+                <div className={`text-sm flex-1 ${
+                  autoProcessStatus.step === "chunking_a" ? "text-[var(--color-primary)] font-medium" :
+                  ["chunking_b", "chunking_c", "evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) ? "text-[var(--color-success)]" :
+                  "text-gray-500"
+                }`}>
+                  <span>
+                    {["chunking_b", "chunking_c", "evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step)
+                      ? `Estratégia A aplicada: ${t("prepare.autoProcess.steps.recursive")}`
+                      : `Estratégia A: ${t("prepare.autoProcess.steps.recursive")}`}
+                  </span>
+                  {autoProcessStatus.tables?.tempRecursive && (
+                    <span className="ml-2 text-xs font-mono text-gray-400">({autoProcessStatus.tables.tempRecursive})</span>
+                  )}
+                </div>
+                {autoProcessStatus.evaluationA && (
+                  <span className="text-xs text-gray-500">{autoProcessStatus.evaluationA.chunks_count} chunks</span>
+                )}
+                {autoProcessStatus.step === "chunking_a" && stepStartTimes.chunking_a && !stepEndTimes.chunking_a && (
+                  <span className="text-xs font-mono text-[var(--color-primary)] bg-[var(--color-primary-light)] px-2 py-0.5 rounded">
+                    {formatTime(currentStepTime)}
+                  </span>
+                )}
+                {stepEndTimes.chunking_a && stepStartTimes.chunking_a && autoProcessStatus.step !== "chunking_a" && (
+                  <span className="text-xs font-mono text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
+                    {formatTime(Math.floor((stepEndTimes.chunking_a - stepStartTimes.chunking_a) / 1000))}
+                  </span>
+                )}
+              </div>
+              
+              {/* Step 3: Chunking Method B - Tamanho Fixo */}
+              <div className="flex items-center gap-3">
+                {autoProcessStatus.step === "chunking_b" ? (
+                  <Loader2 className="h-5 w-5 text-[var(--color-primary)] animate-spin flex-shrink-0" />
+                ) : ["chunking_c", "evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) ? (
+                  <CheckCircle2 className="h-5 w-5 text-[var(--color-success)] flex-shrink-0" />
+                ) : (
+                  <div className="h-5 w-5 rounded-full border-2 border-gray-300 flex-shrink-0" />
+                )}
+                <div className={`text-sm flex-1 ${
+                  autoProcessStatus.step === "chunking_b" ? "text-[var(--color-primary)] font-medium" :
+                  ["chunking_c", "evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) ? "text-[var(--color-success)]" :
+                  "text-gray-500"
+                }`}>
+                  <span>
+                    {["chunking_c", "evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step)
+                      ? `Estratégia B aplicada: ${t("prepare.autoProcess.steps.fixedSize")}`
+                      : `Estratégia B: ${t("prepare.autoProcess.steps.fixedSize")}`}
+                  </span>
+                  {autoProcessStatus.tables?.tempFixedSize && (
+                    <span className="ml-2 text-xs font-mono text-gray-400">({autoProcessStatus.tables.tempFixedSize})</span>
+                  )}
+                </div>
+                {autoProcessStatus.evaluationB && (
+                  <span className="text-xs text-gray-500">{autoProcessStatus.evaluationB.chunks_count} chunks</span>
+                )}
+                {autoProcessStatus.step === "chunking_b" && stepStartTimes.chunking_b && !stepEndTimes.chunking_b && (
+                  <span className="text-xs font-mono text-[var(--color-primary)] bg-[var(--color-primary-light)] px-2 py-0.5 rounded">
+                    {formatTime(currentStepTime)}
+                  </span>
+                )}
+                {stepEndTimes.chunking_b && stepStartTimes.chunking_b && autoProcessStatus.step !== "chunking_b" && (
+                  <span className="text-xs font-mono text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
+                    {formatTime(Math.floor((stepEndTimes.chunking_b - stepStartTimes.chunking_b) / 1000))}
+                  </span>
+                )}
+              </div>
+              
+              {/* Step 4: Structural Chunking */}
+              <div className="flex items-center gap-3">
+                {autoProcessStatus.step === "chunking_c" ? (
+                  <Loader2 className="h-5 w-5 text-[var(--color-primary)] animate-spin flex-shrink-0" />
+                ) : ["evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) ? (
+                  <CheckCircle2 className="h-5 w-5 text-[var(--color-success)] flex-shrink-0" />
+                ) : (
+                  <div className="h-5 w-5 rounded-full border-2 border-gray-300 flex-shrink-0" />
+                )}
+                <div className={`text-sm flex-1 ${
+                  autoProcessStatus.step === "chunking_c" ? "text-[var(--color-primary)] font-medium" :
+                  ["evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) ? "text-[var(--color-success)]" :
+                  "text-gray-500"
+                }`}>
+                  <span>
+                    {["evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step)
+                      ? `Estratégia C aplicada: ${t("prepare.autoProcess.steps.structural")}`
+                      : `Estratégia C: ${t("prepare.autoProcess.steps.structural")}`}
+                  </span>
+                  {autoProcessStatus.tables?.tempStructural && (
+                    <span className="ml-2 text-xs font-mono text-gray-400">({autoProcessStatus.tables.tempStructural})</span>
+                  )}
+                </div>
+                {autoProcessStatus.evaluationC && (
+                  <span className="text-xs text-gray-500">{autoProcessStatus.evaluationC.chunks_count} chunks</span>
+                )}
+                {autoProcessStatus.step === "chunking_c" && stepStartTimes.chunking_c && !stepEndTimes.chunking_c && (
+                  <span className="text-xs font-mono text-[var(--color-primary)] bg-[var(--color-primary-light)] px-2 py-0.5 rounded">
+                    {formatTime(currentStepTime)}
+                  </span>
+                )}
+                {stepEndTimes.chunking_c && stepStartTimes.chunking_c && autoProcessStatus.step !== "chunking_c" && (
+                  <span className="text-xs font-mono text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
+                    {formatTime(Math.floor((stepEndTimes.chunking_c - stepStartTimes.chunking_c) / 1000))}
+                  </span>
+                )}
+              </div>
+              
+              {/* Step 5: Evaluation */}
+              <div className="flex items-center gap-3">
+                {autoProcessStatus.step === "evaluating" ? (
+                  <Loader2 className="h-5 w-5 text-[var(--color-primary)] animate-spin flex-shrink-0" />
+                ) : ["selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) ? (
+                  <CheckCircle2 className="h-5 w-5 text-[var(--color-success)] flex-shrink-0" />
+                ) : (
+                  <div className="h-5 w-5 rounded-full border-2 border-gray-300 flex-shrink-0" />
+                )}
+                <span className={`text-sm flex-1 ${
+                  autoProcessStatus.step === "evaluating" ? "text-[var(--color-primary)] font-medium" :
+                  ["selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) ? "text-[var(--color-success)]" :
+                  "text-gray-500"
+                }`}>
+                  {["selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step)
+                    ? "Estratégias A / B / C avaliadas"
+                    : "Avaliando estratégias A / B / C"}
+                </span>
+                {autoProcessStatus.step === "evaluating" && stepStartTimes.evaluating && !stepEndTimes.evaluating && (
+                  <span className="text-xs font-mono text-[var(--color-primary)] bg-[var(--color-primary-light)] px-2 py-0.5 rounded">
+                    {formatTime(currentStepTime)}
+                  </span>
+                )}
+                {stepEndTimes.evaluating && stepStartTimes.evaluating && autoProcessStatus.step !== "evaluating" && (
+                  <span className="text-xs font-mono text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
+                    {formatTime(Math.floor((stepEndTimes.evaluating - stepStartTimes.evaluating) / 1000))}
+                  </span>
+                )}
+              </div>
+              
+              {/* Evaluation Results Toggle */}
+              {(autoProcessStatus.evaluationA || autoProcessStatus.evaluationB || autoProcessStatus.evaluationC) && (
+                <div className="ml-8">
+                  <button 
+                    onClick={() => setShowEvaluationResults(!showEvaluationResults)}
+                    className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1 mb-2"
+                  >
+                    <ChevronRight className={`h-4 w-4 transition-transform ${showEvaluationResults ? "rotate-90" : ""}`} />
+                    <span>Ver resultados da avaliação</span>
+                  </button>
+                  
+                  {showEvaluationResults && (
+                    <div className="p-3 bg-gray-50 rounded-lg">
+                      <div className="grid grid-cols-3 gap-2 text-sm">
+                        {autoProcessStatus.evaluationA && (
+                          <div className={`p-2 rounded ${autoProcessStatus.bestStrategy === "recursive" ? "bg-[var(--color-success-light)] border border-[var(--color-success)]" : "bg-white border border-gray-200"}`}>
+                            <div className="flex items-center justify-between">
+                              <div className="font-medium text-gray-700 text-xs">A: {t("prepare.autoProcess.steps.recursive")}</div>
+                              {autoProcessStatus.evaluationA.sample_chunks && autoProcessStatus.evaluationA.sample_chunks.length > 0 && (
+                                <button
+                                  onClick={() => setViewingChunksStrategy("A")}
+                                  className="text-[10px] text-gray-400 hover:text-[var(--color-primary)] p-0.5"
+                                  title="Ver chunks"
+                                >
+                                  <Eye className="h-3 w-3" />
+                                </button>
+                              )}
+                            </div>
+                            <div className="text-xs text-gray-500 mt-1">
+                              {autoProcessStatus.evaluationA.avg_score.toFixed(1)}/10
+                            </div>
+                            {autoProcessStatus.bestStrategy === "recursive" && (
+                              <div className="text-xs text-[var(--color-success)] font-medium">✓ {t("prepare.autoProcess.results.best")}</div>
+                            )}
+                          </div>
+                        )}
+                        {autoProcessStatus.evaluationB && (
+                          <div className={`p-2 rounded ${autoProcessStatus.bestStrategy === "fixed_size" ? "bg-[var(--color-success-light)] border border-[var(--color-success)]" : "bg-white border border-gray-200"}`}>
+                            <div className="flex items-center justify-between">
+                              <div className="font-medium text-gray-700 text-xs">B: {t("prepare.autoProcess.steps.fixedSize")}</div>
+                              {autoProcessStatus.evaluationB.sample_chunks && autoProcessStatus.evaluationB.sample_chunks.length > 0 && (
+                                <button
+                                  onClick={() => setViewingChunksStrategy("B")}
+                                  className="text-[10px] text-gray-400 hover:text-[var(--color-primary)] p-0.5"
+                                  title="Ver chunks"
+                                >
+                                  <Eye className="h-3 w-3" />
+                                </button>
+                              )}
+                            </div>
+                            <div className="text-xs text-gray-500 mt-1">
+                              {autoProcessStatus.evaluationB.avg_score.toFixed(1)}/10
+                            </div>
+                            {autoProcessStatus.bestStrategy === "fixed_size" && (
+                              <div className="text-xs text-[var(--color-success)] font-medium">✓ {t("prepare.autoProcess.results.best")}</div>
+                            )}
+                          </div>
+                        )}
+                        {autoProcessStatus.evaluationC && (
+                          <div className={`p-2 rounded ${autoProcessStatus.bestStrategy === "structural" ? "bg-[var(--color-success-light)] border border-[var(--color-success)]" : "bg-white border border-gray-200"}`}>
+                            <div className="flex items-center justify-between">
+                              <div className="font-medium text-gray-700 text-xs">C: {t("prepare.autoProcess.steps.structural")}</div>
+                              {autoProcessStatus.evaluationC.sample_chunks && autoProcessStatus.evaluationC.sample_chunks.length > 0 && (
+                                <button
+                                  onClick={() => setViewingChunksStrategy("C")}
+                                  className="text-[10px] text-gray-400 hover:text-[var(--color-primary)] p-0.5"
+                                  title="Ver chunks"
+                                >
+                                  <Eye className="h-3 w-3" />
+                                </button>
+                              )}
+                            </div>
+                            <div className="text-xs text-gray-500 mt-1">
+                              {autoProcessStatus.evaluationC.avg_score.toFixed(1)}/10
+                            </div>
+                            {autoProcessStatus.bestStrategy === "structural" && (
+                              <div className="text-xs text-[var(--color-success)] font-medium">✓ {t("prepare.autoProcess.results.best")}</div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+              
+              {/* Step 6: Applying best strategy to all files */}
+              <div className="flex items-center gap-3">
+                {autoProcessStatus.step === "applying" || autoProcessStatus.step === "selecting" ? (
+                  <Loader2 className="h-5 w-5 text-[var(--color-primary)] animate-spin flex-shrink-0" />
+                ) : ["creating_index", "completed"].includes(autoProcessStatus.step) ? (
+                  <CheckCircle2 className="h-5 w-5 text-[var(--color-success)] flex-shrink-0" />
+                ) : (
+                  <div className="h-5 w-5 rounded-full border-2 border-gray-300 flex-shrink-0" />
+                )}
+                <div className={`text-sm flex-1 ${
+                  autoProcessStatus.step === "applying" || autoProcessStatus.step === "selecting" ? "text-[var(--color-primary)] font-medium" :
+                  ["creating_index", "completed"].includes(autoProcessStatus.step) ? "text-[var(--color-success)]" :
+                  "text-gray-500"
+                }`}>
+                  <span>
+                    {["creating_index", "completed"].includes(autoProcessStatus.step) ? "Estratégia aplicada" : t("prepare.autoProcess.steps.applying")}
+                    {autoProcessStatus.bestStrategy && (
+                      <span className="font-semibold ml-1">
+                        ({autoProcessStatus.bestStrategy === "recursive" ? t("prepare.autoProcess.steps.recursive") :
+                          autoProcessStatus.bestStrategy === "fixed_size" ? t("prepare.autoProcess.steps.fixedSize") :
+                          autoProcessStatus.bestStrategy === "structural" ? t("prepare.autoProcess.steps.structural") :
+                          autoProcessStatus.bestStrategy})
+                      </span>
+                    )}
+                  </span>
+                  {autoProcessStatus.tables?.chunks && (
+                    <span className="ml-2 text-xs font-mono text-gray-400">→ {autoProcessStatus.tables.chunks}</span>
+                  )}
+                </div>
+                {autoProcessStatus.finalChunks && ["creating_index", "completed"].includes(autoProcessStatus.step) && (
+                  <span className="text-xs text-gray-500">{autoProcessStatus.finalChunks} chunks</span>
+                )}
+                {(autoProcessStatus.step === "applying" || autoProcessStatus.step === "selecting") && stepStartTimes.applying && !stepEndTimes.applying && (
+                  <span className="text-xs font-mono text-[var(--color-primary)] bg-[var(--color-primary-light)] px-2 py-0.5 rounded">
+                    {formatTime(currentStepTime)}
+                  </span>
+                )}
+                {stepEndTimes.applying && stepStartTimes.applying && !["applying", "selecting"].includes(autoProcessStatus.step) && (
+                  <span className="text-xs font-mono text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
+                    {formatTime(Math.floor((stepEndTimes.applying - stepStartTimes.applying) / 1000))}
+                  </span>
+                )}
+              </div>
+              
+              {/* Step 7: Vector Index */}
+              <div className="flex items-center gap-3">
+                {autoProcessStatus.step === "creating_index" ? (
+                  <Loader2 className="h-5 w-5 text-[var(--color-primary)] animate-spin flex-shrink-0" />
+                ) : autoProcessStatus.step === "completed" ? (
+                  <CheckCircle2 className="h-5 w-5 text-[var(--color-success)] flex-shrink-0" />
+                ) : autoProcessStatus.step === "error" ? (
+                  <XCircle className="h-5 w-5 text-[var(--color-error)] flex-shrink-0" />
+                ) : (
+                  <div className="h-5 w-5 rounded-full border-2 border-gray-300 flex-shrink-0" />
+                )}
+                <div className={`text-sm flex-1 ${
+                  autoProcessStatus.step === "creating_index" ? "text-[var(--color-primary)] font-medium" :
+                  autoProcessStatus.step === "completed" ? "text-[var(--color-success)]" :
+                  autoProcessStatus.step === "error" ? "text-[var(--color-error)] font-medium" :
+                  "text-gray-500"
+                }`}>
+                  <span>
+                    {autoProcessStatus.step === "completed" 
+                      ? "Vector Index criado" 
+                      : autoProcessStatus.step === "error"
+                        ? "Erro no Vector Index"
+                        : t("prepare.autoProcess.steps.creatingIndex")}
+                  </span>
+                  {autoProcessStatus.indexName && (
+                    <span className="ml-2 text-xs font-mono text-gray-400">({autoProcessStatus.indexName})</span>
+                  )}
+                </div>
+                {autoProcessStatus.finalChunks && autoProcessStatus.step === "completed" && (
+                  <span className="text-xs text-[var(--color-success)]">{autoProcessStatus.finalChunks} {t("prepare.autoProcess.chunksIndexed")}</span>
+                )}
+                {autoProcessStatus.step === "creating_index" && stepStartTimes.creating_index && !stepEndTimes.creating_index && (
+                  <span className="text-xs font-mono text-[var(--color-primary)] bg-[var(--color-primary-light)] px-2 py-0.5 rounded">
+                    {formatTime(currentStepTime)}
+                  </span>
+                )}
+                {stepEndTimes.creating_index && stepStartTimes.creating_index && autoProcessStatus.step !== "creating_index" && (
+                  <span className="text-xs font-mono text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
+                    {formatTime(Math.floor((stepEndTimes.creating_index - stepStartTimes.creating_index) / 1000))}
+                  </span>
+                )}
+              </div>
+            </div>
+            
+            {/* Progress Bar - Blue=processing, Green=success, Red=error */}
+            <div className="mt-4">
+              <div className="w-full bg-gray-200 rounded-full h-2">
+                <div 
+                  className={`h-2 rounded-full transition-all duration-300 ${
+                    autoProcessStatus.step === "error" ? "bg-[var(--color-error)]" :
+                    autoProcessStatus.step === "completed" ? "bg-[var(--color-success)]" :
+                    "bg-[var(--color-accent)]"
+                  }`}
+                  style={{ width: `${autoProcessStatus.progress}%` }}
+                />
+              </div>
+            </div>
+            
+            {/* Status Message - Blue=processing, Green=success, Red=error */}
+            {autoProcessStatus.message && (
+              <div className={`mt-3 px-3 py-2 rounded-lg ${
+                autoProcessStatus.step === "error" ? "bg-[var(--color-error-light)] text-[var(--color-error)]" :
+                autoProcessStatus.step === "completed" ? "bg-[var(--color-success-light)] text-[var(--color-success)]" :
+                "bg-[var(--color-accent-light)] text-[var(--color-accent)]"
+              }`}>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium">{autoProcessStatus.message}</span>
+                  {autoProcessStatus.currentFileIndex && autoProcessStatus.totalFiles && 
+                   !["completed", "error", "evaluating", "selecting", "creating_index"].includes(autoProcessStatus.step) && (
+                    <span className="text-xs font-mono bg-white/50 px-2 py-0.5 rounded">
+                      {autoProcessStatus.currentFileIndex}/{autoProcessStatus.totalFiles}
+                    </span>
+                  )}
+                </div>
+                {autoProcessStatus.currentFile && 
+                 !["completed", "error", "evaluating", "selecting", "creating_index"].includes(autoProcessStatus.step) && (
+                  <div className="text-xs mt-1 opacity-80 truncate">
+                    📄 {autoProcessStatus.currentFile}
+                  </div>
+                )}
               </div>
             )}
           </div>
         </div>
         )}
+
       </div>
     </>
   )

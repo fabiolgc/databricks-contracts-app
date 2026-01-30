@@ -22,6 +22,11 @@ import httpx
 app = FastAPI(title="Databricks Contracts App")
 
 # ============================================================================
+# Background Job Storage for Auto Process (avoids gateway timeouts)
+# ============================================================================
+auto_process_jobs: Dict[str, Dict[str, Any]] = {}
+
+# ============================================================================
 # Helper Functions
 # ============================================================================
 
@@ -935,12 +940,14 @@ async def check_vector_index(
                 data = response.json()
                 status = data.get("status", {}).get("ready", False)
                 index_status = data.get("status", {}).get("index_status", "UNKNOWN")
-                print(f"✅ [{request_id}] Index exists, ready: {status}, status: {index_status}")
+                current_endpoint = data.get("endpoint_name", "")
+                print(f"✅ [{request_id}] Index exists, ready: {status}, status: {index_status}, endpoint: {current_endpoint}")
                 return {
                     "success": True,
                     "exists": True,
                     "ready": status,
                     "index_status": index_status,
+                    "endpoint_name": current_endpoint,
                     "index": data
                 }
             elif response.status_code == 404:
@@ -1082,8 +1089,11 @@ async def create_vector_index(
     request: CreateVectorIndexRequest,
     x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
 ):
-    """Create a new Vector Index using Delta Sync"""
+    """Create a new Vector Index using Delta Sync (async - returns immediately)"""
     request_id = str(uuid.uuid4())[:8]
+    
+    # Get timeout from env config (default 60s for API call, index creation is async)
+    api_timeout = int(os.getenv("API_REQUEST_TIMEOUT", "60"))
     
     catalog = request.tableConfig.get("catalog", "")
     schema = request.tableConfig.get("schema", "")
@@ -1096,12 +1106,13 @@ async def create_vector_index(
     sync_type = request.sync_type
     
     print(f"\n{'=' * 80}")
-    print(f"🚀 [{request_id}] Create Vector Index")
+    print(f"🚀 [{request_id}] Create Vector Index (async)")
     print(f"   Index: {index_name}")
     print(f"   Source Table: {source_table}")
     print(f"   Endpoint: {endpoint_name}")
     print(f"   Embedding Model: {embedding_model}")
     print(f"   Sync Type: {sync_type}")
+    print(f"   API Timeout: {api_timeout}s")
     print(f"{'=' * 80}")
     
     try:
@@ -1130,7 +1141,7 @@ async def create_vector_index(
         
         print(f"📤 [{request_id}] Payload: {json.dumps(payload, indent=2)}")
         
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(timeout=float(api_timeout)) as client:
             response = await client.post(
                 url,
                 headers={
@@ -1142,10 +1153,10 @@ async def create_vector_index(
             
             if response.status_code in [200, 201]:
                 data = response.json()
-                print(f"✅ [{request_id}] Index creation initiated")
+                print(f"✅ [{request_id}] Index creation initiated - use /status endpoint to poll")
                 return {
                     "success": True,
-                    "message": "Index creation initiated",
+                    "message": "Index creation initiated. Poll /status for completion.",
                     "index_name": index_name,
                     "index": data
                 }
@@ -1155,6 +1166,87 @@ async def create_vector_index(
                 return {
                     "success": False,
                     "error": f"Failed to create index: {error_text}"
+                }
+                
+    except httpx.TimeoutException:
+        print(f"⏱️ [{request_id}] Timeout after {api_timeout}s - index may still be creating")
+        return {
+            "success": True,
+            "message": "Request sent but timed out. Index may still be creating - poll /status.",
+            "index_name": index_name,
+            "timeout": True
+        }
+    except Exception as e:
+        print(f"💥 [{request_id}] Error: {str(e)}")
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/vector-search/index/status")
+async def get_vector_index_status(
+    request: CreateVectorIndexRequest,
+    x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
+):
+    """Get the status of a Vector Index"""
+    request_id = str(uuid.uuid4())[:8]
+    
+    catalog = request.tableConfig.get("catalog", "")
+    schema = request.tableConfig.get("schema", "")
+    table_name = request.tableConfig.get("tableName", "")
+    index_name = f"{catalog}.{schema}.{table_name}_vs"
+    
+    print(f"\n{'=' * 80}")
+    print(f"📊 [{request_id}] Getting status for Vector Index: {index_name}")
+    print(f"{'=' * 80}")
+    
+    try:
+        config = get_databricks_config(x_forwarded_access_token)
+        host = config["host"]
+        token = config["token"]
+        
+        # URL encode the index name
+        encoded_index_name = index_name.replace(".", "%2E")
+        url = f"https://{host}/api/2.0/vector-search/indexes/{encoded_index_name}"
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                url,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json"
+                }
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                status = data.get("status", {})
+                index_status = status.get("ready", False)
+                message = status.get("message", "")
+                detailed_state = status.get("detailed_state", "")
+                indexed_row_count = status.get("indexed_row_count", 0)
+                
+                print(f"📊 [{request_id}] Index status: ready={index_status}, state={detailed_state}, rows={indexed_row_count}")
+                
+                return {
+                    "success": True,
+                    "index_name": index_name,
+                    "ready": index_status,
+                    "detailed_state": detailed_state,
+                    "message": message,
+                    "indexed_row_count": indexed_row_count
+                }
+            elif response.status_code == 404:
+                print(f"❌ [{request_id}] Index not found")
+                return {
+                    "success": False,
+                    "error": "Index not found",
+                    "index_name": index_name
+                }
+            else:
+                error_text = response.text
+                print(f"⚠️ [{request_id}] Status check failed: {error_text}")
+                return {
+                    "success": False,
+                    "error": f"Failed to get status: {error_text}"
                 }
                 
     except Exception as e:
@@ -3049,23 +3141,467 @@ class ChunkingEvaluation(BaseModel):
     chunks_evaluated: int
     sample_questions: List[Dict[str, Any]]
 
+
+# ============================================================================
+# Background Job Endpoints for Auto Process (avoids gateway timeouts)
+# ============================================================================
+
+@app.post("/api/process/auto/start")
+async def start_auto_process(
+    request: AutoProcessRequest,
+    x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
+):
+    """Start auto process in background and return job_id for polling"""
+    job_id = str(uuid.uuid4())[:8]
+    
+    print(f"\n🚀 [{job_id}] Starting background auto process job...")
+    
+    # Initialize job status
+    auto_process_jobs[job_id] = {
+        "status": "running",
+        "step": "starting",
+        "message": "Iniciando processamento...",
+        "progress": 0,
+        "started_at": datetime.now().isoformat(),
+        "result": None,
+        "error": None
+    }
+    
+    # Start background task
+    asyncio.create_task(run_auto_process_background(job_id, request, x_forwarded_access_token))
+    
+    return {"jobId": job_id, "status": "started"}
+
+
+@app.get("/api/process/auto/status/{job_id}")
+async def get_auto_process_status(job_id: str):
+    """Get status of auto process job"""
+    if job_id not in auto_process_jobs:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+    
+    job = auto_process_jobs[job_id]
+    return job
+
+
+async def run_auto_process_background(job_id: str, request: AutoProcessRequest, user_token: Optional[str]):
+    """Background task for auto process"""
+    try:
+        # Run the actual processing
+        result = await execute_auto_process(job_id, request, user_token)
+        
+        auto_process_jobs[job_id]["status"] = "completed"
+        auto_process_jobs[job_id]["step"] = "done"
+        auto_process_jobs[job_id]["progress"] = 100
+        auto_process_jobs[job_id]["result"] = result
+        auto_process_jobs[job_id]["completed_at"] = datetime.now().isoformat()
+        
+    except Exception as e:
+        print(f"💥 [{job_id}] Background job failed: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        
+        auto_process_jobs[job_id]["status"] = "failed"
+        auto_process_jobs[job_id]["error"] = str(e)
+        auto_process_jobs[job_id]["completed_at"] = datetime.now().isoformat()
+
+
+async def execute_auto_process(job_id: str, request: AutoProcessRequest, user_token: Optional[str]) -> dict:
+    """Execute auto process logic (extracted from endpoint for background use)"""
+    config = get_databricks_config(user_token)
+    warehouse_id = os.getenv("DATABRICKS_WAREHOUSE_ID")
+    
+    if not warehouse_id:
+        raise Exception("Warehouse ID not configured")
+    
+    table_config = request.tableConfig
+    files = request.files
+    total_files = len(files)
+    
+    catalog = table_config.get("catalog", "")
+    schema = table_config.get("schema", "")
+    table_name = sanitize_table_name(table_config.get("tableName", ""))
+    
+    parsed_table = f"{catalog}.{schema}.{table_name}_parsed"
+    chunks_table = f"{catalog}.{schema}.{table_name}_chunks"
+    
+    # Use 3 RANDOM sample files for evaluation
+    import random
+    sample_count = min(3, len(files))
+    sample_files = random.sample(files, sample_count) if len(files) > 3 else files[:sample_count]
+    
+    print(f"  [{job_id}] Total files: {total_files}, Sample files: {sample_count}")
+    print(f"  [{job_id}] Samples: {sample_files}")
+    
+    # Update job status
+    def update_job(step: str, message: str, progress: int, **extra):
+        auto_process_jobs[job_id].update({
+            "step": step,
+            "message": message,
+            "progress": progress,
+            **extra
+        })
+    
+    # =====================================================================
+    # STEP 1: Generate evaluation questions
+    # =====================================================================
+    update_job("generating_questions", "Gerando perguntas de avaliação...", 5)
+    print(f"\n📝 [{job_id}] Step 1: Generating evaluation questions...")
+    
+    sample_texts = []
+    for sf in sample_files:
+        escaped_sf = sf.replace("'", "''")
+        sample_sql = f"SELECT parsed_text FROM {parsed_table} WHERE file_name = '{escaped_sf}' LIMIT 1"
+        sample_result = await execute_sql(config, warehouse_id, sample_sql, job_id)
+        if sample_result and sample_result.get("data_array"):
+            text = sample_result["data_array"][0][0] or ""
+            sample_texts.append(text[:1500])
+    
+    if not sample_texts:
+        raise Exception("No documents found")
+    
+    combined_sample = "\n\n---\n\n".join(sample_texts)[:4000]
+    
+    eval_questions = []
+    qa_prompt = f"""Baseado nos textos, gere 5 perguntas específicas.
+Para cada pergunta, inclua um trecho curto (máx 100 chars) com a resposta.
+
+Textos:
+{combined_sample[:3000]}
+
+Responda APENAS com JSON:
+[{{"pergunta": "...", "trecho": "..."}}]"""
+    
+    qa_sql = f"SELECT ai_query('databricks-meta-llama-3-3-70b-instruct', '{qa_prompt.replace(chr(39), chr(39)+chr(39))}')"
+    
+    try:
+        qa_result = await execute_sql_long(config, warehouse_id, qa_sql, job_id, timeout_minutes=2)
+        if qa_result and qa_result.get("data_array"):
+            qa_response = qa_result["data_array"][0][0]
+            json_start = qa_response.find('[')
+            json_end = qa_response.rfind(']') + 1
+            if json_start >= 0 and json_end > json_start:
+                eval_questions = json.loads(qa_response[json_start:json_end])[:5]
+                print(f"✅ [{job_id}] Generated {len(eval_questions)} questions")
+    except Exception as e:
+        print(f"⚠️ [{job_id}] Q&A generation failed: {e}")
+    
+    if len(eval_questions) < 3:
+        eval_questions = [
+            {"pergunta": "Qual é o assunto principal?", "trecho": combined_sample[:200]},
+            {"pergunta": "Quais são as partes envolvidas?", "trecho": combined_sample[:200]},
+            {"pergunta": "Quais são as condições?", "trecho": combined_sample[:200]}
+        ]
+    
+    update_job("generating_questions", f"Geradas {len(eval_questions)} perguntas", 10, 
+               questions=[q.get("pergunta", "") for q in eval_questions])
+    
+    # =====================================================================
+    # STEP 2-4: Test each strategy on samples
+    # =====================================================================
+    strategies = [
+        {"name": "recursive", "func": chunk_recursive, "label": "Recursivo", "icon": "🔷"},
+        {"name": "fixed_size", "func": chunk_fixed_size, "label": "Tamanho Fixo", "icon": "🔶"},
+        {"name": "structural", "func": chunk_structural, "label": "Estrutural", "icon": "⭐"}
+    ]
+    
+    temp_tables = {}
+    strategy_results = {}
+    
+    for strat_idx, strategy in enumerate(strategies):
+        strat_name = strategy["name"]
+        strat_func = strategy["func"]
+        strat_label = strategy["label"]
+        strat_icon = strategy["icon"]
+        
+        step_name = f"chunking_{['a', 'b', 'c'][strat_idx]}"
+        base_progress = 15 + strat_idx * 15
+        
+        update_job(step_name, f"{strat_label}: Iniciando...", base_progress, currentStrategy=strat_label)
+        print(f"\n{strat_icon} [{job_id}] Step {strat_idx + 2}: Testing {strat_label} on {sample_count} samples...")
+        
+        temp_table = f"{chunks_table}_temp_{strat_name[:3]}"
+        temp_tables[strat_name] = temp_table
+        
+        await execute_sql(config, warehouse_id, f"DROP TABLE IF EXISTS {temp_table}", job_id)
+        
+        create_temp_sql = f"""
+        CREATE TABLE {temp_table} (
+            id STRING, document_id STRING, file_name STRING,
+            chunk_index INT, total_chunks INT, chunk_content STRING,
+            strategy STRING, created_at TIMESTAMP
+        )"""
+        await execute_sql(config, warehouse_id, create_temp_sql, job_id)
+        
+        chunk_count = 0
+        sample_chunks = []
+        
+        for file_idx, file_name in enumerate(sample_files):
+            escaped_file = file_name.replace("'", "''")
+            progress = base_progress + int((file_idx + 1) / sample_count * 12)
+            update_job(step_name, f"{strat_label}: {file_name} ({file_idx + 1}/{sample_count})", progress,
+                      currentFile=file_name, currentFileIndex=file_idx + 1, sampleFiles=sample_count)
+            
+            print(f"  📄 [{job_id}] {strat_label}: Sample {file_idx + 1}/{sample_count}: {file_name}")
+            
+            text_sql = f"SELECT id, parsed_text FROM {parsed_table} WHERE file_name = '{escaped_file}' LIMIT 1"
+            text_result = await execute_sql(config, warehouse_id, text_sql, job_id)
+            
+            if text_result and text_result.get("data_array"):
+                doc_id = text_result["data_array"][0][0]
+                parsed_text = text_result["data_array"][0][1] or ""
+                chunks = strat_func(parsed_text, 1000, 200)
+                chunk_count += len(chunks)
+                
+                # Store sample chunks for preview (max 3 per file, max 9 total)
+                for idx, chunk in enumerate(chunks[:3]):
+                    if len(sample_chunks) < 9:
+                        sample_chunks.append({
+                            "file_name": file_name,
+                            "chunk_index": idx,
+                            "total_chunks": len(chunks),
+                            "content": chunk[:500],
+                            "char_count": len(chunk)
+                        })
+                
+                if chunks:
+                    values_list = []
+                    for idx, chunk in enumerate(chunks):
+                        chunk_id = str(uuid.uuid4())
+                        escaped_chunk = chunk.replace("'", "''").replace("\\", "\\\\")
+                        values_list.append(f"('{chunk_id}', '{doc_id}', '{escaped_file}', {idx}, {len(chunks)}, '{escaped_chunk}', '{strat_name}', current_timestamp())")
+                    
+                    for i in range(0, len(values_list), 50):
+                        batch = values_list[i:i + 50]
+                        insert_sql = f"INSERT INTO {temp_table} VALUES {', '.join(batch)}"
+                        await execute_sql(config, warehouse_id, insert_sql, job_id)
+        
+        strategy_results[strat_name] = {
+            "chunks_count": chunk_count,
+            "sample_chunks": sample_chunks,
+            "temp_table": temp_table
+        }
+        
+        # Update job with strategy results so frontend can show them during processing
+        strategy_key = ["A", "B", "C"][strat_idx]
+        strategy_eval_key = f"evaluation{strategy_key}"
+        auto_process_jobs[job_id][strategy_eval_key] = {
+            "strategy": strat_name,
+            "label": strat_label,
+            "chunks_count": chunk_count,
+            "sample_chunks": sample_chunks,
+            "avg_score": 0,  # Will be updated after evaluation
+            "precision": 0
+        }
+        
+        # Also update tables info
+        table_key_map = {"recursive": "tempRecursive", "fixed_size": "tempFixedSize", "structural": "tempStructural"}
+        if "tables" not in auto_process_jobs[job_id]:
+            auto_process_jobs[job_id]["tables"] = {
+                "chunks": chunks_table,
+                "tempRecursive": "",
+                "tempFixedSize": "",
+                "tempStructural": ""
+            }
+        auto_process_jobs[job_id]["tables"][table_key_map.get(strat_name, "")] = temp_table
+        
+        print(f"  ✅ [{job_id}] {strat_label}: {chunk_count} chunks from {sample_count} samples")
+    
+    # =====================================================================
+    # STEP 5: Evaluate strategies
+    # =====================================================================
+    update_job("evaluating", "Avaliando A: Recursivo...", 60)
+    print(f"\n📊 [{job_id}] Step 5: Evaluating 3 strategies...")
+    
+    async def evaluate_single_question(temp_table: str, strat_label: str, question: dict, q_idx: int) -> float:
+        q_text = question.get("pergunta", "").replace("'", "''")
+        expected = question.get("trecho", "").replace("'", "''")
+        
+        eval_sql = f"""
+        SELECT chunk_content FROM {temp_table}
+        WHERE LOWER(chunk_content) LIKE LOWER('%{q_text[:50]}%')
+           OR LOWER(chunk_content) LIKE LOWER('%{expected[:30]}%')
+        LIMIT 1
+        """
+        
+        result = await execute_sql(config, warehouse_id, eval_sql, job_id)
+        
+        if result and result.get("data_array"):
+            retrieved = result["data_array"][0][0] or ""
+            
+            score_prompt = f"""Avalie de 1-10 o quão bem o chunk recuperado responde a pergunta.
+Pergunta: {q_text[:200]}
+Esperado: {expected[:100]}
+Chunk: {retrieved[:500]}
+Responda APENAS com um número de 1 a 10."""
+            
+            score_sql = f"SELECT ai_query('databricks-meta-llama-3-3-70b-instruct', '{score_prompt.replace(chr(39), chr(39)+chr(39))}')"
+            
+            try:
+                score_result = await execute_sql_long(config, warehouse_id, score_sql, job_id, timeout_minutes=1)
+                if score_result and score_result.get("data_array"):
+                    score_text = score_result["data_array"][0][0]
+                    import re
+                    numbers = re.findall(r'\d+', score_text)
+                    if numbers:
+                        score = min(10, max(1, int(numbers[0])))
+                        print(f"    Q{q_idx + 1} [{strat_label}]: {score}")
+                        return score
+            except Exception as e:
+                print(f"    Q{q_idx + 1} [{strat_label}]: Error - {e}")
+        
+        return 5.0
+    
+    evaluations = {}
+    questions_to_eval = eval_questions[:3]
+    best_score = -1
+    best_strategy = None
+    
+    for strat_idx, strategy in enumerate(strategies):
+        strat_name = strategy["name"]
+        strat_label = strategy["label"]
+        temp_table = temp_tables[strat_name]
+        
+        update_job("evaluating", f"Avaliando {['A', 'B', 'C'][strat_idx]}: {strat_label}...", 62 + strat_idx * 6,
+                  evaluatingStrategy=strat_label)
+        
+        print(f"  Evaluating {strat_label}...")
+        scores = []
+        for q_idx, question in enumerate(questions_to_eval):
+            score = await evaluate_single_question(temp_table, strat_label, question, q_idx)
+            scores.append(score)
+        
+        avg_score = sum(scores) / len(scores) if scores else 5.0
+        precision = len([s for s in scores if s >= 7]) / len(scores) if scores else 0.5
+        
+        evaluations[strat_name] = {
+            "strategy": strat_name,
+            "label": strat_label,
+            "avg_score": round(avg_score, 2),
+            "precision": round(precision, 2),
+            "chunks_count": strategy_results[strat_name]["chunks_count"],
+            "sample_chunks": strategy_results[strat_name].get("sample_chunks", [])
+        }
+        
+        # Update job with evaluation results in real-time
+        strategy_key = ["A", "B", "C"][strat_idx]
+        strategy_eval_key = f"evaluation{strategy_key}"
+        auto_process_jobs[job_id][strategy_eval_key] = evaluations[strat_name]
+        
+        if avg_score > best_score:
+            best_score = avg_score
+            best_strategy = strat_name
+        
+        # Update best strategy in real-time
+        auto_process_jobs[job_id]["bestStrategy"] = best_strategy
+    
+    print(f"\n📈 [{job_id}] Results:")
+    for strat_name, eval_data in evaluations.items():
+        print(f"  {eval_data['label']}: score={eval_data['avg_score']:.2f}, precision={eval_data['precision']:.2f}, chunks={eval_data['chunks_count']}")
+    
+    best_chunk_func = get_chunk_function(best_strategy)
+    best_label = next((s["label"] for s in strategies if s["name"] == best_strategy), best_strategy)
+    print(f"\n🏆 [{job_id}] Best strategy: {best_strategy}")
+    
+    # =====================================================================
+    # STEP 6: Apply best strategy to ALL files
+    # =====================================================================
+    update_job("applying", f"Aplicando {best_label} em {total_files} arquivos...", 80,
+              bestStrategy=best_strategy, bestLabel=best_label)
+    print(f"\n🚀 [{job_id}] Step 6: Applying {best_strategy} to all {total_files} files...")
+    
+    await execute_sql(config, warehouse_id, f"DROP TABLE IF EXISTS {chunks_table}", job_id)
+    
+    create_final_sql = f"""
+    CREATE TABLE {chunks_table} (
+        id STRING, document_id STRING, file_name STRING,
+        chunk_index INT, total_chunks INT, chunk_content STRING,
+        strategy STRING, created_at TIMESTAMP
+    )"""
+    await execute_sql(config, warehouse_id, create_final_sql, job_id)
+    print(f"✅ [{job_id}] Table {chunks_table} created")
+    
+    final_chunks = 0
+    for file_idx, file_name in enumerate(files):
+        escaped_file = file_name.replace("'", "''")
+        progress = 80 + int((file_idx + 1) / total_files * 15)
+        update_job("applying", f"{best_label}: {file_name} ({file_idx + 1}/{total_files})", progress,
+                  currentFile=file_name, currentFileIndex=file_idx + 1, totalFiles=total_files)
+        
+        print(f"  📄 [{job_id}] Processing {file_idx + 1}/{total_files}: {file_name}")
+        
+        text_sql = f"SELECT id, parsed_text FROM {parsed_table} WHERE file_name = '{escaped_file}' LIMIT 1"
+        text_result = await execute_sql(config, warehouse_id, text_sql, job_id)
+        
+        if text_result and text_result.get("data_array"):
+            doc_id = text_result["data_array"][0][0]
+            parsed_text = text_result["data_array"][0][1] or ""
+            chunks = best_chunk_func(parsed_text, 1000, 200)
+            final_chunks += len(chunks)
+            
+            if chunks:
+                values_list = []
+                for idx, chunk in enumerate(chunks):
+                    chunk_id = str(uuid.uuid4())
+                    escaped_chunk = chunk.replace("'", "''").replace("\\", "\\\\")
+                    values_list.append(f"('{chunk_id}', '{doc_id}', '{escaped_file}', {idx}, {len(chunks)}, '{escaped_chunk}', '{best_strategy}', current_timestamp())")
+                
+                for i in range(0, len(values_list), 50):
+                    batch = values_list[i:i + 50]
+                    insert_sql = f"INSERT INTO {chunks_table} VALUES {', '.join(batch)}"
+                    await execute_sql(config, warehouse_id, insert_sql, job_id)
+    
+    print(f"✅ [{job_id}] Final: {final_chunks} chunks created with {best_strategy}")
+    
+    # Cleanup temp tables
+    print(f"\n🧹 [{job_id}] Cleaning up temp tables...")
+    for strat_name, temp_table in temp_tables.items():
+        await execute_sql(config, warehouse_id, f"DROP TABLE IF EXISTS {temp_table}", job_id)
+    print(f"✅ [{job_id}] {len(temp_tables)} temp tables dropped")
+    
+    index_name = f"{catalog}.{schema}.{table_name}_vs"
+    
+    print(f"\n✅ [{job_id}] AUTO PROCESS COMPLETE")
+    print(f"  - Best strategy: {best_strategy}")
+    print(f"  - Final chunks: {final_chunks}")
+    print(f"  - Files processed: {total_files}")
+    print(f"{'=' * 80}\n")
+    
+    return {
+        "success": True,
+        "bestStrategy": best_strategy,
+        "evaluations": evaluations,
+        "finalChunks": final_chunks,
+        "filesProcessed": total_files,
+        "sampleFilesUsed": sample_count,
+        "questions": [q.get("pergunta", "") for q in eval_questions[:3]],
+        "tables": {
+            "chunks": chunks_table,
+            "tempRecursive": f"{chunks_table}_temp_rec",
+            "tempFixedSize": f"{chunks_table}_temp_fix",
+            "tempStructural": f"{chunks_table}_temp_str"
+        },
+        "indexName": index_name
+    }
+
+
 @app.post("/api/process/auto")
 async def auto_process_with_evaluation(
     request: AutoProcessRequest,
     x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
 ):
     """
-    Automated processing pipeline:
-    1. Generate evaluation questions from documents
-    2. Process with Strategy A (recursive) 
-    3. Process with Strategy B (fixed_size)
-    4. Evaluate both strategies using ai_query
-    5. Select best strategy and keep those chunks
+    Optimized processing pipeline:
+    1. Generate evaluation questions from 3 sample documents
+    2. Test Strategy A (recursive) on 3 samples only
+    3. Test Strategy B (fixed_size) on 3 samples only
+    4. Evaluate and select best strategy
+    5. Apply best strategy to ALL documents
+    6. Create Vector Index
     """
     request_id = str(uuid.uuid4())[:8]
     
     print(f"\n{'=' * 80}")
-    print(f"🤖 [{request_id}] AUTO PROCESS WITH EVALUATION")
+    print(f"🤖 [{request_id}] OPTIMIZED AUTO PROCESS")
     print(f"{'=' * 80}")
     
     try:
@@ -3077,6 +3613,7 @@ async def auto_process_with_evaluation(
         
         table_config = request.tableConfig
         files = request.files
+        total_files = len(files)
         
         catalog = table_config.get("catalog", "")
         schema = table_config.get("schema", "")
@@ -3085,279 +3622,309 @@ async def auto_process_with_evaluation(
         parsed_table = f"{catalog}.{schema}.{table_name}_parsed"
         chunks_table = f"{catalog}.{schema}.{table_name}_chunks"
         
+        # Use 3 RANDOM sample files for evaluation (not just first 3)
+        import random
+        sample_count = min(3, len(files))
+        sample_files = random.sample(files, sample_count) if len(files) > 3 else files[:sample_count]
+        
+        print(f"  Total files: {total_files}, Sample files for evaluation: {sample_count}")
+        print(f"  Samples: {sample_files}")
+        
         # =====================================================================
-        # STEP 1: Generate evaluation questions from sample documents
+        # STEP 1: Generate evaluation questions from 3 samples
         # =====================================================================
         print(f"\n📝 [{request_id}] Step 1: Generating evaluation questions...")
         
-        # Get sample text from first document
-        sample_file = files[0].replace("'", "''")
-        sample_sql = f"""
-        SELECT parsed_text FROM {parsed_table}
-        WHERE file_name = '{sample_file}'
-        LIMIT 1
-        """
-        sample_result = await execute_sql(config, warehouse_id, sample_sql, request_id)
+        # Collect sample text
+        sample_texts = []
+        for sf in sample_files:
+            escaped_sf = sf.replace("'", "''")
+            sample_sql = f"SELECT parsed_text FROM {parsed_table} WHERE file_name = '{escaped_sf}' LIMIT 1"
+            sample_result = await execute_sql(config, warehouse_id, sample_sql, request_id)
+            if sample_result and sample_result.get("data_array"):
+                text = sample_result["data_array"][0][0] or ""
+                sample_texts.append(text[:1500])
         
-        if not sample_result or not sample_result.get("data_array"):
-            raise HTTPException(status_code=404, detail="No documents found to evaluate")
+        if not sample_texts:
+            raise HTTPException(status_code=404, detail="No documents found")
         
-        sample_text = sample_result["data_array"][0][0][:8000]  # Limit for prompt
+        combined_sample = "\n\n---\n\n".join(sample_texts)[:4000]
         
-        # Generate Q&A pairs using ai_query
-        qa_prompt = f"""Baseado no texto abaixo de um documento, gere 3 perguntas específicas 
-que um usuário faria para encontrar informações importantes.
-Para cada pergunta, identifique o trecho exato do texto que contém a resposta.
+        # Generate 5 Q&A pairs
+        eval_questions = []
+        qa_prompt = f"""Baseado nos textos, gere 5 perguntas específicas.
+Para cada pergunta, inclua um trecho curto (máx 100 chars) com a resposta.
 
-Texto:
-{sample_text[:4000]}
+Textos:
+{combined_sample[:3000]}
 
-Responda APENAS com JSON válido no formato:
-[
-  {{"pergunta": "...", "resposta_esperada": "...", "trecho_relevante": "..."}}
-]"""
+Responda APENAS com JSON:
+[{{"pergunta": "...", "trecho": "..."}}]"""
         
         qa_sql = f"SELECT ai_query('databricks-meta-llama-3-3-70b-instruct', '{qa_prompt.replace(chr(39), chr(39)+chr(39))}')"
-        qa_result = await execute_sql_long(config, warehouse_id, qa_sql, request_id, timeout_minutes=2)
         
-        eval_questions = []
-        if qa_result and qa_result.get("data_array"):
-            try:
+        try:
+            qa_result = await execute_sql_long(config, warehouse_id, qa_sql, request_id, timeout_minutes=2)
+            if qa_result and qa_result.get("data_array"):
                 qa_response = qa_result["data_array"][0][0]
                 json_start = qa_response.find('[')
                 json_end = qa_response.rfind(']') + 1
                 if json_start >= 0 and json_end > json_start:
-                    eval_questions = json.loads(qa_response[json_start:json_end])
-                    print(f"✅ [{request_id}] Generated {len(eval_questions)} evaluation questions")
-            except Exception as e:
-                print(f"⚠️ [{request_id}] Failed to parse Q&A: {e}")
-                # Fallback: create simple question
-                eval_questions = [{"pergunta": "Qual é o conteúdo principal deste documento?", "trecho_relevante": sample_text[:500]}]
+                    eval_questions = json.loads(qa_response[json_start:json_end])[:5]
+                    print(f"✅ [{request_id}] Generated {len(eval_questions)} questions")
+        except Exception as e:
+            print(f"⚠️ [{request_id}] Q&A generation failed: {e}")
+        
+        if len(eval_questions) < 3:
+            eval_questions = [
+                {"pergunta": "Qual é o assunto principal?", "trecho": combined_sample[:200]},
+                {"pergunta": "Quais são as partes envolvidas?", "trecho": combined_sample[:200]},
+                {"pergunta": "Quais são as condições?", "trecho": combined_sample[:200]}
+            ]
         
         # =====================================================================
-        # STEP 2: Process with Strategy A (recursive)
+        # Define strategies to test (3 strategies for contracts)
         # =====================================================================
-        print(f"\n🔷 [{request_id}] Step 2: Processing with Strategy A (recursive)...")
+        strategies = [
+            {"name": "recursive", "func": chunk_recursive, "label": "Recursivo", "icon": "🔷"},
+            {"name": "fixed_size", "func": chunk_fixed_size, "label": "Fixo", "icon": "🔶"},
+            {"name": "structural", "func": chunk_structural, "label": "Estrutural", "icon": "⭐"}
+        ]
         
-        chunks_table_a = f"{chunks_table}_eval_a"
-        await execute_sql(config, warehouse_id, f"DROP TABLE IF EXISTS {chunks_table_a}", request_id)
+        temp_tables = {}
+        strategy_results = {}
         
-        create_eval_table_sql = f"""
-        CREATE TABLE IF NOT EXISTS {chunks_table_a} (
-            id STRING,
-            document_id STRING,
-            file_name STRING,
-            chunk_index INT,
-            total_chunks INT,
-            chunk_content STRING,
-            strategy STRING,
-            created_at TIMESTAMP
-        )
-        """
-        await execute_sql(config, warehouse_id, create_eval_table_sql, request_id)
-        
-        strategy_a_chunks = 0
-        for file_name in files:
-            escaped_file = file_name.replace("'", "''")
+        # =====================================================================
+        # STEP 2-4: Test each strategy on samples
+        # =====================================================================
+        for strat_idx, strategy in enumerate(strategies):
+            strat_name = strategy["name"]
+            strat_func = strategy["func"]
+            strat_label = strategy["label"]
+            strat_icon = strategy["icon"]
             
-            # Get text
-            text_sql = f"SELECT id, parsed_text FROM {parsed_table} WHERE file_name = '{escaped_file}' LIMIT 1"
-            text_result = await execute_sql(config, warehouse_id, text_sql, request_id)
+            print(f"\n{strat_icon} [{request_id}] Step {strat_idx + 2}: Testing {strat_label} on {sample_count} samples...")
             
-            if text_result and text_result.get("data_array"):
-                doc_id = text_result["data_array"][0][0]
-                parsed_text = text_result["data_array"][0][1] or ""
-                
-                chunks = chunk_recursive(parsed_text, 1000, 200)
-                strategy_a_chunks += len(chunks)
-                
-                for idx, chunk in enumerate(chunks):
-                    chunk_id = str(uuid.uuid4())
-                    escaped_chunk = chunk.replace("'", "''").replace("\\", "\\\\")
-                    insert_sql = f"""
-                    INSERT INTO {chunks_table_a}
-                    VALUES ('{chunk_id}', '{doc_id}', '{escaped_file}', {idx}, {len(chunks)}, 
-                            '{escaped_chunk}', 'recursive', current_timestamp())
-                    """
-                    await execute_sql(config, warehouse_id, insert_sql, request_id)
-        
-        print(f"✅ [{request_id}] Strategy A: {strategy_a_chunks} chunks created")
-        
-        # =====================================================================
-        # STEP 3: Process with Strategy B (fixed_size)
-        # =====================================================================
-        print(f"\n🔶 [{request_id}] Step 3: Processing with Strategy B (fixed_size)...")
-        
-        chunks_table_b = f"{chunks_table}_eval_b"
-        await execute_sql(config, warehouse_id, f"DROP TABLE IF EXISTS {chunks_table_b}", request_id)
-        
-        create_eval_table_sql_b = create_eval_table_sql.replace(chunks_table_a, chunks_table_b)
-        await execute_sql(config, warehouse_id, create_eval_table_sql_b, request_id)
-        
-        strategy_b_chunks = 0
-        for file_name in files:
-            escaped_file = file_name.replace("'", "''")
+            temp_table = f"{chunks_table}_temp_{strat_name[:3]}"
+            temp_tables[strat_name] = temp_table
             
-            text_sql = f"SELECT id, parsed_text FROM {parsed_table} WHERE file_name = '{escaped_file}' LIMIT 1"
-            text_result = await execute_sql(config, warehouse_id, text_sql, request_id)
+            await execute_sql(config, warehouse_id, f"DROP TABLE IF EXISTS {temp_table}", request_id)
             
-            if text_result and text_result.get("data_array"):
-                doc_id = text_result["data_array"][0][0]
-                parsed_text = text_result["data_array"][0][1] or ""
-                
-                chunks = chunk_fixed_size(parsed_text, 1000, 200)
-                strategy_b_chunks += len(chunks)
-                
-                for idx, chunk in enumerate(chunks):
-                    chunk_id = str(uuid.uuid4())
-                    escaped_chunk = chunk.replace("'", "''").replace("\\", "\\\\")
-                    insert_sql = f"""
-                    INSERT INTO {chunks_table_b}
-                    VALUES ('{chunk_id}', '{doc_id}', '{escaped_file}', {idx}, {len(chunks)}, 
-                            '{escaped_chunk}', 'fixed_size', current_timestamp())
-                    """
-                    await execute_sql(config, warehouse_id, insert_sql, request_id)
-        
-        print(f"✅ [{request_id}] Strategy B: {strategy_b_chunks} chunks created")
-        
-        # =====================================================================
-        # STEP 4: Evaluate both strategies
-        # =====================================================================
-        print(f"\n📊 [{request_id}] Step 4: Evaluating strategies...")
-        
-        async def evaluate_strategy(chunks_table_eval: str, strategy_name: str) -> Dict:
-            scores = []
-            eval_details = []
+            create_temp_sql = f"""
+            CREATE TABLE {temp_table} (
+                id STRING, document_id STRING, file_name STRING,
+                chunk_index INT, total_chunks INT, chunk_content STRING,
+                strategy STRING, created_at TIMESTAMP
+            )"""
+            await execute_sql(config, warehouse_id, create_temp_sql, request_id)
             
-            for qa in eval_questions[:3]:  # Limit to 3 questions
-                question = qa.get("pergunta", "")
-                expected = qa.get("trecho_relevante", "")[:500]
+            chunk_count = 0
+            sample_chunks = []  # Store sample chunks for preview
+            for file_idx, file_name in enumerate(sample_files):
+                escaped_file = file_name.replace("'", "''")
+                print(f"  📄 [{request_id}] {strat_label}: Sample {file_idx + 1}/{sample_count}: {file_name}")
                 
-                if not question:
-                    continue
+                text_sql = f"SELECT id, parsed_text FROM {parsed_table} WHERE file_name = '{escaped_file}' LIMIT 1"
+                text_result = await execute_sql(config, warehouse_id, text_sql, request_id)
                 
-                # Get top 3 chunks by simple text match (simulating retrieval)
-                escaped_q = question.replace("'", "''")
-                
-                # Use ai_query to evaluate chunk relevance
-                eval_prompt = f"""Avalie se os chunks abaixo contêm informação relevante para responder a pergunta.
-
-Pergunta: {question}
-
-Resposta esperada (trecho do documento original): {expected[:300]}
-
-Responda com JSON: {{"score": 0-10, "tem_informacao": true/false, "justificativa": "..."}}"""
-                
-                # Get sample chunks for evaluation
-                sample_chunks_sql = f"SELECT chunk_content FROM {chunks_table_eval} LIMIT 5"
-                chunks_result = await execute_sql(config, warehouse_id, sample_chunks_sql, request_id)
-                
-                if chunks_result and chunks_result.get("data_array"):
-                    chunks_text = "\n---\n".join([row[0][:300] for row in chunks_result["data_array"][:3]])
+                if text_result and text_result.get("data_array"):
+                    doc_id = text_result["data_array"][0][0]
+                    parsed_text = text_result["data_array"][0][1] or ""
+                    chunks = strat_func(parsed_text)
+                    chunk_count += len(chunks)
                     
-                    full_prompt = f"""{eval_prompt}
-
-Chunks recuperados:
-{chunks_text}"""
+                    # Store first 3 chunks from each file for preview (max 9 total per strategy)
+                    for idx, chunk in enumerate(chunks[:3]):
+                        if len(sample_chunks) < 9:
+                            sample_chunks.append({
+                                "file_name": file_name,
+                                "chunk_index": idx,
+                                "total_chunks": len(chunks),
+                                "content": chunk[:500] + ("..." if len(chunk) > 500 else ""),
+                                "char_count": len(chunk)
+                            })
                     
-                    eval_sql = f"SELECT ai_query('databricks-meta-llama-3-3-70b-instruct', '{full_prompt.replace(chr(39), chr(39)+chr(39))}')"
-                    
-                    try:
-                        eval_result = await execute_sql_long(config, warehouse_id, eval_sql, request_id, timeout_minutes=1)
+                    if chunks:
+                        values_list = []
+                        for idx, chunk in enumerate(chunks):
+                            chunk_id = str(uuid.uuid4())
+                            escaped_chunk = chunk.replace("'", "''").replace("\\", "\\\\")
+                            values_list.append(f"('{chunk_id}', '{doc_id}', '{escaped_file}', {idx}, {len(chunks)}, '{escaped_chunk}', '{strat_name}', current_timestamp())")
                         
-                        if eval_result and eval_result.get("data_array"):
-                            response = eval_result["data_array"][0][0]
-                            json_start = response.find('{')
-                            json_end = response.rfind('}') + 1
-                            if json_start >= 0:
-                                eval_data = json.loads(response[json_start:json_end])
-                                score = eval_data.get("score", 5)
-                                scores.append(score)
-                                eval_details.append({
-                                    "question": question,
-                                    "score": score,
-                                    "has_info": eval_data.get("tem_informacao", False),
-                                    "justification": eval_data.get("justificativa", "")[:100]
-                                })
-                    except Exception as e:
-                        print(f"⚠️ [{request_id}] Eval error: {e}")
-                        scores.append(5)  # Default score
+                        for i in range(0, len(values_list), 50):
+                            batch = values_list[i:i + 50]
+                            insert_sql = f"INSERT INTO {temp_table} VALUES {', '.join(batch)}"
+                            await execute_sql(config, warehouse_id, insert_sql, request_id)
+            
+            strategy_results[strat_name] = {"chunks_count": chunk_count, "temp_table": temp_table, "sample_chunks": sample_chunks}
+            print(f"✅ [{request_id}] {strat_label}: {chunk_count} chunks from {sample_count} samples")
+        
+        # =====================================================================
+        # STEP 5: Evaluate all strategies with LLM
+        # =====================================================================
+        print(f"\n📊 [{request_id}] Step 5: Evaluating {len(strategies)} strategies...")
+        
+        questions_to_eval = eval_questions[:3]
+        
+        async def evaluate_single_question(temp_table: str, strategy_name: str, question: Dict, q_idx: int) -> float:
+            """Evaluate a single question against chunks"""
+            pergunta = question.get("pergunta", "").replace("'", "''")
+            trecho = question.get("trecho", "").replace("'", "''")[:100]
+            
+            search_sql = f"SELECT chunk_content FROM {temp_table} WHERE LOWER(chunk_content) LIKE LOWER('%{trecho[:30]}%') LIMIT 1"
+            chunk_result = await execute_sql(config, warehouse_id, search_sql, request_id)
+            
+            if not chunk_result or not chunk_result.get("data_array"):
+                search_sql2 = f"SELECT chunk_content FROM {temp_table} LIMIT 3"
+                chunk_result = await execute_sql(config, warehouse_id, search_sql2, request_id)
+            
+            if not chunk_result or not chunk_result.get("data_array"):
+                return 5.0
+            
+            chunk_content = chunk_result["data_array"][0][0][:800]
+            escaped_chunk = chunk_content.replace("'", "''")
+            
+            eval_prompt = f"""Avalie se o chunk de contrato contém informação para responder a pergunta jurídica.
+Nota de 0 a 10: 0-3=não contém, 4-6=parcial, 7-10=completa e contexto preservado.
+
+Pergunta: {pergunta}
+Chunk: {escaped_chunk[:500]}
+
+Responda APENAS com um número de 0 a 10:"""
+            
+            eval_sql = f"SELECT ai_query('databricks-meta-llama-3-3-70b-instruct', '{eval_prompt.replace(chr(39), chr(39)+chr(39))}')"
+            
+            try:
+                eval_result = await execute_sql_long(config, warehouse_id, eval_sql, request_id, timeout_minutes=1)
+                if eval_result and eval_result.get("data_array"):
+                    response = eval_result["data_array"][0][0].strip()
+                    import re
+                    numbers = re.findall(r'\d+(?:\.\d+)?', response)
+                    if numbers:
+                        score = min(10.0, max(0.0, float(numbers[0])))
+                        print(f"    Q{q_idx+1} [{strategy_name}]: {score}")
+                        return score
+            except Exception as e:
+                print(f"    Q{q_idx+1} [{strategy_name}]: error")
+            
+            return 5.0
+        
+        evaluations = {}
+        best_score = -1
+        best_strategy = None
+        
+        for strategy in strategies:
+            strat_name = strategy["name"]
+            strat_label = strategy["label"]
+            temp_table = temp_tables[strat_name]
+            
+            print(f"  Evaluating {strat_label}...")
+            scores = []
+            for q_idx, question in enumerate(questions_to_eval):
+                score = await evaluate_single_question(temp_table, strat_label, question, q_idx)
+                scores.append(score)
             
             avg_score = sum(scores) / len(scores) if scores else 5.0
             precision = len([s for s in scores if s >= 7]) / len(scores) if scores else 0.5
             
-            return {
-                "strategy": strategy_name,
+            evaluations[strat_name] = {
+                "strategy": strat_name,
+                "label": strat_label,
                 "avg_score": round(avg_score, 2),
                 "precision": round(precision, 2),
-                "chunks_count": strategy_a_chunks if strategy_name == "recursive" else strategy_b_chunks,
-                "evaluations": eval_details
+                "chunks_count": strategy_results[strat_name]["chunks_count"],
+                "sample_chunks": strategy_results[strat_name].get("sample_chunks", [])
             }
+            
+            if avg_score > best_score:
+                best_score = avg_score
+                best_strategy = strat_name
         
-        eval_a = await evaluate_strategy(chunks_table_a, "recursive")
-        eval_b = await evaluate_strategy(chunks_table_b, "fixed_size")
+        print(f"\n📈 [{request_id}] Results:")
+        for strat_name, eval_data in evaluations.items():
+            print(f"  {eval_data['label']}: score={eval_data['avg_score']:.2f}, precision={eval_data['precision']:.2f}, chunks={eval_data['chunks_count']}")
         
-        print(f"\n📈 [{request_id}] Evaluation Results:")
-        print(f"  Strategy A (recursive): score={eval_a['avg_score']}, precision={eval_a['precision']}")
-        print(f"  Strategy B (fixed_size): score={eval_b['avg_score']}, precision={eval_b['precision']}")
-        
-        # =====================================================================
-        # STEP 5: Select best strategy and finalize
-        # =====================================================================
-        best_strategy = "recursive" if eval_a['avg_score'] >= eval_b['avg_score'] else "fixed_size"
-        best_table = chunks_table_a if best_strategy == "recursive" else chunks_table_b
-        other_table = chunks_table_b if best_strategy == "recursive" else chunks_table_a
-        
+        best_chunk_func = get_chunk_function(best_strategy)
         print(f"\n🏆 [{request_id}] Best strategy: {best_strategy}")
         
-        # Drop the losing table
-        await execute_sql(config, warehouse_id, f"DROP TABLE IF EXISTS {other_table}", request_id)
+        # =====================================================================
+        # STEP 5: Apply best strategy to ALL files
+        # =====================================================================
+        print(f"\n🚀 [{request_id}] Step 5: Applying {best_strategy} to all {total_files} files...")
         
-        # Rename winning table to final chunks table
+        # Drop and recreate final chunks table
         await execute_sql(config, warehouse_id, f"DROP TABLE IF EXISTS {chunks_table}", request_id)
         
-        # Create final chunks table with correct schema
         create_final_sql = f"""
-        CREATE TABLE {chunks_table} AS
-        SELECT 
-            id,
-            document_id,
-            file_name,
-            chunk_index,
-            total_chunks,
-            chunk_content,
-            '' as chunk_context,
-            strategy,
-            1000 as chunk_size,
-            200 as chunk_overlap,
-            '{{}}' as doc_metadata,
-            created_at
-        FROM {best_table}
-        """
+        CREATE TABLE {chunks_table} (
+            id STRING, document_id STRING, file_name STRING,
+            chunk_index INT, total_chunks INT, chunk_content STRING,
+            strategy STRING, created_at TIMESTAMP
+        )"""
         await execute_sql(config, warehouse_id, create_final_sql, request_id)
+        print(f"✅ [{request_id}] Table {chunks_table} created")
         
-        # Cleanup eval table
-        await execute_sql(config, warehouse_id, f"DROP TABLE IF EXISTS {best_table}", request_id)
+        final_chunks = 0
+        for file_idx, file_name in enumerate(files):
+            escaped_file = file_name.replace("'", "''")
+            print(f"  📄 [{request_id}] Processing {file_idx + 1}/{total_files}: {file_name}")
+            
+            text_sql = f"SELECT id, parsed_text FROM {parsed_table} WHERE file_name = '{escaped_file}' LIMIT 1"
+            text_result = await execute_sql(config, warehouse_id, text_sql, request_id)
+            
+            if text_result and text_result.get("data_array"):
+                doc_id = text_result["data_array"][0][0]
+                parsed_text = text_result["data_array"][0][1] or ""
+                chunks = best_chunk_func(parsed_text, 1000, 200)
+                final_chunks += len(chunks)
+                
+                if chunks:
+                    values_list = []
+                    for idx, chunk in enumerate(chunks):
+                        chunk_id = str(uuid.uuid4())
+                        escaped_chunk = chunk.replace("'", "''").replace("\\", "\\\\")
+                        values_list.append(f"('{chunk_id}', '{doc_id}', '{escaped_file}', {idx}, {len(chunks)}, '{escaped_chunk}', '{best_strategy}', current_timestamp())")
+                    
+                    for i in range(0, len(values_list), 50):
+                        batch = values_list[i:i + 50]
+                        insert_sql = f"INSERT INTO {chunks_table} VALUES {', '.join(batch)}"
+                        await execute_sql(config, warehouse_id, insert_sql, request_id)
         
-        # Get final chunk count
-        count_result = await execute_sql(config, warehouse_id, f"SELECT COUNT(*) FROM {chunks_table}", request_id)
-        final_chunks = int(count_result["data_array"][0][0]) if count_result and count_result.get("data_array") else 0
+        print(f"✅ [{request_id}] Final: {final_chunks} chunks created with {best_strategy}")
+        
+        # Cleanup all temp tables
+        print(f"\n🧹 [{request_id}] Cleaning up temp tables...")
+        for strat_name, temp_table in temp_tables.items():
+            await execute_sql(config, warehouse_id, f"DROP TABLE IF EXISTS {temp_table}", request_id)
+        print(f"✅ [{request_id}] {len(temp_tables)} temp tables dropped")
+        
+        # Build index name for reference
+        index_name = f"{catalog}.{schema}.{table_name}_vs"
         
         print(f"\n✅ [{request_id}] AUTO PROCESS COMPLETE")
         print(f"  - Best strategy: {best_strategy}")
         print(f"  - Final chunks: {final_chunks}")
+        print(f"  - Files processed: {total_files}")
+        print(f"  - Strategies evaluated: {len(evaluations)}")
+        print(f"  - Chunks table: {chunks_table}")
+        print(f"  - Index name: {index_name}")
         print(f"{'=' * 80}\n")
         
         return {
             "success": True,
             "bestStrategy": best_strategy,
-            "evaluations": {
-                "recursive": eval_a,
-                "fixed_size": eval_b
-            },
+            "evaluations": evaluations,
             "finalChunks": final_chunks,
-            "filesProcessed": len(files),
-            "evaluationQuestions": eval_questions
+            "filesProcessed": total_files,
+            "sampleFilesUsed": sample_count,
+            "questions": [q.get("pergunta", "") for q in eval_questions[:3]],
+            "tables": {
+                "chunks": chunks_table,
+                "tempRecursive": f"{chunks_table}_temp_rec",
+                "tempFixedSize": f"{chunks_table}_temp_fix",
+                "tempStructural": f"{chunks_table}_temp_str"
+            },
+            "indexName": index_name
         }
         
     except HTTPException:
@@ -3407,7 +3974,8 @@ async def execute_sql(config: dict, warehouse_id: str, sql: str, request_id: str
         return await poll_sql_statement(config, statement_id, request_id)
     
     if status == "SUCCEEDED":
-        return result.get("result", {})
+        # For DDL statements (CREATE, DROP, etc.) result may be empty - that's OK
+        return result.get("result", {"success": True})
     else:
         error_msg = result.get("status", {}).get("error", {}).get("message", "Unknown error")
         print(f"⚠️ [{request_id}] SQL status: {status}, error: {error_msg}")
@@ -3628,59 +4196,172 @@ def create_chunks(text: str, strategy: str, chunk_size: int, chunk_overlap: int,
         return chunk_fixed_size(text, chunk_size, chunk_overlap)
 
 
-def chunk_fixed_size(text: str, chunk_size: int, overlap: int) -> List[str]:
-    """Fixed-size chunking with overlap"""
+def chunk_fixed_size(text: str, chunk_size: int = 800, overlap: int = 150) -> List[str]:
+    """
+    Fixed-size chunking with overlap.
+    Optimized for contracts: 800 chars (~200 tokens), 150 overlap (~40 tokens)
+    """
     chunks = []
-    start = 0
+    text = text.strip()
+    if not text:
+        return chunks
     
+    start = 0
     while start < len(text):
-        end = start + chunk_size
-        chunk = text[start:end]
+        end = min(start + chunk_size, len(text))
         
-        if chunk.strip():
-            chunks.append(chunk.strip())
+        # Try to break at sentence end
+        if end < len(text):
+            for sep in ['. ', '.\n', '; ', ';\n']:
+                last_sep = text[start:end].rfind(sep)
+                if last_sep > chunk_size * 0.5:
+                    end = start + last_sep + len(sep)
+                    break
         
-        # Move start, accounting for overlap
-        start = end - overlap if overlap > 0 else end
+        chunk = text[start:end].strip()
+        if chunk:
+            chunks.append(chunk)
         
-        # Avoid infinite loop
-        if start >= len(text) - overlap:
+        start = end - overlap if end < len(text) else end
+        if start <= 0 or start >= len(text):
             break
     
     return chunks
 
 
-def chunk_recursive(text: str, chunk_size: int, overlap: int) -> List[str]:
-    """Recursive character text splitting"""
-    separators = ["\n\n", "\n", ". ", " ", ""]
+def chunk_recursive(text: str, chunk_size: int = 800, overlap: int = 150) -> List[str]:
+    """
+    Recursive character text splitting.
+    Uses paragraph and sentence boundaries for natural breaks.
+    """
+    text = text.strip()
+    if not text:
+        return []
     
-    def split_text(text: str, separators: List[str]) -> List[str]:
-        if len(text) <= chunk_size:
-            return [text] if text.strip() else []
-        
-        for sep in separators:
-            if sep in text:
-                parts = text.split(sep)
-                chunks = []
-                current_chunk = ""
-                
-                for part in parts:
-                    if len(current_chunk) + len(part) + len(sep) <= chunk_size:
-                        current_chunk = current_chunk + sep + part if current_chunk else part
-                    else:
-                        if current_chunk.strip():
-                            chunks.append(current_chunk.strip())
-                        current_chunk = part
-                
-                if current_chunk.strip():
-                    chunks.append(current_chunk.strip())
-                
-                return chunks
-        
-        # No separator found, use fixed size
-        return chunk_fixed_size(text, chunk_size, overlap)
+    separators = ["\n\n", "\n", ". ", "; ", ", ", " "]
     
-    return split_text(text, separators)
+    def split_text(txt: str, sep_idx: int = 0) -> List[str]:
+        if len(txt) <= chunk_size:
+            return [txt.strip()] if txt.strip() else []
+        
+        if sep_idx >= len(separators):
+            return chunk_fixed_size(txt, chunk_size, overlap)
+        
+        sep = separators[sep_idx]
+        if sep not in txt:
+            return split_text(txt, sep_idx + 1)
+        
+        parts = txt.split(sep)
+        chunks = []
+        current = ""
+        
+        for part in parts:
+            candidate = (current + sep + part) if current else part
+            if len(candidate) <= chunk_size:
+                current = candidate
+            else:
+                if current.strip():
+                    chunks.append(current.strip())
+                if len(part) > chunk_size:
+                    chunks.extend(split_text(part, sep_idx + 1))
+                    current = ""
+                else:
+                    current = part
+        
+        if current.strip():
+            chunks.append(current.strip())
+        
+        return chunks
+    
+    return split_text(text)
+
+
+def chunk_structural(text: str, chunk_size: int = 800, overlap: int = 150) -> List[str]:
+    """
+    Structural chunking for legal contracts (BEST for contracts).
+    
+    Strategy:
+    1. First splits by clauses (legal structure)
+    2. Then applies fixed chunking WITHIN each clause
+    3. Never crosses clause boundaries
+    
+    Recognizes patterns:
+    - Numbered clauses: "1. Título", "2. Título"
+    - Named sections: "CLÁUSULA X", "Artigo X", "Seção X"
+    - Annexes: "Anexo A —", "Anexo B"
+    - Subsections: "1.1", "1.2.1", "a)", "I)"
+    """
+    import re
+    
+    text = text.strip()
+    if not text:
+        return []
+    
+    # Clean page markers and headers
+    text = re.sub(r'-- \d+ of \d+ --', '', text)
+    text = re.sub(r'Página \d+', '', text)
+    text = re.sub(r'DOCUMENTO FICTÍCIO.*?PRODUÇÃO\s*', '', text)
+    
+    # Patterns for clause detection (Portuguese legal)
+    clause_patterns = [
+        r'(?=\n\d+\.\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóúâêôãõç])',  # "1. Título"
+        r'(?=\nCLÁUSULA\s+\d+)',  # "CLÁUSULA 1"
+        r'(?=\nCláusula\s+\d+)',  # "Cláusula 1"
+        r'(?=\nArtigo\s+\d+)',    # "Artigo 1"
+        r'(?=\nArt\.\s*\d+)',     # "Art. 1"
+        r'(?=\nSeção\s+\d+)',     # "Seção 1"
+        r'(?=\nCapítulo\s+\d+)',  # "Capítulo 1"
+        r'(?=\nAnexo\s+[A-Z]?\s*[—–-])',  # "Anexo A —"
+        r'(?=\nAnexo\s+[A-Z]?\s*\n)',      # "Anexo A\n"
+        r'(?=\n[A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóúâêôãõç\s]+(?:,\s*[A-Z][a-záéíóúâêôãõç\s]+)*\n)',  # Section titles
+    ]
+    
+    # Combine patterns
+    combined_pattern = '|'.join(clause_patterns)
+    
+    # Split by clauses
+    clauses = re.split(combined_pattern, '\n' + text)
+    clauses = [c.strip() for c in clauses if c and c.strip()]
+    
+    # If no clauses detected, fallback to paragraph-based splitting
+    if len(clauses) <= 1:
+        clauses = re.split(r'\n\n+', text)
+        clauses = [c.strip() for c in clauses if c and c.strip()]
+    
+    chunks = []
+    
+    for clause in clauses:
+        clause = clause.strip()
+        if not clause:
+            continue
+        
+        # Extract clause header for context
+        header_match = re.match(r'^(\d+\.?\s*[^\n]+|\w+\s+\d+[^\n]*|Anexo[^\n]+)', clause)
+        header = header_match.group(0).strip() if header_match else ""
+        
+        if len(clause) <= chunk_size:
+            chunks.append(clause)
+        else:
+            # Split large clauses with fixed chunking, preserving header context
+            clause_chunks = chunk_fixed_size(clause, chunk_size, overlap)
+            
+            for i, chunk in enumerate(clause_chunks):
+                # Add header reference to continuation chunks
+                if i > 0 and header and not chunk.startswith(header[:20]):
+                    chunk = f"[{header[:50]}...] {chunk}"
+                chunks.append(chunk)
+    
+    return chunks
+
+
+def get_chunk_function(strategy: str):
+    """Get chunking function by strategy name"""
+    strategies = {
+        "fixed_size": chunk_fixed_size,
+        "recursive": chunk_recursive,
+        "structural": chunk_structural
+    }
+    return strategies.get(strategy, chunk_recursive)
 
 
 def chunk_by_sentence(text: str, chunk_size: int, overlap: int) -> List[str]:

@@ -29,8 +29,10 @@ export function lightenColor(hex: string, factor: number): string {
 const DEFAULT_THEME = {
   primary_color: "#FF3621",    // Databricks red
   text_color: "#1B1B1D",       // Dark text
-  success_color: "#00A972",    // Green
-  accent_color: "#1857B6",     // Blue
+  success_color: "#00A972",    // Green (completed)
+  accent_color: "#1857B6",     // Blue (processing)
+  warning_color: "#F59E0B",    // Orange (warning)
+  error_color: "#DC2626",      // Red (error)
   logo_url: "",                // Empty = use default
   app_name: "Contracts App",
   // Derived colors
@@ -40,15 +42,17 @@ const DEFAULT_THEME = {
   success_lighter: "#CCF0E3",
   accent_light: "#E8EEF7",
   accent_lighter: "#D1DEEF",
-  warning_color: "#F59E0B",
-  warning_light: "#FEF3C7"
+  warning_light: "#FEF3C7",
+  error_light: "#FEE2E2"
 }
 
 export interface ThemeConfig {
   primary_color: string
   text_color: string
-  success_color: string
-  accent_color: string
+  success_color: string      // Green - completed states
+  accent_color: string       // Blue - processing states
+  warning_color?: string     // Orange - warning states
+  error_color?: string       // Red - error states
   logo_url: string
   app_name: string
   // Derived colors
@@ -58,8 +62,8 @@ export interface ThemeConfig {
   success_lighter?: string
   accent_light?: string
   accent_lighter?: string
-  warning_color?: string
   warning_light?: string
+  error_light?: string
 }
 
 interface ThemeContextType {
@@ -134,7 +138,9 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       accent_light: config.accent_light || lightenColor(config.accent_color, 0.92),
       accent_lighter: config.accent_lighter || lightenColor(config.accent_color, 0.85),
       warning_color: config.warning_color || "#F59E0B",
-      warning_light: config.warning_light || lightenColor(config.warning_color || "#F59E0B", 0.92)
+      warning_light: config.warning_light || lightenColor(config.warning_color || "#F59E0B", 0.92),
+      error_color: config.error_color || "#DC2626",
+      error_light: config.error_light || lightenColor(config.error_color || "#DC2626", 0.92)
     }
   }, [])
 
@@ -159,6 +165,8 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     root.style.setProperty("--color-accent-lighter", fullConfig.accent_lighter!)
     root.style.setProperty("--color-warning", fullConfig.warning_color!)
     root.style.setProperty("--color-warning-light", fullConfig.warning_light!)
+    root.style.setProperty("--color-error", fullConfig.error_color!)
+    root.style.setProperty("--color-error-light", fullConfig.error_light!)
   }, [generateDerivedColors])
 
   // Load theme from API on mount

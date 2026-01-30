@@ -42,7 +42,10 @@
     "documents": "documents",
     "files": "files",
     "filesCapital": "Files",
-    "segments": "segments"
+    "segments": "segments",
+    "upload": "Upload",
+    "extract": "Extract",
+    "total": "Total"
   },
   "import": {
     "title": "Import Documents",
@@ -52,7 +55,7 @@
     "tableToCreate": "Table that will be created:",
     "configSaved": "Configuration saved",
     "configured": "Configured",
-    "manageDatabricksFolder": "2. Manage Databricks Folder",
+    "manageDatabricksFolder": "Manage Databricks Folder",
     "manageDatabricksFolderDesc": "Manage files stored in the Databricks folder (Volume) managed by Unity Catalog.",
     "loadExistingFiles": "Load existing files",
     "noFilesInVolume": "No files found in volume",
@@ -126,7 +129,7 @@
       "recreateIndexHint": "If checked, the existing index will be deleted and recreated with new settings. Useful for changing the endpoint or embedding model."
     },
     "step2": {
-      "title": "2. Select Documents",
+      "title": "Select Documents",
       "loadDocuments": "Load documents",
       "noDocuments": "No documents found",
       "tableNotFound": "Document table not found",
@@ -208,6 +211,31 @@
       "previewGenerated": "Preview generated: {count} segments in {docs} document(s)",
       "previewError": "Error generating preview",
       "documentsRemoved": "Documents and segments removed"
+    },
+    "autoProcess": {
+      "title": "Automatic Processing",
+      "generatingQuestions": "Generating evaluation questions...",
+      "evaluatingChunks": "Evaluating chunk quality...",
+      "creatingIndex": "Creating Vector Index...",
+      "samples": "samples",
+      "allFiles": "all files",
+      "chunksIndexed": "chunks indexed",
+      "indexCreated": "Index created. Waiting for sync...",
+      "indexTimeout": "Request timeout. Checking status...",
+      "indexError": "Index error",
+      "chunksCreated": "Chunks created",
+      "steps": {
+        "questions": "Generating questions",
+        "recursive": "Recursive",
+        "fixedSize": "Fixed Size",
+        "structural": "Structural",
+        "evaluating": "Evaluating strategies",
+        "applying": "Applying strategy",
+        "creatingIndex": "Creating Vector Index"
+      },
+      "results": {
+        "best": "Best"
+      }
     }
   }
 }

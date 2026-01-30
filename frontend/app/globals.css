@@ -9,6 +9,8 @@
   --color-text: #1B1B1D;
   --color-success: #00A972;
   --color-accent: #1857B6;
+  --color-warning: #F59E0B;
+  --color-error: #DC2626;
   
   /* Derived colors - lighter versions for backgrounds */
   --color-primary-light: #FFEBE8;
@@ -17,8 +19,8 @@
   --color-success-lighter: #CCF0E3;
   --color-accent-light: #E8EEF7;
   --color-accent-lighter: #D1DEEF;
-  --color-warning: #F59E0B;
   --color-warning-light: #FEF3C7;
+  --color-error-light: #FEE2E2;
   
   /* Legacy aliases */
   --databricks-red: var(--color-primary);

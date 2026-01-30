@@ -478,10 +478,6 @@ export default function ImportPage() {
         const extractResult = await extractTextFromFile(file)
         if (extractResult) {
           successCount++
-          toast.success(`${file.name}`, {
-            description: t("common.success"),
-            duration: 3000
-          })
         } else {
           errorCount++
         }
@@ -528,10 +524,6 @@ export default function ImportPage() {
               const extractResult = await extractTextFromFile(file)
               if (extractResult) {
                 successCount++
-                toast.success(`${file.name}`, {
-                  description: t("common.success"),
-                  duration: 3000
-                })
               } else {
                 errorCount++
               }
@@ -550,10 +542,6 @@ export default function ImportPage() {
           const extractResult = await extractTextFromFile(file)
           if (extractResult) {
             successCount++
-            toast.success(`${file.name}`, {
-              description: t("common.success"),
-              duration: 3000
-            })
           } else {
             errorCount++
           }
@@ -915,129 +903,6 @@ export default function ImportPage() {
         </p>
       </div>
 
-      {/* Table Configuration Section */}
-      <div className={`bg-white rounded-xl border shadow-sm overflow-hidden transition-all ${
-        showConfig ? 'border-[var(--color-primary)]' : 'border-gray-200'
-      }`}>
-        <button
-          onClick={() => setShowConfig(!showConfig)}
-          className="w-full px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between hover:bg-gray-100 transition-colors"
-        >
-          <div className="flex items-center gap-2">
-            {isConfigSaved ? (
-              <CheckCircle2 className="h-5 w-5 text-[var(--color-success)]" />
-            ) : (
-              <Database className="h-5 w-5 text-[var(--color-primary)]" />
-            )}
-            <h2 className="text-lg font-semibold text-[var(--color-text)]">{t("import.whereToSave")}</h2>
-          </div>
-          <div className="flex items-center gap-2">
-            {isConfigSaved && (
-              <span className="text-sm text-[var(--color-success)]">
-                {t("import.configured")}
-              </span>
-            )}
-            <ChevronRight className={`h-5 w-5 text-gray-400 transition-transform ${showConfig ? 'rotate-90' : ''}`} />
-          </div>
-        </button>
-        
-        {showConfig && (
-          <div className="p-4">
-            <p className="text-sm text-gray-600 mb-4">
-              {t("import.whereToSaveDesc")}
-            </p>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  {t("common.catalog")}
-                </label>
-                <input
-                  type="text"
-                  value={tableConfig.catalog}
-                  onChange={(e) => {
-                    setTableConfig(prev => ({ ...prev, catalog: e.target.value }))
-                    setIsConfigSaved(false)
-                  }}
-                  placeholder={t("import.placeholder.catalog")}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  {t("common.schema")}
-                </label>
-                <input
-                  type="text"
-                  value={tableConfig.schema}
-                  onChange={(e) => {
-                    setTableConfig(prev => ({ ...prev, schema: e.target.value }))
-                    setIsConfigSaved(false)
-                  }}
-                  placeholder={t("import.placeholder.schema")}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  {t("common.tableName")}
-                </label>
-                <input
-                  type="text"
-                  value={tableConfig.tableName}
-                  onChange={(e) => {
-                    setTableConfig(prev => ({ ...prev, tableName: e.target.value }))
-                    setIsConfigSaved(false)
-                  }}
-                  placeholder={t("import.placeholder.tableName")}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
-                />
-              </div>
-            </div>
-
-            {/* Preview das tabelas que serão criadas */}
-            {tableConfig.tableName && (
-              <div className="mt-3 p-3 bg-[var(--color-accent-light)] border border-[var(--color-accent-lighter)] rounded-lg">
-                <p className="text-xs font-medium text-[var(--color-accent)] mb-2">{t("import.tableToCreate")}</p>
-                <div className="flex flex-wrap gap-2">
-                  <code className="bg-[var(--color-accent-lighter)] text-[var(--color-accent)] px-2 py-1 rounded text-xs font-mono">
-                    {tableConfig.catalog || "catalog"}.{tableConfig.schema || "schema"}.{tableConfig.tableName}_parsed
-                  </code>
-                </div>
-              </div>
-            )}
-            
-            <div className="mt-4 flex items-center justify-end gap-3">
-              {!isConfigSaved ? (
-                <>
-                  <button
-                    onClick={() => {
-                      setTableConfig(initialTableConfig)
-                    }}
-                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors flex items-center gap-2"
-                  >
-                    <X className="h-4 w-4" />
-                    {t("common.cancel")}
-                  </button>
-                  <button
-                    onClick={saveTableConfig}
-                    disabled={!tableConfig.catalog || !tableConfig.schema || !tableConfig.tableName}
-                    className="px-4 py-2 text-sm font-medium text-white bg-[var(--color-primary)] rounded-lg hover:bg-[var(--color-primary)]/90 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                  >
-                    <Check className="h-4 w-4" />
-                    {t("common.verifySave")}
-                  </button>
-                </>
-              ) : (
-                <span className="flex items-center gap-2 text-sm text-[var(--color-success)]">
-                  <CheckCircle2 className="h-4 w-4" />
-                  {t("import.configSaved")}
-                </span>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
-
       {/* Volume Management Section */}
       <div className={`bg-white rounded-xl border shadow-sm overflow-hidden transition-all ${
         showVolumeManager ? 'border-[var(--color-primary)]' : 'border-gray-200'
@@ -1080,7 +945,7 @@ export default function ImportPage() {
             {/* Loading State */}
             {volumeFilesLoading && (
               <div className="flex items-center justify-center py-8">
-                <Loader2 className="h-6 w-6 text-[var(--color-primary)] animate-spin" />
+                <Loader2 className="h-6 w-6 text-[var(--color-accent)] animate-spin" />
                 <span className="ml-2 text-sm text-gray-600">{t("common.loading")}</span>
               </div>
             )}
@@ -1300,7 +1165,10 @@ export default function ImportPage() {
               <div className="flex items-center gap-2">
                 <FileStack className="h-5 w-5 text-[var(--color-primary)]" />
                 <h3 className="text-lg font-semibold text-[var(--color-text)]">
-                  {t("import.fileList.title")} ({files.length})
+                  {t("import.fileList.title")} {isUploading && totalFilesToProcess > 0 
+                    ? <span className="text-[var(--color-accent)]">({currentFileIndex}/{totalFilesToProcess})</span>
+                    : `(${files.length})`
+                  }
                 </h3>
               </div>
               {totalPages > 1 && (
@@ -1344,7 +1212,7 @@ export default function ImportPage() {
                         </svg>
                       )}
                       {file.status === "uploading" && (
-                        <Loader2 className="h-5 w-5 text-[var(--color-primary)] animate-spin" />
+                        <Loader2 className="h-5 w-5 text-[var(--color-accent)] animate-spin" />
                       )}
                       {file.status === "extracting" && (
                         <Loader2 className="h-5 w-5 text-[var(--color-accent)] animate-spin" />
@@ -1353,7 +1221,7 @@ export default function ImportPage() {
                         <CheckCircle2 className="h-5 w-5 text-[var(--color-success)]" />
                       )}
                       {file.status === "error" && (
-                        <XCircle className="h-5 w-5 text-[var(--color-primary)]" />
+                        <XCircle className="h-5 w-5 text-[var(--color-error)]" />
                       )}
                       {file.status === "skipped" && (
                         <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1373,9 +1241,9 @@ export default function ImportPage() {
                         </p>
                         {file.status === "uploading" && (
                           <span className="text-xs flex items-center gap-1.5">
-                            <span className="text-[var(--color-primary)]">{t("import.fileList.importing")}...</span>
+                            <span className="text-[var(--color-accent)]">{t("import.fileList.importing")}...</span>
                             <span className="font-mono text-[10px] flex items-center gap-0.5">
-                              <span className="bg-[var(--color-primary-lighter)] text-[var(--color-primary)] px-1 py-0.5 rounded">
+                              <span className="bg-[var(--color-accent-light)] text-[var(--color-accent)] px-1 py-0.5 rounded">
                                 {formatElapsedTime(file.uploadDuration || 0)}
                               </span>
                             </span>
@@ -1385,7 +1253,7 @@ export default function ImportPage() {
                           <span className="text-xs flex items-center gap-1.5">
                             <span className="text-[var(--color-accent)]">{t("common.processing")}...</span>
                             <span className="font-mono text-[10px] flex items-center gap-0.5">
-                              <span className="bg-[var(--color-primary-lighter)] text-[var(--color-primary)] px-1 py-0.5 rounded">
+                              <span className="bg-[var(--color-accent-light)] text-[var(--color-accent)] px-1 py-0.5 rounded">
                                 {formatElapsedTime(file.uploadDuration || 0)}
                               </span>
                               <span className="text-gray-400">|</span>
@@ -1401,15 +1269,15 @@ export default function ImportPage() {
                               ✓ {file.textLength?.toLocaleString() || 0} chars • {file.pageCount || 0} pgs
                             </span>
                             <span className="font-mono text-[10px] flex items-center gap-0.5">
-                              <span className="bg-[var(--color-primary-lighter)] text-[var(--color-primary)] px-1 py-0.5 rounded">
+                              <span className="bg-gray-100 text-gray-500 px-1 py-0.5 rounded">
                                 {formatElapsedTime(file.uploadDuration || 0)}
                               </span>
                               <span className="text-gray-400">|</span>
-                              <span className="bg-[var(--color-accent-lighter)] text-[var(--color-accent)] px-1 py-0.5 rounded">
+                              <span className="bg-gray-100 text-gray-500 px-1 py-0.5 rounded">
                                 {formatElapsedTime(file.extractDuration || 0)}
                               </span>
                               <span className="text-gray-400">|</span>
-                              <span className="bg-[var(--color-success-lighter)] text-[var(--color-success)] px-1 py-0.5 rounded">
+                              <span className="bg-gray-100 text-gray-500 px-1 py-0.5 rounded">
                                 {formatElapsedTime(file.totalDuration || 0)}
                               </span>
                             </span>
@@ -1417,18 +1285,18 @@ export default function ImportPage() {
                         )}
                         {file.status === "error" && (
                           <span className="text-xs flex items-center gap-1.5">
-                            <span className="text-[var(--color-primary)]">✕ {file.error || t("common.error")}</span>
+                            <span className="text-[var(--color-error)]">✕ {file.error || t("common.error")}</span>
                             {(file.uploadDuration || file.extractDuration) && (
                               <span className="font-mono text-[10px] flex items-center gap-0.5">
                                 {file.uploadDuration !== undefined && (
-                                  <span className="bg-[var(--color-primary-lighter)] text-[var(--color-primary)] px-1 py-0.5 rounded">
+                                  <span className="bg-[var(--color-error-light)] text-[var(--color-error)] px-1 py-0.5 rounded">
                                     {formatElapsedTime(file.uploadDuration)}
                                   </span>
                                 )}
                                 {file.extractDuration !== undefined && (
                                   <>
                                     <span className="text-gray-400">|</span>
-                                    <span className="bg-[var(--color-accent-lighter)] text-[var(--color-accent)] px-1 py-0.5 rounded">
+                                    <span className="bg-[var(--color-error-light)] text-[var(--color-error)] px-1 py-0.5 rounded">
                                       {formatElapsedTime(file.extractDuration)}
                                     </span>
                                   </>
@@ -1473,29 +1341,30 @@ export default function ImportPage() {
               const totalUpload = files.reduce((sum, f) => sum + (f.uploadDuration || 0), 0)
               const totalExtract = files.reduce((sum, f) => sum + (f.extractDuration || 0), 0)
               const totalTime = files.reduce((sum, f) => sum + (f.totalDuration || 0), 0)
+              const isProcessing = files.some(f => f.status === "uploading" || f.status === "extracting")
               
               return (
                 <div className="px-4 py-2 bg-gray-100 border-t border-gray-200 flex items-center justify-end gap-4 text-[10px] font-mono">
-                  <span className="text-gray-500 text-xs">Total:</span>
+                  <span className="text-gray-500 text-xs">{t("common.total")}:</span>
                   <span className="flex items-center gap-1">
-                    <span className="bg-[var(--color-primary-lighter)] text-[var(--color-primary)] px-1.5 py-0.5 rounded font-semibold">
+                    <span className={`px-1.5 py-0.5 rounded font-semibold ${isProcessing ? "bg-[var(--color-accent-light)] text-[var(--color-accent)]" : "bg-gray-200 text-gray-600"}`}>
                       {formatElapsedTime(totalUpload)}
                     </span>
-                    <span className="text-gray-500">Upload</span>
+                    <span className="text-gray-500">{t("common.upload")}</span>
                   </span>
                   <span className="text-gray-400">|</span>
                   <span className="flex items-center gap-1">
-                    <span className="bg-[var(--color-accent-lighter)] text-[var(--color-accent)] px-1.5 py-0.5 rounded font-semibold">
+                    <span className={`px-1.5 py-0.5 rounded font-semibold ${isProcessing ? "bg-[var(--color-accent-light)] text-[var(--color-accent)]" : "bg-gray-200 text-gray-600"}`}>
                       {formatElapsedTime(totalExtract)}
                     </span>
-                    <span className="text-gray-500">Extract</span>
+                    <span className="text-gray-500">{t("common.extract")}</span>
                   </span>
                   <span className="text-gray-400">|</span>
                   <span className="flex items-center gap-1">
-                    <span className="bg-[var(--color-success-lighter)] text-[var(--color-success)] px-1.5 py-0.5 rounded font-semibold">
+                    <span className={`px-1.5 py-0.5 rounded font-semibold ${isProcessing ? "bg-[var(--color-accent-light)] text-[var(--color-accent)]" : "bg-gray-200 text-gray-600"}`}>
                       {formatElapsedTime(totalTime)}
                     </span>
-                    <span className="text-gray-500">Total</span>
+                    <span className="text-gray-500">{t("common.total")}</span>
                   </span>
                 </div>
               )
@@ -1536,7 +1405,7 @@ export default function ImportPage() {
                       >
                         {isUploading && <Loader2 className="h-4 w-4 animate-spin" />}
                         {isUploading
-                          ? `${t("import.fileList.importing")} ${currentFileIndex}/${totalFilesToProcess} ${formatElapsedTime(elapsedTime)}`
+                          ? formatElapsedTime(elapsedTime)
                           : pendingCount === files.length
                             ? `${t("import.fileList.import")} ${files.length} ${t("common.files")}`
                             : `${t("import.fileList.import")} ${pendingCount} ${t("common.of")} ${files.length}`

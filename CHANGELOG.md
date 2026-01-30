@@ -2,6 +2,34 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.0] - 2026-01-30 - **Auto Process with Background Jobs**
+
+### Features
+- **Background Job Processing**: Auto process now runs in background with polling to avoid HTTP 502 gateway timeouts
+- **Real-time Progress**: UI updates in real-time with backend status (step, message, progress, files, tables)
+- **Dynamic Labels**: Step labels change based on completion status (e.g., "Gerando perguntas" → "Perguntas geradas")
+- **Full Table Names**: Display complete catalog.schema.table names instead of just table names
+- **Expandable Evaluation Results**: Results shown in collapsible section with chevron toggle
+- **Strategy Evaluation Info**: Shows chunks count and temp table names during processing
+
+### Improvements
+- Removed star emoji from Structural strategy labels
+- Changed "ch" to "chunks" for clarity
+- Added `useRef` for synchronous step tracking to fix timing issues
+- Improved `formatTime` to handle negative values gracefully
+
+### Backend
+- New endpoint `/api/process/auto/start` - starts background job, returns jobId
+- New endpoint `/api/process/auto/status/{jobId}` - returns job status for polling
+- Background task updates job status in real-time with evaluation results, tables, and best strategy
+- Global `auto_process_jobs` dictionary stores job state
+
+### Bug Fixes
+- Fixed negative time display (-1:-12) by using refs for step tracking
+- Fixed step times not showing by removing conflicting progress simulation
+
+---
+
 ## [2.2.0] - 2026-01-21 - **MÓDULO 1 COMPLETO** ✅
 
 ### 🎉 Módulo 1: Importação de Documentos - CONCLUÍDO

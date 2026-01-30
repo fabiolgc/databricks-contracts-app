@@ -42,7 +42,10 @@
     "documents": "documentos",
     "files": "arquivos",
     "filesCapital": "Arquivos",
-    "segments": "segmentos"
+    "segments": "segmentos",
+    "upload": "Upload",
+    "extract": "Extração",
+    "total": "Total"
   },
   "import": {
     "title": "Importar Documentos",
@@ -52,7 +55,7 @@
     "tableToCreate": "Tabela que será criada:",
     "configSaved": "Configuração salva",
     "configured": "Configurado",
-    "manageDatabricksFolder": "2. Gerenciar Pasta do Databricks",
+    "manageDatabricksFolder": "Gerenciar Pasta do Databricks",
     "manageDatabricksFolderDesc": "Gerencie os arquivos armazenados na pasta do Databricks (Volume) gerenciado pelo Unity Catalog.",
     "loadExistingFiles": "Carregar arquivos existentes",
     "noFilesInVolume": "Nenhum arquivo encontrado no volume",
@@ -126,7 +129,7 @@
       "recreateIndexHint": "Se marcado, o índice existente será deletado e recriado com as novas configurações. Útil para alterar o endpoint ou modelo de embedding."
     },
     "step2": {
-      "title": "2. Selecionar Documentos",
+      "title": "Selecionar Documentos",
       "loadDocuments": "Carregar documentos",
       "noDocuments": "Nenhum documento encontrado",
       "tableNotFound": "Tabela de documentos não encontrada",
@@ -208,6 +211,31 @@
       "previewGenerated": "Prévia gerada: {count} segmentos em {docs} documento(s)",
       "previewError": "Erro ao gerar prévia",
       "documentsRemoved": "Documentos e segmentos removidos"
+    },
+    "autoProcess": {
+      "title": "Processamento Automático",
+      "generatingQuestions": "Gerando perguntas de avaliação...",
+      "evaluatingChunks": "Avaliando qualidade dos chunks...",
+      "creatingIndex": "Criando Vector Index...",
+      "samples": "amostras",
+      "allFiles": "todos arquivos",
+      "chunksIndexed": "chunks indexados",
+      "indexCreated": "Index criado. Aguardando sincronização...",
+      "indexTimeout": "Timeout na requisição. Verificando status...",
+      "indexError": "Erro no índice",
+      "chunksCreated": "Chunks criados",
+      "steps": {
+        "questions": "Gerando perguntas",
+        "recursive": "Recursivo",
+        "fixedSize": "Tamanho Fixo",
+        "structural": "Estrutural",
+        "evaluating": "Avaliando estratégias",
+        "applying": "Aplicando estratégia",
+        "creatingIndex": "Criando Vector Index"
+      },
+      "results": {
+        "best": "Melhor"
+      }
     }
   }
 }

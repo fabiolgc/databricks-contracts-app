@@ -45,3 +45,13 @@ env:
   # Vector Search configuration
   - name: VECTOR_SEARCH_ENDPOINT
     value: "one-env-shared-endpoint-12"
+  
+  # Timeout configurations (in seconds)
+  - name: VECTOR_INDEX_CREATION_TIMEOUT
+    value: "300"
+  
+  - name: VECTOR_INDEX_SYNC_TIMEOUT
+    value: "300"
+  
+  - name: API_REQUEST_TIMEOUT
+    value: "120"

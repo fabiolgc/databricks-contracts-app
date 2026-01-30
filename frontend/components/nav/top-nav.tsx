@@ -203,6 +203,20 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   const [isSaving, setIsSaving] = useState(false)
   const [hasChanges, setHasChanges] = useState(false)
   
+  // Tab state
+  const [activeTab, setActiveTab] = useState<"general" | "appearance">("general")
+  const [appearanceSubTab, setAppearanceSubTab] = useState<"identity" | "colors">("identity")
+  
+  // General config state
+  const [generalConfig, setGeneralConfig] = useState({
+    catalog: "",
+    schema: "",
+    tableName: "contracts",
+    embeddingModel: "databricks-gte-large-en",
+    indexSyncType: "TRIGGERED" as "TRIGGERED" | "CONTINUOUS",
+    vsEndpoint: ""
+  })
+  
   // AI Assistant state
   const [showAIAssistant, setShowAIAssistant] = useState(false)
   const [companyInput, setCompanyInput] = useState("")
@@ -212,6 +226,41 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   
   // Logo preview state
   const [logoError, setLogoError] = useState(false)
+  
+  // Load general config on mount
+  useEffect(() => {
+    const loadConfig = async () => {
+      try {
+        const response = await fetch("/api/config")
+        if (response.ok) {
+          const config = await response.json()
+          setGeneralConfig(prev => ({
+            ...prev,
+            catalog: config.catalog || "",
+            schema: config.schema || "",
+            vsEndpoint: config.vectorSearchEndpoint || ""
+          }))
+        }
+        
+        const appConfigResponse = await fetch("/api/app-config")
+        if (appConfigResponse.ok) {
+          const appConfig = await appConfigResponse.json()
+          if (appConfig.success && appConfig.config) {
+            setGeneralConfig(prev => ({
+              ...prev,
+              tableName: appConfig.config.table_name || "contracts",
+              embeddingModel: appConfig.config.embedding_model || "databricks-gte-large-en",
+              indexSyncType: appConfig.config.index_sync_type || "TRIGGERED",
+              vsEndpoint: appConfig.config.vs_endpoint || prev.vsEndpoint
+            }))
+          }
+        }
+      } catch (error) {
+        console.error("Error loading config:", error)
+      }
+    }
+    loadConfig()
+  }, [])
 
   // Main colors
   const mainColorFields = [
@@ -319,14 +368,36 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   const handleSave = async () => {
     setIsSaving(true)
     try {
+      // Save theme (appearance)
       await updateTheme(localTheme)
+      
+      // Save general config
+      await fetch("/api/app-config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          table_name: generalConfig.tableName,
+          embedding_model: generalConfig.embeddingModel,
+          index_sync_type: generalConfig.indexSyncType,
+          vs_endpoint: generalConfig.vsEndpoint
+        })
+      })
+      
       setHasChanges(false)
       onClose()
+      
+      // Reload page to apply changes
+      window.location.reload()
     } catch (error) {
-      console.error("Error saving theme:", error)
+      console.error("Error saving settings:", error)
     } finally {
       setIsSaving(false)
     }
+  }
+  
+  const handleGeneralConfigChange = (key: string, value: string) => {
+    setGeneralConfig(prev => ({ ...prev, [key]: value }))
+    setHasChanges(true)
   }
 
   const handleReset = async () => {
@@ -418,17 +489,8 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       <div className="bg-white rounded-xl shadow-2xl max-w-xl w-full max-h-[90vh] flex flex-col relative">
-        
-        {/* AI Assistant Button - Top Right */}
-        <button
-          onClick={() => setShowAIAssistant(!showAIAssistant)}
-          className="absolute top-4 right-4 w-10 h-10 flex items-center justify-center rounded-full bg-gradient-to-br from-purple-500 to-indigo-600 hover:from-purple-600 hover:to-indigo-700 text-white shadow-lg transition-all hover:scale-105 z-10"
-          title={locale === "pt-BR" ? "Assistente AI" : "AI Assistant"}
-        >
-          <Sparkles className="h-5 w-5" />
-        </button>
 
-        {/* AI Assistant Overlay */}
+        {/* AI Assistant Overlay (controlled from Appearance tab) */}
         {showAIAssistant && (
           <div className="absolute top-16 right-4 w-72 bg-white rounded-xl shadow-2xl border border-gray-200 z-20 overflow-hidden">
             <div className="bg-gradient-to-r from-purple-500 to-indigo-600 px-4 py-3">
@@ -496,254 +558,497 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
         {/* Header */}
         <div className="px-6 py-4 border-b border-gray-200 pr-16">
           <h2 className="text-xl font-bold text-gray-900">
-            {locale === "pt-BR" ? "Configurações do Aplicativo" : "Application Settings"}
+            {locale === "pt-BR" ? "Configurações" : "Settings"}
           </h2>
-          <p className="text-sm text-gray-600 mt-1">
-            {locale === "pt-BR" 
-              ? "Personalize as cores e aparência do aplicativo" 
-              : "Customize the app colors and appearance"}
-          </p>
+        </div>
+        
+        {/* Tabs */}
+        <div className="px-6 border-b border-gray-200">
+          <div className="flex gap-1">
+            <button
+              onClick={() => setActiveTab("general")}
+              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === "general" 
+                  ? "border-[var(--color-primary)] text-[var(--color-primary)]" 
+                  : "border-transparent text-gray-600 hover:text-gray-900"
+              }`}
+            >
+              {locale === "pt-BR" ? "Configurações Gerais" : "General Settings"}
+            </button>
+            <button
+              onClick={() => setActiveTab("appearance")}
+              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === "appearance" 
+                  ? "border-[var(--color-primary)] text-[var(--color-primary)]" 
+                  : "border-transparent text-gray-600 hover:text-gray-900"
+              }`}
+            >
+              {locale === "pt-BR" ? "Aparência" : "Appearance"}
+            </button>
+          </div>
         </div>
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-6">
-          {/* App Name */}
-          <div className="mb-6">
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              {locale === "pt-BR" ? "Nome do Aplicativo" : "Application Name"}
-            </label>
-            <input
-              type="text"
-              value={localTheme.app_name}
-              onChange={(e) => {
-                setLocalTheme(prev => ({ ...prev, app_name: e.target.value }))
-                setHasChanges(true)
-              }}
-              placeholder="Contracts App"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
-            />
-          </div>
-
-          {/* Logo URL with Preview */}
-          <div className="mb-6">
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              {locale === "pt-BR" ? "URL do Logo (opcional)" : "Logo URL (optional)"}
-            </label>
-            <div className="flex gap-3">
-              {/* Logo Preview */}
-              <div className="flex-shrink-0 w-16 h-16 border border-gray-200 rounded-lg bg-gray-50 flex items-center justify-center overflow-hidden">
-                {localTheme.logo_url && !logoError ? (
-                  <img
-                    src={localTheme.logo_url}
-                    alt="Logo preview"
-                    className="max-w-full max-h-full object-contain"
-                    onError={() => setLogoError(true)}
-                    onLoad={() => setLogoError(false)}
-                  />
-                ) : localTheme.logo_url && logoError ? (
-                  <span className="text-[10px] text-red-500 text-center px-1">
-                    {locale === "pt-BR" ? "URL inválida" : "Invalid URL"}
-                  </span>
-                ) : (
-                  <span className="text-[10px] text-gray-400 text-center px-1">
-                    {locale === "pt-BR" ? "Sem logo" : "No logo"}
-                  </span>
-                )}
+          
+          {/* General Settings Tab */}
+          {activeTab === "general" && (
+            <div className="space-y-6">
+              {/* Unity Catalog Configuration */}
+              <div>
+                <h3 className="text-sm font-semibold text-gray-900 mb-3">
+                  {locale === "pt-BR" ? "Unity Catalog" : "Unity Catalog"}
+                </h3>
+                <div className="grid grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      {locale === "pt-BR" ? "Catálogo" : "Catalog"}
+                    </label>
+                    <input
+                      type="text"
+                      value={generalConfig.catalog}
+                      onChange={(e) => handleGeneralConfigChange("catalog", e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)] bg-gray-50"
+                      disabled
+                    />
+                    <p className="mt-1 text-xs text-gray-500">
+                      {locale === "pt-BR" ? "Definido no app.yaml" : "Defined in app.yaml"}
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      {locale === "pt-BR" ? "Schema" : "Schema"}
+                    </label>
+                    <input
+                      type="text"
+                      value={generalConfig.schema}
+                      onChange={(e) => handleGeneralConfigChange("schema", e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)] bg-gray-50"
+                      disabled
+                    />
+                    <p className="mt-1 text-xs text-gray-500">
+                      {locale === "pt-BR" ? "Definido no app.yaml" : "Defined in app.yaml"}
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      {locale === "pt-BR" ? "Nome da Tabela" : "Table Name"}
+                    </label>
+                    <input
+                      type="text"
+                      value={generalConfig.tableName}
+                      onChange={(e) => handleGeneralConfigChange("tableName", e.target.value)}
+                      placeholder="contracts"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
+                    />
+                  </div>
+                </div>
+                
+                {/* Tables Preview */}
+                <div className="mt-4 p-3 bg-[var(--color-accent-light)] rounded-lg">
+                  <p className="text-xs font-medium text-[var(--color-accent)] mb-2">
+                    {locale === "pt-BR" ? "Tabelas que serão criadas:" : "Tables that will be created:"}
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <code className="text-xs bg-white px-2 py-1 rounded border border-[var(--color-accent-lighter)]">
+                      {generalConfig.catalog}.{generalConfig.schema}.{generalConfig.tableName}_parsed
+                    </code>
+                    <code className="text-xs bg-white px-2 py-1 rounded border border-[var(--color-accent-lighter)]">
+                      {generalConfig.catalog}.{generalConfig.schema}.{generalConfig.tableName}_chunks
+                    </code>
+                  </div>
+                </div>
               </div>
-              {/* Input and Clear */}
-              <div className="flex-1">
-                <div className="flex gap-2">
+              
+              {/* Vector Search Configuration */}
+              <div>
+                <h3 className="text-sm font-semibold text-gray-900 mb-3">
+                  {locale === "pt-BR" ? "Vector Search" : "Vector Search"}
+                </h3>
+                
+                {/* Endpoint */}
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    {locale === "pt-BR" ? "Endpoint" : "Endpoint"}
+                  </label>
                   <input
-                    type="url"
-                    value={localTheme.logo_url}
-                    onChange={(e) => {
-                      setLocalTheme(prev => ({ ...prev, logo_url: e.target.value }))
-                      setLogoError(false) // Reset error when URL changes
-                      setHasChanges(true)
-                    }}
-                    placeholder="https://example.com/logo.png"
-                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
+                    type="text"
+                    value={generalConfig.vsEndpoint}
+                    onChange={(e) => handleGeneralConfigChange("vsEndpoint", e.target.value)}
+                    placeholder="one-env-shared-endpoint-12"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)] bg-gray-50"
+                    disabled
                   />
-                  {localTheme.logo_url && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setLocalTheme(prev => ({ ...prev, logo_url: "" }))
-                        setLogoError(false)
-                        setHasChanges(true)
-                      }}
-                      className="px-3 py-2 text-sm text-gray-600 hover:text-red-600 border border-gray-300 rounded-lg hover:border-red-300 transition-colors"
-                      title={locale === "pt-BR" ? "Remover logo" : "Remove logo"}
+                  <p className="mt-1 text-xs text-gray-500">
+                    {locale === "pt-BR" ? "Definido no app.yaml" : "Defined in app.yaml"}
+                  </p>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      {locale === "pt-BR" ? "Modelo de Embedding" : "Embedding Model"}
+                    </label>
+                    <select
+                      value={generalConfig.embeddingModel}
+                      onChange={(e) => handleGeneralConfigChange("embeddingModel", e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
                     >
-                      <X className="h-4 w-4" />
-                    </button>
-                  )}
+                      <option value="databricks-gte-large-en">databricks-gte-large-en</option>
+                      <option value="databricks-bge-large-en">databricks-bge-large-en</option>
+                    </select>
+                    <p className="mt-1 text-xs text-gray-500">
+                      {locale === "pt-BR" ? "Modelo para gerar os vetores" : "Model to generate vectors"}
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      {locale === "pt-BR" ? "Sincronização do Índice" : "Index Synchronization"}
+                    </label>
+                    <select
+                      value={generalConfig.indexSyncType}
+                      onChange={(e) => handleGeneralConfigChange("indexSyncType", e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
+                    >
+                      <option value="TRIGGERED">{locale === "pt-BR" ? "Manual (sob demanda)" : "Manual (on demand)"}</option>
+                      <option value="CONTINUOUS">{locale === "pt-BR" ? "Contínuo (automático)" : "Continuous (automatic)"}</option>
+                    </select>
+                    <p className="mt-1 text-xs text-gray-500">
+                      {locale === "pt-BR" ? "Como o índice será atualizado" : "How the index will be updated"}
+                    </p>
+                  </div>
                 </div>
-                <p className="mt-1 text-xs text-gray-500">
-                  {locale === "pt-BR" 
-                    ? "Deixe vazio para usar o logo padrão do Databricks" 
-                    : "Leave empty to use default Databricks logo"}
-                </p>
+                
+                {/* Index Preview */}
+                <div className="mt-4 p-3 bg-[var(--color-success-light)] rounded-lg">
+                  <p className="text-xs font-medium text-[var(--color-success)] mb-2">
+                    {locale === "pt-BR" ? "Índice que será criado:" : "Index that will be created:"}
+                  </p>
+                  <code className="text-xs bg-white px-2 py-1 rounded border border-[var(--color-success-lighter)]">
+                    {generalConfig.catalog}.{generalConfig.schema}.{generalConfig.tableName}_vs
+                  </code>
+                </div>
               </div>
             </div>
-          </div>
-
-          {/* Main Colors */}
-          <div className="mb-4">
-            <h3 className="text-sm font-medium text-gray-700 mb-3">
-              {locale === "pt-BR" ? "Cores Principais" : "Main Colors"}
-            </h3>
-            <div className="grid grid-cols-2 gap-3">
-              {mainColorFields.map((field) => (
-                <div key={field.key} className="bg-gray-50 rounded-lg p-3">
-                  <div className="flex items-center gap-3 mb-2">
-                    <input
-                      type="color"
-                      value={(localTheme[field.key as keyof typeof localTheme] as string) || "#000000"}
-                      onChange={(e) => handleColorChange(field.key, e.target.value)}
-                      className="w-8 h-8 rounded-lg border border-gray-300 cursor-pointer"
-                      style={{ padding: 0 }}
-                    />
-                    <div>
-                      <p className="text-xs font-medium text-gray-900">{field.label}</p>
-                      <p className="text-[10px] text-gray-500">{field.description}</p>
+          )}
+          
+          {/* Appearance Tab */}
+          {activeTab === "appearance" && (
+            <div>
+              {/* Sub-tabs for Appearance */}
+              <div className="flex gap-2 mb-4 p-1 bg-gray-100 rounded-lg">
+                <button
+                  onClick={() => setAppearanceSubTab("identity")}
+                  className={`flex-1 px-3 py-2 text-sm font-medium rounded-md transition-colors ${
+                    appearanceSubTab === "identity" 
+                      ? "bg-white text-gray-900 shadow-sm" 
+                      : "text-gray-600 hover:text-gray-900"
+                  }`}
+                >
+                  {locale === "pt-BR" ? "Identidade" : "Identity"}
+                </button>
+                <button
+                  onClick={() => setAppearanceSubTab("colors")}
+                  className={`flex-1 px-3 py-2 text-sm font-medium rounded-md transition-colors ${
+                    appearanceSubTab === "colors" 
+                      ? "bg-white text-gray-900 shadow-sm" 
+                      : "text-gray-600 hover:text-gray-900"
+                  }`}
+                >
+                  {locale === "pt-BR" ? "Cores" : "Colors"}
+                </button>
+              </div>
+              
+              {/* Identity Sub-tab */}
+              {appearanceSubTab === "identity" && (
+                <>
+                  {/* AI Assistant Button */}
+                  <div className="mb-6 p-4 bg-gradient-to-r from-purple-50 to-indigo-50 rounded-lg border border-purple-100">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+                          <Sparkles className="h-4 w-4 text-purple-600" />
+                          {locale === "pt-BR" ? "Assistente AI" : "AI Assistant"}
+                        </h3>
+                        <p className="text-xs text-gray-600 mt-1">
+                          {locale === "pt-BR" 
+                            ? "Gere cores automaticamente com base no nome da empresa" 
+                            : "Auto-generate colors based on company name"}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => setShowAIAssistant(!showAIAssistant)}
+                        className="px-4 py-2 text-sm font-medium text-white bg-gradient-to-r from-purple-500 to-indigo-600 rounded-lg hover:from-purple-600 hover:to-indigo-700 transition-all flex items-center gap-2"
+                      >
+                        <Sparkles className="h-4 w-4" />
+                        {locale === "pt-BR" ? "Usar AI" : "Use AI"}
+                      </button>
                     </div>
                   </div>
-                  <input
-                    type="text"
-                    value={(localTheme[field.key as keyof typeof localTheme] as string) || ""}
-                    onChange={(e) => handleColorChange(field.key, e.target.value)}
-                    className="w-full px-2 py-1 text-xs font-mono border border-gray-200 rounded bg-white"
-                    placeholder="#FFFFFF"
-                  />
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Derived Colors (Backgrounds) */}
-          <div className="mb-4">
-            <h3 className="text-sm font-medium text-gray-700 mb-2">
-              {locale === "pt-BR" ? "Cores de Fundo" : "Background Colors"}
-            </h3>
-            <p className="text-xs text-gray-500 mb-3">
-              {locale === "pt-BR" 
-                ? "Estas cores são geradas automaticamente mas podem ser ajustadas manualmente." 
-                : "These colors are auto-generated but can be manually adjusted."}
-            </p>
-            <div className="grid grid-cols-3 gap-2">
-              {derivedColorFields.map((field) => (
-                <div key={field.key} className="bg-gray-50 rounded-lg p-2">
-                  <div className="flex items-center gap-2 mb-1">
+                  
+                  {/* App Name */}
+                  <div className="mb-6">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      {locale === "pt-BR" ? "Nome do Aplicativo" : "Application Name"}
+                    </label>
                     <input
-                      type="color"
-                      value={(localTheme[field.key as keyof typeof localTheme] as string) || "#FFFFFF"}
+                      type="text"
+                      value={localTheme.app_name}
                       onChange={(e) => {
-                        setLocalTheme(prev => ({ ...prev, [field.key]: e.target.value }))
+                        setLocalTheme(prev => ({ ...prev, app_name: e.target.value }))
                         setHasChanges(true)
                       }}
-                      className="w-6 h-6 rounded border border-gray-300 cursor-pointer"
-                      style={{ padding: 0 }}
+                      placeholder="Contracts App"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
                     />
-                    <div>
-                      <p className="text-[10px] font-medium text-gray-900">{field.label}</p>
+                  </div>
+
+                  {/* Logo URL with Preview */}
+                  <div className="mb-6">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      {locale === "pt-BR" ? "URL do Logo (opcional)" : "Logo URL (optional)"}
+                    </label>
+                    <div className="flex gap-3">
+                      {/* Logo Preview */}
+                      <div className="flex-shrink-0 w-16 h-16 border border-gray-200 rounded-lg bg-gray-50 flex items-center justify-center overflow-hidden">
+                        {localTheme.logo_url && !logoError ? (
+                          <img
+                            src={localTheme.logo_url}
+                            alt="Logo preview"
+                            className="max-w-full max-h-full object-contain"
+                            onError={() => setLogoError(true)}
+                            onLoad={() => setLogoError(false)}
+                          />
+                        ) : localTheme.logo_url && logoError ? (
+                          <span className="text-[10px] text-red-500 text-center px-1">
+                            {locale === "pt-BR" ? "URL inválida" : "Invalid URL"}
+                          </span>
+                        ) : (
+                          <span className="text-[10px] text-gray-400 text-center px-1">
+                            {locale === "pt-BR" ? "Sem logo" : "No logo"}
+                          </span>
+                        )}
+                      </div>
+                      {/* Input and Clear */}
+                      <div className="flex-1">
+                        <div className="flex gap-2">
+                          <input
+                            type="url"
+                            value={localTheme.logo_url}
+                            onChange={(e) => {
+                              setLocalTheme(prev => ({ ...prev, logo_url: e.target.value }))
+                              setLogoError(false)
+                              setHasChanges(true)
+                            }}
+                            placeholder="https://example.com/logo.png"
+                            className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
+                          />
+                          {localTheme.logo_url && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setLocalTheme(prev => ({ ...prev, logo_url: "" }))
+                                setLogoError(false)
+                                setHasChanges(true)
+                              }}
+                              className="px-3 py-2 text-sm text-gray-600 hover:text-red-600 border border-gray-300 rounded-lg hover:border-red-300 transition-colors"
+                              title={locale === "pt-BR" ? "Remover logo" : "Remove logo"}
+                            >
+                              <X className="h-4 w-4" />
+                            </button>
+                          )}
+                        </div>
+                        <p className="mt-1 text-xs text-gray-500">
+                          {locale === "pt-BR" 
+                            ? "Deixe vazio para usar o logo padrão do Databricks" 
+                            : "Leave empty to use default Databricks logo"}
+                        </p>
+                      </div>
                     </div>
                   </div>
-                  <input
-                    type="text"
-                    value={(localTheme[field.key as keyof typeof localTheme] as string) || ""}
-                    onChange={(e) => {
-                      setLocalTheme(prev => ({ ...prev, [field.key]: e.target.value }))
-                      setHasChanges(true)
-                    }}
-                    className="w-full px-1.5 py-0.5 text-[10px] font-mono border border-gray-200 rounded bg-white"
-                    placeholder="#FFFFFF"
-                  />
+                  
+                  {/* Preview */}
+                  <div className="border border-gray-200 rounded-lg p-4 bg-gray-50">
+                    <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-3">
+                      {locale === "pt-BR" ? "Prévia" : "Preview"}
+                    </p>
+                    <div className="flex items-center gap-3">
+                      {localTheme.logo_url && !logoError ? (
+                        <img src={localTheme.logo_url} alt="Logo" className="h-8 w-8 object-contain" />
+                      ) : (
+                        <div className="h-8 w-8 bg-gray-200 rounded flex items-center justify-center text-xs text-gray-400">Logo</div>
+                      )}
+                      <span className="text-lg font-bold" style={{ color: localTheme.text_color }}>
+                        {localTheme.app_name || "Contracts App"}
+                      </span>
+                    </div>
+                  </div>
+                </>
+              )}
+              
+              {/* Colors Sub-tab */}
+              {appearanceSubTab === "colors" && (
+                <>
+                  {/* Main Colors */}
+                  <div className="mb-4">
+                    <h3 className="text-sm font-medium text-gray-700 mb-3">
+                      {locale === "pt-BR" ? "Cores Principais" : "Main Colors"}
+                    </h3>
+                <div className="grid grid-cols-2 gap-3">
+                  {mainColorFields.map((field) => (
+                    <div key={field.key} className="bg-gray-50 rounded-lg p-3">
+                      <div className="flex items-center gap-3 mb-2">
+                        <input
+                          type="color"
+                          value={(localTheme[field.key as keyof typeof localTheme] as string) || "#000000"}
+                          onChange={(e) => handleColorChange(field.key, e.target.value)}
+                          className="w-8 h-8 rounded-lg border border-gray-300 cursor-pointer"
+                          style={{ padding: 0 }}
+                        />
+                        <div>
+                          <p className="text-xs font-medium text-gray-900">{field.label}</p>
+                          <p className="text-[10px] text-gray-500">{field.description}</p>
+                        </div>
+                      </div>
+                      <input
+                        type="text"
+                        value={(localTheme[field.key as keyof typeof localTheme] as string) || ""}
+                        onChange={(e) => handleColorChange(field.key, e.target.value)}
+                        className="w-full px-2 py-1 text-xs font-mono border border-gray-200 rounded bg-white"
+                        placeholder="#FFFFFF"
+                      />
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-          </div>
+              </div>
 
-          {/* Preview */}
-          <div className="border border-gray-200 rounded-lg p-4 bg-gray-50">
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-3">
-              {locale === "pt-BR" ? "Prévia" : "Preview"}
-            </p>
-            <div className="space-y-3">
-              {/* Buttons and text */}
-              <div className="flex items-center gap-3 flex-wrap">
-                <button
-                  className="px-3 py-1.5 text-xs font-medium text-white rounded-lg"
-                  style={{ backgroundColor: localTheme.primary_color }}
-                >
-                  {locale === "pt-BR" ? "Botão" : "Button"}
-                </button>
-                <span 
-                  className="text-xs font-semibold"
-                  style={{ color: localTheme.text_color }}
-                >
-                  {locale === "pt-BR" ? "Texto" : "Text"}
-                </span>
-                <span 
-                  className="text-xs font-medium"
-                  style={{ color: localTheme.success_color }}
-                >
-                  {locale === "pt-BR" ? "Sucesso" : "Success"}
-                </span>
-                <span 
-                  className="text-xs font-medium"
-                  style={{ color: localTheme.accent_color }}
-                >
-                  {locale === "pt-BR" ? "Info" : "Info"}
-                </span>
-                <span 
-                  className="text-xs font-medium"
-                  style={{ color: localTheme.warning_color || "#F59E0B" }}
-                >
-                  {locale === "pt-BR" ? "Alerta" : "Warning"}
-                </span>
-              </div>
-              {/* Background boxes */}
-              <div className="flex items-center gap-2 flex-wrap">
-                <div 
-                  className="px-2 py-1 rounded text-[10px]"
-                  style={{ 
-                    backgroundColor: localTheme.primary_light || "#FFEBE8",
-                    color: localTheme.primary_color
-                  }}
-                >
-                  {locale === "pt-BR" ? "Fundo Primário" : "Primary BG"}
+              {/* Derived Colors (Backgrounds) */}
+              <div className="mb-4">
+                <h3 className="text-sm font-medium text-gray-700 mb-2">
+                  {locale === "pt-BR" ? "Cores de Fundo" : "Background Colors"}
+                </h3>
+                <p className="text-xs text-gray-500 mb-3">
+                  {locale === "pt-BR" 
+                    ? "Estas cores são geradas automaticamente mas podem ser ajustadas manualmente." 
+                    : "These colors are auto-generated but can be manually adjusted."}
+                </p>
+                <div className="grid grid-cols-3 gap-2">
+                  {derivedColorFields.map((field) => (
+                    <div key={field.key} className="bg-gray-50 rounded-lg p-2">
+                      <div className="flex items-center gap-2 mb-1">
+                        <input
+                          type="color"
+                          value={(localTheme[field.key as keyof typeof localTheme] as string) || "#FFFFFF"}
+                          onChange={(e) => {
+                            setLocalTheme(prev => ({ ...prev, [field.key]: e.target.value }))
+                            setHasChanges(true)
+                          }}
+                          className="w-6 h-6 rounded border border-gray-300 cursor-pointer"
+                          style={{ padding: 0 }}
+                        />
+                        <div>
+                          <p className="text-[10px] font-medium text-gray-900">{field.label}</p>
+                        </div>
+                      </div>
+                      <input
+                        type="text"
+                        value={(localTheme[field.key as keyof typeof localTheme] as string) || ""}
+                        onChange={(e) => {
+                          setLocalTheme(prev => ({ ...prev, [field.key]: e.target.value }))
+                          setHasChanges(true)
+                        }}
+                        className="w-full px-1.5 py-0.5 text-[10px] font-mono border border-gray-200 rounded bg-white"
+                        placeholder="#FFFFFF"
+                      />
+                    </div>
+                  ))}
+                  </div>
                 </div>
-                <div 
-                  className="px-2 py-1 rounded text-[10px]"
-                  style={{ 
-                    backgroundColor: localTheme.success_light || "#E6F7F1",
-                    color: localTheme.success_color
-                  }}
-                >
-                  {locale === "pt-BR" ? "Fundo Sucesso" : "Success BG"}
+
+                {/* Colors Preview */}
+                <div className="border border-gray-200 rounded-lg p-4 bg-gray-50">
+                  <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-3">
+                    {locale === "pt-BR" ? "Prévia" : "Preview"}
+                  </p>
+                  <div className="space-y-3">
+                    {/* Buttons and text */}
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <button
+                        className="px-3 py-1.5 text-xs font-medium text-white rounded-lg"
+                        style={{ backgroundColor: localTheme.primary_color }}
+                      >
+                        {locale === "pt-BR" ? "Botão" : "Button"}
+                      </button>
+                      <span 
+                        className="text-xs font-semibold"
+                        style={{ color: localTheme.text_color }}
+                      >
+                        {locale === "pt-BR" ? "Texto" : "Text"}
+                      </span>
+                      <span 
+                        className="text-xs font-medium"
+                        style={{ color: localTheme.success_color }}
+                      >
+                        {locale === "pt-BR" ? "Sucesso" : "Success"}
+                      </span>
+                      <span 
+                        className="text-xs font-medium"
+                        style={{ color: localTheme.accent_color }}
+                      >
+                        {locale === "pt-BR" ? "Info" : "Info"}
+                      </span>
+                      <span 
+                        className="text-xs font-medium"
+                        style={{ color: localTheme.warning_color || "#F59E0B" }}
+                      >
+                        {locale === "pt-BR" ? "Alerta" : "Warning"}
+                      </span>
+                    </div>
+                    {/* Background boxes */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <div 
+                        className="px-2 py-1 rounded text-[10px]"
+                        style={{ 
+                          backgroundColor: localTheme.primary_light || "#FFEBE8",
+                          color: localTheme.primary_color
+                        }}
+                      >
+                        {locale === "pt-BR" ? "Fundo Primário" : "Primary BG"}
+                      </div>
+                      <div 
+                        className="px-2 py-1 rounded text-[10px]"
+                        style={{ 
+                          backgroundColor: localTheme.success_light || "#E6F7F1",
+                          color: localTheme.success_color
+                        }}
+                      >
+                        {locale === "pt-BR" ? "Fundo Sucesso" : "Success BG"}
+                      </div>
+                      <div 
+                        className="px-2 py-1 rounded text-[10px]"
+                        style={{ 
+                          backgroundColor: localTheme.accent_light || "#E8EEF7",
+                          color: localTheme.accent_color
+                        }}
+                      >
+                        {locale === "pt-BR" ? "Fundo Info" : "Info BG"}
+                      </div>
+                      <div 
+                        className="px-2 py-1 rounded text-[10px]"
+                        style={{ 
+                          backgroundColor: localTheme.warning_light || "#FEF3C7",
+                          color: localTheme.warning_color || "#F59E0B"
+                        }}
+                      >
+                        {locale === "pt-BR" ? "Fundo Alerta" : "Warning BG"}
+                      </div>
+                    </div>
+                  </div>
                 </div>
-                <div 
-                  className="px-2 py-1 rounded text-[10px]"
-                  style={{ 
-                    backgroundColor: localTheme.accent_light || "#E8EEF7",
-                    color: localTheme.accent_color
-                  }}
-                >
-                  {locale === "pt-BR" ? "Fundo Info" : "Info BG"}
-                </div>
-                <div 
-                  className="px-2 py-1 rounded text-[10px]"
-                  style={{ 
-                    backgroundColor: localTheme.warning_light || "#FEF3C7",
-                    color: localTheme.warning_color || "#F59E0B"
-                  }}
-                >
-                  {locale === "pt-BR" ? "Fundo Alerta" : "Warning BG"}
-                </div>
-              </div>
+                </>
+              )}
             </div>
-          </div>
+          )}
         </div>
 
         {/* Footer */}
