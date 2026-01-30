@@ -100,6 +100,7 @@ interface AutoProcessStatus {
   sampleFiles?: number
   strategyProgress?: { A: number; B: number; C: number }
   strategyStatus?: { A: string; B: string; C: string }
+  evalProgress?: { A: string; B: string; C: string }
   indexAction?: "checking" | "creating" | "waiting_creation" | "syncing" | "waiting_sync" | "created" | "synced"
   // Step timing
   stepTimes?: {
@@ -2062,7 +2063,7 @@ export default function PreparePage() {
                 )}
               </div>
               
-              {/* Step 5: Evaluation */}
+              {/* Step 5: Evaluation (Parallel) */}
               <div>
                 <div className="flex items-center gap-3">
                   {autoProcessStatus.step === "evaluating" ? (
@@ -2072,15 +2073,24 @@ export default function PreparePage() {
                   ) : (
                     <div className="h-5 w-5 rounded-full border-2 border-gray-300 flex-shrink-0" />
                   )}
-                  <span className={`text-sm flex-1 ${
+                  <div className={`text-sm flex-1 ${
                     autoProcessStatus.step === "evaluating" ? "text-[var(--color-primary)] font-medium" :
                     ["selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) ? "text-[var(--color-success)]" :
                     "text-gray-500"
                   }`}>
-                    {["selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step)
-                      ? "Estratégias A / B / C avaliadas"
-                      : "Avaliando estratégias A / B / C"}
-                  </span>
+                    <span>
+                      {["selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step)
+                        ? "Estratégias A / B / C avaliadas"
+                        : "Avaliando estratégias A / B / C"}
+                    </span>
+                    {/* Show parallel evaluation progress */}
+                    {autoProcessStatus.step === "evaluating" && autoProcessStatus.evalProgress && (
+                      <span className="ml-2 text-xs font-normal text-gray-500">
+                        ({["A", "B", "C"].filter(k => autoProcessStatus.evalProgress?.[k as "A" | "B" | "C"] === "completed").join(", ") || "iniciando"} 
+                        {["A", "B", "C"].filter(k => autoProcessStatus.evalProgress?.[k as "A" | "B" | "C"] === "completed").length > 0 ? " ✓" : "..."})
+                      </span>
+                    )}
+                  </div>
                   {(autoProcessStatus.evaluationA || autoProcessStatus.evaluationB || autoProcessStatus.evaluationC) && (
                     <button 
                       onClick={() => setShowEvaluationResults(!showEvaluationResults)}

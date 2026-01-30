@@ -3518,10 +3518,10 @@ Responda APENAS com JSON:
     print(f"✅ [{job_id}] All 3 strategies completed in parallel!")
     
     # =====================================================================
-    # STEP 5: Evaluate strategies
+    # STEP 5: Evaluate strategies IN PARALLEL
     # =====================================================================
-    update_job("evaluating", "Avaliando A: Recursivo...", 60)
-    print(f"\n📊 [{job_id}] Step 5: Evaluating 3 strategies...")
+    update_job("evaluating", "Avaliando estratégias A / B / C em paralelo...", 60)
+    print(f"\n📊 [{job_id}] Step 5: Evaluating 3 strategies IN PARALLEL...")
     
     async def evaluate_single_question(temp_table: str, strat_label: str, question: dict, q_idx: int) -> float:
         q_text = question.get("pergunta", "").replace("'", "''")
@@ -3545,7 +3545,7 @@ Esperado: {expected[:100]}
 Chunk: {retrieved[:500]}
 Responda APENAS com um número de 1 a 10."""
             
-            score_sql = f"SELECT ai_query('databricks-meta-llama-3-3-70b-instruct', '{score_prompt.replace(chr(39), chr(39)+chr(39))}')"
+            score_sql = f"SELECT ai_query('{LLM_MODEL}', '{score_prompt.replace(chr(39), chr(39)+chr(39))}')"
             
             try:
                 score_result = await execute_sql_long(config, warehouse_id, score_sql, job_id, timeout_minutes=1)
@@ -3562,20 +3562,22 @@ Responda APENAS com um número de 1 a 10."""
         
         return 5.0
     
-    evaluations = {}
     questions_to_eval = eval_questions[:3]
-    best_score = -1
-    best_strategy = None
     
-    for strat_idx, strategy in enumerate(strategies):
+    # Track evaluation progress for each strategy
+    eval_progress = {"A": "pending", "B": "pending", "C": "pending"}
+    eval_results = {}
+    
+    async def evaluate_strategy(strat_idx: int, strategy: dict) -> dict:
+        """Evaluate a single strategy - runs in parallel with others"""
         strat_name = strategy["name"]
         strat_label = strategy["label"]
+        strat_key = ["A", "B", "C"][strat_idx]
         temp_table = temp_tables[strat_name]
         
-        update_job("evaluating", f"Avaliando {['A', 'B', 'C'][strat_idx]}: {strat_label}...", 62 + strat_idx * 6,
-                  evaluatingStrategy=strat_label)
+        eval_progress[strat_key] = "evaluating"
+        print(f"  🔍 [{job_id}] Starting evaluation: {strat_key}: {strat_label}")
         
-        print(f"  Evaluating {strat_label}...")
         scores = []
         for q_idx, question in enumerate(questions_to_eval):
             score = await evaluate_single_question(temp_table, strat_label, question, q_idx)
@@ -3584,7 +3586,7 @@ Responda APENAS com um número de 1 a 10."""
         avg_score = sum(scores) / len(scores) if scores else 5.0
         precision = len([s for s in scores if s >= 7]) / len(scores) if scores else 0.5
         
-        evaluations[strat_name] = {
+        result = {
             "strategy": strat_name,
             "label": strat_label,
             "avg_score": round(avg_score, 2),
@@ -3593,17 +3595,78 @@ Responda APENAS com um número de 1 a 10."""
             "sample_chunks": strategy_results[strat_name].get("sample_chunks", [])
         }
         
-        # Update job with evaluation results in real-time
-        strategy_key = ["A", "B", "C"][strat_idx]
-        strategy_eval_key = f"evaluation{strategy_key}"
-        auto_process_jobs[job_id][strategy_eval_key] = evaluations[strat_name]
+        eval_progress[strat_key] = "completed"
         
-        if avg_score > best_score:
-            best_score = avg_score
+        # Update job with this strategy's evaluation result
+        strategy_eval_key = f"evaluation{strat_key}"
+        auto_process_jobs[job_id][strategy_eval_key] = result
+        
+        print(f"  ✅ [{job_id}] Completed evaluation: {strat_key}: {strat_label} (score: {avg_score:.1f})")
+        
+        return {"name": strat_name, "result": result}
+    
+    # Background task to update progress while evaluations run
+    async def update_eval_progress():
+        while any(p != "completed" for p in eval_progress.values()):
+            active = [k for k, v in eval_progress.items() if v == "evaluating"]
+            completed = [k for k, v in eval_progress.items() if v == "completed"]
+            
+            if active:
+                msg = f"Avaliando em paralelo: {', '.join(active)}"
+                if completed:
+                    msg += f" (concluído: {', '.join(completed)})"
+            else:
+                msg = "Iniciando avaliações..."
+            
+            progress = 60 + len(completed) * 6
+            auto_process_jobs[job_id].update({
+                "message": msg,
+                "progress": progress,
+                "evalProgress": dict(eval_progress)
+            })
+            await asyncio.sleep(1)
+    
+    # Start progress updater
+    progress_task = asyncio.create_task(update_eval_progress())
+    
+    # Run all 3 evaluations in parallel
+    eval_tasks = [
+        evaluate_strategy(0, strategies[0]),
+        evaluate_strategy(1, strategies[1]),
+        evaluate_strategy(2, strategies[2])
+    ]
+    
+    parallel_results = await asyncio.gather(*eval_tasks, return_exceptions=True)
+    
+    # Cancel progress updater
+    progress_task.cancel()
+    try:
+        await progress_task
+    except asyncio.CancelledError:
+        pass
+    
+    # Process results and find best strategy
+    evaluations = {}
+    best_score = -1
+    best_strategy = None
+    
+    for res in parallel_results:
+        if isinstance(res, Exception):
+            print(f"  ⚠️ [{job_id}] Evaluation error: {res}")
+            continue
+        
+        strat_name = res["name"]
+        eval_data = res["result"]
+        evaluations[strat_name] = eval_data
+        
+        if eval_data["avg_score"] > best_score:
+            best_score = eval_data["avg_score"]
             best_strategy = strat_name
-        
-        # Update best strategy in real-time
-        auto_process_jobs[job_id]["bestStrategy"] = best_strategy
+    
+    # Update job with final best strategy
+    auto_process_jobs[job_id]["bestStrategy"] = best_strategy
+    
+    print(f"\n✅ [{job_id}] All 3 evaluations completed in parallel!")
     
     print(f"\n📈 [{job_id}] Results:")
     for strat_name, eval_data in evaluations.items():
