@@ -716,36 +716,6 @@ export default function PreparePage() {
     })
     
     try {
-      // Step timing helper
-      const markStepStart = (step: string) => {
-        setStepStartTimes(prev => ({ ...prev, [step]: Date.now() }))
-      }
-      const markStepEnd = (step: string) => {
-        setStepEndTimes(prev => ({ ...prev, [step]: Date.now() }))
-      }
-      
-      // Mark generating_questions done, start chunking_a
-      markStepEnd("generating_questions")
-      markStepStart("chunking_a")
-      
-      // Evaluation uses only 3 RANDOM sample files (backend picks them)
-      const sampleCount = Math.min(3, filesToProcess.length)
-      const totalFilesCount = filesToProcess.length
-      // Get sample file names for display (first 3 files as example)
-      const sampleFileNames = filesToProcess.slice(0, sampleCount)
-      
-      // Call the auto process endpoint
-      setAutoProcessStatus(prev => ({
-        ...prev,
-        step: "chunking_a",
-        message: `Recursivo: ${sampleFileNames[0]} (1/${sampleCount})`,
-        progress: 15,
-        currentFileIndex: 1,
-        currentFile: sampleFileNames[0],
-        sampleFiles: sampleCount,
-        totalFiles: totalFilesCount
-      }))
-      
       console.log("[AutoProcess] Starting background job via /api/process/auto/start")
       console.log("[AutoProcess] Request payload:", { tableConfig, files: filesToProcess })
       
@@ -2046,49 +2016,48 @@ export default function PreparePage() {
               </div>
               
               {/* Step 5: Evaluation */}
-              <div className="flex items-center gap-3">
-                {autoProcessStatus.step === "evaluating" ? (
-                  <Loader2 className="h-5 w-5 text-[var(--color-primary)] animate-spin flex-shrink-0" />
-                ) : ["selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) ? (
-                  <CheckCircle2 className="h-5 w-5 text-[var(--color-success)] flex-shrink-0" />
-                ) : (
-                  <div className="h-5 w-5 rounded-full border-2 border-gray-300 flex-shrink-0" />
-                )}
-                <span className={`text-sm flex-1 ${
-                  autoProcessStatus.step === "evaluating" ? "text-[var(--color-primary)] font-medium" :
-                  ["selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) ? "text-[var(--color-success)]" :
-                  "text-gray-500"
-                }`}>
-                  {["selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step)
-                    ? "Estratégias A / B / C avaliadas"
-                    : "Avaliando estratégias A / B / C"}
-                </span>
-                {autoProcessStatus.step === "evaluating" && stepStartTimes.evaluating && !stepEndTimes.evaluating && (
-                  <span className="text-xs font-mono text-[var(--color-primary)] bg-[var(--color-primary-light)] px-2 py-0.5 rounded">
-                    {formatTime(currentStepTime)}
+              <div>
+                <div className="flex items-center gap-3">
+                  {autoProcessStatus.step === "evaluating" ? (
+                    <Loader2 className="h-5 w-5 text-[var(--color-primary)] animate-spin flex-shrink-0" />
+                  ) : ["selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) ? (
+                    <CheckCircle2 className="h-5 w-5 text-[var(--color-success)] flex-shrink-0" />
+                  ) : (
+                    <div className="h-5 w-5 rounded-full border-2 border-gray-300 flex-shrink-0" />
+                  )}
+                  <span className={`text-sm ${
+                    autoProcessStatus.step === "evaluating" ? "text-[var(--color-primary)] font-medium" :
+                    ["selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) ? "text-[var(--color-success)]" :
+                    "text-gray-500"
+                  }`}>
+                    {["selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step)
+                      ? "Estratégias A / B / C avaliadas"
+                      : "Avaliando estratégias A / B / C"}
                   </span>
-                )}
-                {stepEndTimes.evaluating && stepStartTimes.evaluating && autoProcessStatus.step !== "evaluating" && (
-                  <span className="text-xs font-mono text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
-                    {formatTime(Math.floor((stepEndTimes.evaluating - stepStartTimes.evaluating) / 1000))}
-                  </span>
-                )}
-              </div>
-              
-              {/* Evaluation Results Toggle */}
-              {(autoProcessStatus.evaluationA || autoProcessStatus.evaluationB || autoProcessStatus.evaluationC) && (
-                <div className="ml-8">
-                  <button 
-                    onClick={() => setShowEvaluationResults(!showEvaluationResults)}
-                    className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1 mb-2"
-                  >
-                    <ChevronRight className={`h-4 w-4 transition-transform ${showEvaluationResults ? "rotate-90" : ""}`} />
-                    <span>Ver resultados da avaliação</span>
-                  </button>
-                  
-                  {showEvaluationResults && (
-                    <div className="p-3 bg-gray-50 rounded-lg">
-                      <div className="grid grid-cols-3 gap-2 text-sm">
+                  {(autoProcessStatus.evaluationA || autoProcessStatus.evaluationB || autoProcessStatus.evaluationC) && (
+                    <button 
+                      onClick={() => setShowEvaluationResults(!showEvaluationResults)}
+                      className="text-xs text-gray-400 hover:text-gray-600 flex items-center gap-1"
+                    >
+                      <ChevronRight className={`h-4 w-4 transition-transform ${showEvaluationResults ? "rotate-90" : ""}`} />
+                    </button>
+                  )}
+                  {autoProcessStatus.step === "evaluating" && stepStartTimes.evaluating && !stepEndTimes.evaluating && (
+                    <span className="text-xs font-mono text-[var(--color-primary)] bg-[var(--color-primary-light)] px-2 py-0.5 rounded">
+                      {formatTime(currentStepTime)}
+                    </span>
+                  )}
+                  {stepEndTimes.evaluating && stepStartTimes.evaluating && autoProcessStatus.step !== "evaluating" && (
+                    <span className="text-xs font-mono text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
+                      {formatTime(Math.floor((stepEndTimes.evaluating - stepStartTimes.evaluating) / 1000))}
+                    </span>
+                  )}
+                </div>
+                
+                {/* Evaluation Results - Expandable */}
+                {showEvaluationResults && (autoProcessStatus.evaluationA || autoProcessStatus.evaluationB || autoProcessStatus.evaluationC) && (
+                  <div className="ml-8 mt-2 p-3 bg-gray-50 rounded-lg">
+                    <div className="grid grid-cols-3 gap-2 text-sm">
                         {autoProcessStatus.evaluationA && (
                           <div className={`p-2 rounded ${autoProcessStatus.bestStrategy === "recursive" ? "bg-[var(--color-success-light)] border border-[var(--color-success)]" : "bg-white border border-gray-200"}`}>
                             <div className="flex items-center justify-between">
@@ -2159,7 +2128,6 @@ export default function PreparePage() {
                     </div>
                   )}
                 </div>
-              )}
               
               {/* Step 6: Applying best strategy to all files */}
               <div className="flex items-center gap-3">
@@ -2285,6 +2253,27 @@ export default function PreparePage() {
                     📄 {autoProcessStatus.currentFile}
                   </div>
                 )}
+              </div>
+            )}
+            
+            {/* Completed Button */}
+            {(autoProcessStatus.step === "completed" || autoProcessStatus.step === "error") && (
+              <div className="mt-4 flex justify-end">
+                <button
+                  onClick={() => {
+                    setAutoProcessStatus({ step: "idle", message: "", progress: 0 })
+                    setProcessingStatus({ status: "idle", message: "", progress: 0, totalFiles: 0, processedFiles: 0 })
+                    setStepStartTimes({})
+                    setStepEndTimes({})
+                    setShowQuestions(false)
+                    setShowEvaluationResults(false)
+                    setSelectedFiles(new Set())
+                  }}
+                  className="px-4 py-2 text-sm font-medium text-white bg-[var(--color-success)] rounded-lg hover:bg-[var(--color-success)]/90 transition-colors shadow-sm flex items-center gap-2"
+                >
+                  <CheckCircle2 className="h-4 w-4" />
+                  {t("import.fileList.completed")}
+                </button>
               </div>
             )}
           </div>

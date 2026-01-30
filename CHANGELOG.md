@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.1] - 2026-01-30 - **UI Improvements**
+
+### Features
+- **Completed Button**: Added "Concluído" button on Prepare page to reset state after processing
+- **Evaluation Toggle**: Chevron toggle for evaluation results now inline (same as questions toggle)
+
+### Bug Fixes
+- Fixed auto process starting at "Estratégia A: Recursivo" instead of "Gerando perguntas de teste"
+- Removed premature step advancement that was causing UI flicker
+
+---
+
 ## [2.3.0] - 2026-01-30 - **Auto Process with Background Jobs**
 
 ### Features
