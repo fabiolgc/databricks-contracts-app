@@ -207,6 +207,7 @@ export default function PreparePage() {
     progress: 0
   })
   const [showQuestions, setShowQuestions] = useState(false)
+  const [showStrategies, setShowStrategies] = useState(false)
   const [showEvaluationResults, setShowEvaluationResults] = useState(false)
   const [viewingChunksStrategy, setViewingChunksStrategy] = useState<"A" | "B" | "C" | null>(null)
   
@@ -1945,120 +1946,134 @@ export default function PreparePage() {
                 )}
               </div>
               
-              {/* Step 2-4: Parallel Chunking Strategies */}
-              <div className="space-y-2">
-                {/* Strategy A: Recursivo */}
+              {/* Step 2-4: Parallel Chunking Strategies - Collapsible */}
+              <div>
                 <div className="flex items-center gap-3">
-                  {autoProcessStatus.step === "chunking_parallel" && autoProcessStatus.strategyStatus?.A === "processing" ? (
+                  {autoProcessStatus.step === "chunking_parallel" ? (
                     <Loader2 className="h-5 w-5 text-[var(--color-primary)] animate-spin flex-shrink-0" />
-                  ) : ["evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) || autoProcessStatus.strategyStatus?.A === "completed" ? (
+                  ) : ["evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) ? (
                     <CheckCircle2 className="h-5 w-5 text-[var(--color-success)] flex-shrink-0" />
                   ) : (
                     <div className="h-5 w-5 rounded-full border-2 border-gray-300 flex-shrink-0" />
                   )}
-                  <div className={`text-sm flex-1 ${
-                    autoProcessStatus.step === "chunking_parallel" && autoProcessStatus.strategyStatus?.A === "processing" ? "text-[var(--color-primary)] font-medium" :
-                    ["evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) || autoProcessStatus.strategyStatus?.A === "completed" ? "text-[var(--color-success)]" :
+                  <span className={`text-sm flex-1 ${
+                    autoProcessStatus.step === "chunking_parallel" ? "text-[var(--color-primary)] font-medium" :
+                    ["evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) ? "text-[var(--color-success)]" :
                     "text-gray-500"
                   }`}>
-                    <span>
-                      {["evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) || autoProcessStatus.strategyStatus?.A === "completed"
-                        ? `Estratégia A aplicada: ${t("prepare.autoProcess.steps.recursive")}`
-                        : `Estratégia A: ${t("prepare.autoProcess.steps.recursive")}`}
-                    </span>
-                    {autoProcessStatus.tables?.tempRecursive && (
-                      <span className="ml-2 text-xs font-mono text-gray-400">({autoProcessStatus.tables.tempRecursive})</span>
-                    )}
-                  </div>
-                  {autoProcessStatus.evaluationA && (
-                    <span className="text-xs text-gray-500">{autoProcessStatus.evaluationA.chunks_count} chunks</span>
+                    {["evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step)
+                      ? "Estratégias A / B / C aplicadas"
+                      : "Aplicando estratégias A / B / C"}
+                  </span>
+                  {(autoProcessStatus.strategyStatus || autoProcessStatus.evaluationA) && (
+                    <button 
+                      onClick={() => setShowStrategies(!showStrategies)}
+                      className="text-xs text-gray-400 hover:text-gray-600 flex items-center gap-1"
+                    >
+                      <ChevronRight className={`h-4 w-4 transition-transform ${showStrategies ? "rotate-90" : ""}`} />
+                    </button>
                   )}
-                  {autoProcessStatus.step === "chunking_parallel" && autoProcessStatus.strategyProgress?.A !== undefined && autoProcessStatus.strategyProgress.A < 100 && (
+                  {autoProcessStatus.step === "chunking_parallel" && stepStartTimes.chunking_parallel && !stepEndTimes.chunking_parallel && (
                     <span className="text-xs font-mono text-[var(--color-primary)] bg-[var(--color-primary-light)] px-2 py-0.5 rounded">
-                      {autoProcessStatus.strategyProgress.A}%
+                      {formatTime(currentStepTime)}
                     </span>
                   )}
-                </div>
-
-                {/* Strategy B: Tamanho Fixo */}
-                <div className="flex items-center gap-3">
-                  {autoProcessStatus.step === "chunking_parallel" && autoProcessStatus.strategyStatus?.B === "processing" ? (
-                    <Loader2 className="h-5 w-5 text-[var(--color-primary)] animate-spin flex-shrink-0" />
-                  ) : ["evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) || autoProcessStatus.strategyStatus?.B === "completed" ? (
-                    <CheckCircle2 className="h-5 w-5 text-[var(--color-success)] flex-shrink-0" />
-                  ) : (
-                    <div className="h-5 w-5 rounded-full border-2 border-gray-300 flex-shrink-0" />
-                  )}
-                  <div className={`text-sm flex-1 ${
-                    autoProcessStatus.step === "chunking_parallel" && autoProcessStatus.strategyStatus?.B === "processing" ? "text-[var(--color-primary)] font-medium" :
-                    ["evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) || autoProcessStatus.strategyStatus?.B === "completed" ? "text-[var(--color-success)]" :
-                    "text-gray-500"
-                  }`}>
-                    <span>
-                      {["evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) || autoProcessStatus.strategyStatus?.B === "completed"
-                        ? `Estratégia B aplicada: ${t("prepare.autoProcess.steps.fixedSize")}`
-                        : `Estratégia B: ${t("prepare.autoProcess.steps.fixedSize")}`}
-                    </span>
-                    {autoProcessStatus.tables?.tempFixedSize && (
-                      <span className="ml-2 text-xs font-mono text-gray-400">({autoProcessStatus.tables.tempFixedSize})</span>
-                    )}
-                  </div>
-                  {autoProcessStatus.evaluationB && (
-                    <span className="text-xs text-gray-500">{autoProcessStatus.evaluationB.chunks_count} chunks</span>
-                  )}
-                  {autoProcessStatus.step === "chunking_parallel" && autoProcessStatus.strategyProgress?.B !== undefined && autoProcessStatus.strategyProgress.B < 100 && (
-                    <span className="text-xs font-mono text-[var(--color-primary)] bg-[var(--color-primary-light)] px-2 py-0.5 rounded">
-                      {autoProcessStatus.strategyProgress.B}%
-                    </span>
-                  )}
-                </div>
-
-                {/* Strategy C: Estrutural */}
-                <div className="flex items-center gap-3">
-                  {autoProcessStatus.step === "chunking_parallel" && autoProcessStatus.strategyStatus?.C === "processing" ? (
-                    <Loader2 className="h-5 w-5 text-[var(--color-primary)] animate-spin flex-shrink-0" />
-                  ) : ["evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) || autoProcessStatus.strategyStatus?.C === "completed" ? (
-                    <CheckCircle2 className="h-5 w-5 text-[var(--color-success)] flex-shrink-0" />
-                  ) : (
-                    <div className="h-5 w-5 rounded-full border-2 border-gray-300 flex-shrink-0" />
-                  )}
-                  <div className={`text-sm flex-1 ${
-                    autoProcessStatus.step === "chunking_parallel" && autoProcessStatus.strategyStatus?.C === "processing" ? "text-[var(--color-primary)] font-medium" :
-                    ["evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) || autoProcessStatus.strategyStatus?.C === "completed" ? "text-[var(--color-success)]" :
-                    "text-gray-500"
-                  }`}>
-                    <span>
-                      {["evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) || autoProcessStatus.strategyStatus?.C === "completed"
-                        ? `Estratégia C aplicada: ${t("prepare.autoProcess.steps.structural")}`
-                        : `Estratégia C: ${t("prepare.autoProcess.steps.structural")}`}
-                    </span>
-                    {autoProcessStatus.tables?.tempStructural && (
-                      <span className="ml-2 text-xs font-mono text-gray-400">({autoProcessStatus.tables.tempStructural})</span>
-                    )}
-                  </div>
-                  {autoProcessStatus.evaluationC && (
-                    <span className="text-xs text-gray-500">{autoProcessStatus.evaluationC.chunks_count} chunks</span>
-                  )}
-                  {autoProcessStatus.step === "chunking_parallel" && autoProcessStatus.strategyProgress?.C !== undefined && autoProcessStatus.strategyProgress.C < 100 && (
-                    <span className="text-xs font-mono text-[var(--color-primary)] bg-[var(--color-primary-light)] px-2 py-0.5 rounded">
-                      {autoProcessStatus.strategyProgress.C}%
+                  {stepEndTimes.chunking_parallel && stepStartTimes.chunking_parallel && autoProcessStatus.step !== "chunking_parallel" && (
+                    <span className="text-xs font-mono text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
+                      {formatTime(Math.floor((stepEndTimes.chunking_parallel - stepStartTimes.chunking_parallel) / 1000))}
                     </span>
                   )}
                 </div>
                 
-                {/* Parallel execution timer */}
-                {autoProcessStatus.step === "chunking_parallel" && stepStartTimes.chunking_parallel && !stepEndTimes.chunking_parallel && (
-                  <div className="flex justify-end">
-                    <span className="text-xs font-mono text-[var(--color-primary)] bg-[var(--color-primary-light)] px-2 py-0.5 rounded">
-                      {formatTime(currentStepTime)}
-                    </span>
-                  </div>
-                )}
-                {stepEndTimes.chunking_parallel && stepStartTimes.chunking_parallel && autoProcessStatus.step !== "chunking_parallel" && (
-                  <div className="flex justify-end">
-                    <span className="text-xs font-mono text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
-                      {formatTime(Math.floor((stepEndTimes.chunking_parallel - stepStartTimes.chunking_parallel) / 1000))}
-                    </span>
+                {/* Expandable strategies list */}
+                {showStrategies && (
+                  <div className="ml-8 mt-2 p-3 bg-gray-50 rounded-lg space-y-2">
+                    {/* Strategy A: Recursivo */}
+                    <div className="flex items-center gap-3">
+                      {autoProcessStatus.step === "chunking_parallel" && autoProcessStatus.strategyStatus?.A === "processing" ? (
+                        <Loader2 className="h-4 w-4 text-[var(--color-primary)] animate-spin flex-shrink-0" />
+                      ) : ["evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) || autoProcessStatus.strategyStatus?.A === "completed" ? (
+                        <CheckCircle2 className="h-4 w-4 text-[var(--color-success)] flex-shrink-0" />
+                      ) : (
+                        <div className="h-4 w-4 rounded-full border-2 border-gray-300 flex-shrink-0" />
+                      )}
+                      <div className={`text-xs flex-1 ${
+                        autoProcessStatus.step === "chunking_parallel" && autoProcessStatus.strategyStatus?.A === "processing" ? "text-[var(--color-primary)] font-medium" :
+                        ["evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) || autoProcessStatus.strategyStatus?.A === "completed" ? "text-[var(--color-success)]" :
+                        "text-gray-500"
+                      }`}>
+                        <span>A: {t("prepare.autoProcess.steps.recursive")}</span>
+                        {autoProcessStatus.tables?.tempRecursive && (
+                          <span className="ml-2 font-mono text-gray-400">({autoProcessStatus.tables.tempRecursive})</span>
+                        )}
+                      </div>
+                      {autoProcessStatus.evaluationA && (
+                        <span className="text-xs text-gray-500">{autoProcessStatus.evaluationA.chunks_count} chunks</span>
+                      )}
+                      {autoProcessStatus.step === "chunking_parallel" && autoProcessStatus.strategyProgress?.A !== undefined && autoProcessStatus.strategyProgress.A < 100 && (
+                        <span className="text-xs font-mono text-[var(--color-primary)] bg-[var(--color-primary-light)] px-1.5 py-0.5 rounded">
+                          {autoProcessStatus.strategyProgress.A}%
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Strategy B: Tamanho Fixo */}
+                    <div className="flex items-center gap-3">
+                      {autoProcessStatus.step === "chunking_parallel" && autoProcessStatus.strategyStatus?.B === "processing" ? (
+                        <Loader2 className="h-4 w-4 text-[var(--color-primary)] animate-spin flex-shrink-0" />
+                      ) : ["evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) || autoProcessStatus.strategyStatus?.B === "completed" ? (
+                        <CheckCircle2 className="h-4 w-4 text-[var(--color-success)] flex-shrink-0" />
+                      ) : (
+                        <div className="h-4 w-4 rounded-full border-2 border-gray-300 flex-shrink-0" />
+                      )}
+                      <div className={`text-xs flex-1 ${
+                        autoProcessStatus.step === "chunking_parallel" && autoProcessStatus.strategyStatus?.B === "processing" ? "text-[var(--color-primary)] font-medium" :
+                        ["evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) || autoProcessStatus.strategyStatus?.B === "completed" ? "text-[var(--color-success)]" :
+                        "text-gray-500"
+                      }`}>
+                        <span>B: {t("prepare.autoProcess.steps.fixedSize")}</span>
+                        {autoProcessStatus.tables?.tempFixedSize && (
+                          <span className="ml-2 font-mono text-gray-400">({autoProcessStatus.tables.tempFixedSize})</span>
+                        )}
+                      </div>
+                      {autoProcessStatus.evaluationB && (
+                        <span className="text-xs text-gray-500">{autoProcessStatus.evaluationB.chunks_count} chunks</span>
+                      )}
+                      {autoProcessStatus.step === "chunking_parallel" && autoProcessStatus.strategyProgress?.B !== undefined && autoProcessStatus.strategyProgress.B < 100 && (
+                        <span className="text-xs font-mono text-[var(--color-primary)] bg-[var(--color-primary-light)] px-1.5 py-0.5 rounded">
+                          {autoProcessStatus.strategyProgress.B}%
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Strategy C: Estrutural */}
+                    <div className="flex items-center gap-3">
+                      {autoProcessStatus.step === "chunking_parallel" && autoProcessStatus.strategyStatus?.C === "processing" ? (
+                        <Loader2 className="h-4 w-4 text-[var(--color-primary)] animate-spin flex-shrink-0" />
+                      ) : ["evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) || autoProcessStatus.strategyStatus?.C === "completed" ? (
+                        <CheckCircle2 className="h-4 w-4 text-[var(--color-success)] flex-shrink-0" />
+                      ) : (
+                        <div className="h-4 w-4 rounded-full border-2 border-gray-300 flex-shrink-0" />
+                      )}
+                      <div className={`text-xs flex-1 ${
+                        autoProcessStatus.step === "chunking_parallel" && autoProcessStatus.strategyStatus?.C === "processing" ? "text-[var(--color-primary)] font-medium" :
+                        ["evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) || autoProcessStatus.strategyStatus?.C === "completed" ? "text-[var(--color-success)]" :
+                        "text-gray-500"
+                      }`}>
+                        <span>C: {t("prepare.autoProcess.steps.structural")}</span>
+                        {autoProcessStatus.tables?.tempStructural && (
+                          <span className="ml-2 font-mono text-gray-400">({autoProcessStatus.tables.tempStructural})</span>
+                        )}
+                      </div>
+                      {autoProcessStatus.evaluationC && (
+                        <span className="text-xs text-gray-500">{autoProcessStatus.evaluationC.chunks_count} chunks</span>
+                      )}
+                      {autoProcessStatus.step === "chunking_parallel" && autoProcessStatus.strategyProgress?.C !== undefined && autoProcessStatus.strategyProgress.C < 100 && (
+                        <span className="text-xs font-mono text-[var(--color-primary)] bg-[var(--color-primary-light)] px-1.5 py-0.5 rounded">
+                          {autoProcessStatus.strategyProgress.C}%
+                        </span>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
