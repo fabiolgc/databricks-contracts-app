@@ -2025,7 +2025,7 @@ export default function PreparePage() {
                   ) : (
                     <div className="h-5 w-5 rounded-full border-2 border-gray-300 flex-shrink-0" />
                   )}
-                  <span className={`text-sm ${
+                  <span className={`text-sm flex-1 ${
                     autoProcessStatus.step === "evaluating" ? "text-[var(--color-primary)] font-medium" :
                     ["selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) ? "text-[var(--color-success)]" :
                     "text-gray-500"
