@@ -1,10 +1,24 @@
 # Databricks Apps Configuration
 # FastAPI backend serving static Next.js frontend
-#
-# NOTE: This is the actual configuration used by Databricks Apps.
-# During deployment, backend/app.yaml is copied here automatically by deploy.sh
 
 command: ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+
+# OAuth scopes required for the app
+permissions:
+  - permission: "sql"
+    description: "Execute SQL queries"
+  - permission: "vectorsearch.vector-search-indexes"
+    description: "Manage Vector Search indexes"
+  - permission: "serving.serving-endpoints"
+    description: "Access embedding model endpoints"
+  - permission: "catalog.tables:read"
+    description: "Read Unity Catalog tables"
+  - permission: "catalog.schemas:read"
+    description: "Read Unity Catalog schemas"
+  - permission: "catalog.catalogs:read"
+    description: "Read Unity Catalog catalogs"
+  - permission: "files.files"
+    description: "Manage files in volumes"
 
 env:
   # Unity Catalog configuration
@@ -27,3 +41,7 @@ env:
   
   - name: DATABRICKS_HTTP_PATH
     value: "/sql/1.0/warehouses/09231fd5489fc752"
+  
+  # Vector Search configuration
+  - name: VECTOR_SEARCH_ENDPOINT
+    value: "one-env-shared-endpoint-12"

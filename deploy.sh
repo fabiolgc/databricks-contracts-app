@@ -67,6 +67,9 @@ echo "────────────────────────�
     -not -name '*.pyc' \
     -exec cp -r {} build/ \;
   
+  # Copy app.yaml from project root (single source of truth)
+  cp ../app.yaml build/
+  
   echo "  ✅ Backend prepared: $(du -sh build | cut -f1)"
 ) &
 
