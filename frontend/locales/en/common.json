@@ -121,7 +121,9 @@
       "indexSyncType": "Index Synchronization",
       "indexSyncTypeHint": "How the index will be updated",
       "syncTriggered": "Manual (on-demand)",
-      "syncContinuous": "Automatic (continuous)"
+      "syncContinuous": "Automatic (continuous)",
+      "recreateIndex": "Recreate index if exists",
+      "recreateIndexHint": "If checked, the existing index will be deleted and recreated with new settings. Useful for changing the endpoint or embedding model."
     },
     "step2": {
       "title": "2. Select Documents",

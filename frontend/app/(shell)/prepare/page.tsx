@@ -82,6 +82,16 @@ interface ProcessingStatus {
   processedFiles: number
 }
 
+interface AutoProcessStatus {
+  step: "idle" | "generating_questions" | "chunking_a" | "chunking_b" | "evaluating" | "selecting" | "creating_index" | "completed" | "error"
+  message: string
+  progress: number
+  evaluationA?: { strategy: string; avg_score: number; precision: number; chunks_count: number }
+  evaluationB?: { strategy: string; avg_score: number; precision: number; chunks_count: number }
+  bestStrategy?: string
+  finalChunks?: number
+}
+
 interface FileProcessingResult {
   fileName: string
   status: "pending" | "processing" | "success" | "error"
@@ -197,21 +207,12 @@ export default function PreparePage() {
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set())
   const [isLoadingFiles, setIsLoadingFiles] = useState(false)
   
-  // State for chunking
-  const [selectedStrategy, setSelectedStrategy] = useState<string>("recursive")
-  const [chunkingParams, setChunkingParams] = useState({
-    chunkSize: 1000,
-    chunkOverlap: 200,
-    separatorType: "paragraph",  // For by_separator strategy
-    customSeparator: ""          // For custom separator
+  // State for auto processing (replaces manual chunking strategy selection)
+  const [autoProcessStatus, setAutoProcessStatus] = useState<AutoProcessStatus>({
+    step: "idle",
+    message: "",
+    progress: 0
   })
-  
-  // State for chunking preview
-  const [showChunkingPreview, setShowChunkingPreview] = useState(false)
-  const [chunkPreviewData, setChunkPreviewData] = useState<ChunkPreviewData[]>([])
-  const [previewDocIndex, setPreviewDocIndex] = useState(0)
-  const [previewChunkIndex, setPreviewChunkIndex] = useState(0)
-  const [isLoadingChunkPreview, setIsLoadingChunkPreview] = useState(false)
   
   // State for processing
   const [processingStatus, setProcessingStatus] = useState<ProcessingStatus>({
@@ -265,6 +266,7 @@ export default function PreparePage() {
   // State for Vector Index configuration
   const [embeddingModel, setEmbeddingModel] = useState("databricks-gte-large-en")
   const [indexSyncType, setIndexSyncType] = useState<"TRIGGERED" | "CONTINUOUS">("TRIGGERED")
+  const [recreateIndex, setRecreateIndex] = useState(false) // If true, delete and recreate index
   
   // State for vectorization progress with step times
   const [vectorizationStatus, setVectorizationStatus] = useState<{
@@ -726,8 +728,8 @@ export default function PreparePage() {
     }
   }
 
-  // Start processing
-  async function startProcessing() {
+  // Start auto processing with evaluation
+  async function startAutoProcessing() {
     if (selectedDocuments.size === 0) {
       toast.warning("Selecione pelo menos um documento para processar")
       return
@@ -743,8 +745,202 @@ export default function PreparePage() {
       return
     }
     
-    // Always proceed with processing - will delete existing chunks and create new ones
-    await executeProcessing()
+    // Get file names from selected document IDs
+    const selectedDocs = parsedDocuments.filter(d => selectedDocuments.has(d.id))
+    const filesToProcess = selectedDocs.map(d => d.fileName)
+    
+    // Initialize timers
+    const startTime = Date.now()
+    setProcessingStartTime(startTime)
+    setTotalProcessingTime(0)
+    
+    // Reset status
+    setAutoProcessStatus({
+      step: "generating_questions",
+      message: "Gerando perguntas de avaliação...",
+      progress: 5
+    })
+    
+    setProcessingStatus({
+      status: "processing",
+      message: "Iniciando processamento automático...",
+      progress: 0,
+      totalFiles: filesToProcess.length,
+      processedFiles: 0
+    })
+    
+    try {
+      // Call the auto process endpoint
+      setAutoProcessStatus(prev => ({
+        ...prev,
+        step: "chunking_a",
+        message: "Processando com Método A (Recursivo)...",
+        progress: 15
+      }))
+      
+      // Simulate progress updates (the actual processing happens server-side)
+      const progressInterval = setInterval(() => {
+        setAutoProcessStatus(prev => {
+          if (prev.step === "chunking_a" && prev.progress < 35) {
+            return { ...prev, progress: prev.progress + 2 }
+          }
+          if (prev.step === "chunking_b" && prev.progress < 55) {
+            return { ...prev, progress: prev.progress + 2 }
+          }
+          if (prev.step === "evaluating" && prev.progress < 80) {
+            return { ...prev, progress: prev.progress + 1 }
+          }
+          return prev
+        })
+      }, 1000)
+      
+      const response = await fetch("/api/process/auto", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tableConfig,
+          files: filesToProcess
+        })
+      })
+      
+      clearInterval(progressInterval)
+      
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.detail || "Falha no processamento automático")
+      }
+      
+      const result = await response.json()
+      
+      if (result.success) {
+        // Update with evaluation results
+        setAutoProcessStatus({
+          step: "selecting",
+          message: `Melhor estratégia: ${result.bestStrategy === "recursive" ? "Recursivo" : "Tamanho Fixo"}`,
+          progress: 85,
+          evaluationA: result.evaluations?.recursive,
+          evaluationB: result.evaluations?.fixed_size,
+          bestStrategy: result.bestStrategy,
+          finalChunks: result.finalChunks
+        })
+        
+        // Now create Vector Index
+        await createVectorIndexAfterProcessing(result.finalChunks)
+        
+      } else {
+        throw new Error(result.error || "Processamento falhou")
+      }
+      
+    } catch (error) {
+      console.error("Auto processing error:", error)
+      setAutoProcessStatus({
+        step: "error",
+        message: error instanceof Error ? error.message : "Erro desconhecido",
+        progress: 0
+      })
+      setProcessingStatus({
+        status: "error",
+        message: error instanceof Error ? error.message : "Erro desconhecido",
+        progress: 0,
+        totalFiles: filesToProcess.length,
+        processedFiles: 0
+      })
+      toast.error("Erro no processamento", {
+        description: error instanceof Error ? error.message : "Erro desconhecido"
+      })
+    }
+  }
+  
+  // Create Vector Index after auto processing
+  async function createVectorIndexAfterProcessing(chunksCount: number) {
+    const indexName = `${tableConfig.catalog}.${tableConfig.schema}.${tableConfig.tableName}_vs`
+    
+    setAutoProcessStatus(prev => ({
+      ...prev,
+      step: "creating_index",
+      message: "Criando Vector Index...",
+      progress: 90
+    }))
+    
+    try {
+      // Check if index exists and should be recreated
+      if (recreateIndex) {
+        const deleteResponse = await fetch("/api/vector-search/index/delete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            endpointName: vsEndpointName,
+            indexName
+          })
+        })
+        if (deleteResponse.ok) {
+          console.log("Existing index deleted for recreation")
+        }
+      }
+      
+      // Create the index
+      const createResponse = await fetch("/api/vector-search/index/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          endpointName: vsEndpointName,
+          indexName,
+          sourceTable: `${tableConfig.catalog}.${tableConfig.schema}.${tableConfig.tableName}_chunks`,
+          embeddingModel,
+          syncType: indexSyncType
+        })
+      })
+      
+      const createResult = await createResponse.json()
+      
+      const endTime = Date.now()
+      const totalTime = Math.floor((endTime - (processingStartTime || endTime)) / 1000)
+      setTotalProcessingTime(totalTime)
+      
+      if (createResult.success || createResult.alreadyExists) {
+        setAutoProcessStatus(prev => ({
+          ...prev,
+          step: "completed",
+          message: createResult.alreadyExists 
+            ? `Index já existe. ${chunksCount} segmentos processados.`
+            : `Concluído! ${chunksCount} segmentos indexados.`,
+          progress: 100
+        }))
+        
+        setProcessingStatus({
+          status: "completed",
+          message: `Processamento concluído com sucesso!`,
+          progress: 100,
+          totalFiles: selectedDocuments.size,
+          processedFiles: selectedDocuments.size
+        })
+        
+        toast.success("Processamento concluído!", {
+          description: `${chunksCount} segmentos criados e indexados.`,
+          duration: 6000
+        })
+      } else {
+        throw new Error(createResult.error || "Falha ao criar index")
+      }
+      
+    } catch (error) {
+      console.error("Vector index creation error:", error)
+      // Still mark as completed if chunking worked but index failed
+      setAutoProcessStatus(prev => ({
+        ...prev,
+        step: "completed",
+        message: `Chunks criados. Index: ${error instanceof Error ? error.message : "erro"}`,
+        progress: 95
+      }))
+      
+      setProcessingStatus({
+        status: "completed",
+        message: "Chunks criados. Vector Index com erro.",
+        progress: 100,
+        totalFiles: selectedDocuments.size,
+        processedFiles: selectedDocuments.size
+      })
+    }
   }
 
   // Execute the actual processing - file by file
@@ -1091,8 +1287,8 @@ export default function PreparePage() {
           
           const indexCheckResult = await indexCheckResponse.json()
           
-          if (indexCheckResult.exists) {
-            // Index already exists - trigger sync and wait
+          if (indexCheckResult.exists && !recreateIndex) {
+            // Index already exists and user wants to sync only
             setVectorizationStatus(prev => ({
               ...prev,
               message: `Index "${indexName}" já existe. Sincronizando...`,
@@ -1155,6 +1351,35 @@ export default function PreparePage() {
               indexCreated = true
             }
           } else {
+            // Delete existing index if recreateIndex is enabled
+            if (indexCheckResult.exists && recreateIndex) {
+              setVectorizationStatus(prev => ({
+                ...prev,
+                message: `Deletando index existente "${indexName}"...`,
+              }))
+              
+              const deleteResponse = await fetch("/api/vector-search/index/delete", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  tableConfig,
+                  endpoint_name: vsEndpointName,
+                  embedding_model: embeddingModel,
+                  sync_type: indexSyncType
+                })
+              })
+              
+              const deleteResult = await deleteResponse.json()
+              
+              if (!deleteResult.success) {
+                toast.warning(`Erro ao deletar index: ${deleteResult.error}`)
+              } else {
+                toast.info(`Index "${indexName}" deletado. Recriando...`)
+                // Wait a bit for deletion to propagate
+                await new Promise(resolve => setTimeout(resolve, 3000))
+              }
+            }
+            
             // Create new index
             const indexCreateResponse = await fetch("/api/vector-search/index/create", {
               method: "POST",
@@ -1771,6 +1996,20 @@ export default function PreparePage() {
                   <p className="mt-1 text-xs text-gray-500">{t("prepare.step1.indexSyncTypeHint")}</p>
                 </div>
               </div>
+              
+              {/* Recreate Index Option */}
+              <div className="mt-4">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={recreateIndex}
+                    onChange={(e) => setRecreateIndex(e.target.checked)}
+                    className="rounded border-gray-300 text-[var(--color-primary)] focus:ring-[var(--color-primary)]"
+                  />
+                  <span className="text-sm text-gray-700">{t("prepare.step1.recreateIndex")}</span>
+                </label>
+                <p className="mt-1 text-xs text-gray-500 ml-6">{t("prepare.step1.recreateIndexHint")}</p>
+              </div>
 
               {/* Preview das tabelas que serão criadas/usadas */}
               {tableConfig.tableName && (
@@ -2059,7 +2298,7 @@ export default function PreparePage() {
                     </div>
                   )}
                   
-                  {/* Next button */}
+                  {/* Process button */}
                   {parsedDocuments.length > 0 && (
                     <div className="mt-4 pt-4 border-t border-gray-200 flex items-center justify-between">
                       <span className="text-sm text-gray-500">
@@ -2068,17 +2307,27 @@ export default function PreparePage() {
                       <button
                         onClick={() => {
                           if (selectedDocuments.size === 0) {
-                            toast.warning("Selecione pelo menos um documento para continuar")
+                            toast.warning("Selecione pelo menos um documento para processar")
                             return
                           }
                           setCompletedSteps(prev => new Set([...prev, 2]))
-                          setActiveStep(3)
+                          setActiveStep(null)
+                          startAutoProcessing()
                         }}
-                        disabled={selectedDocuments.size === 0}
+                        disabled={selectedDocuments.size === 0 || processingStatus.status === "processing"}
                         className="px-4 py-2 text-sm font-medium text-white bg-[var(--color-primary)] rounded-lg hover:bg-[var(--color-primary)]/90 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                       >
-                        Próximo
-                        <ChevronRight className="h-4 w-4" />
+                        {processingStatus.status === "processing" ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Processando...
+                          </>
+                        ) : (
+                          <>
+                            <Play className="h-4 w-4" />
+                            Processar Documentos
+                          </>
+                        )}
                       </button>
                     </div>
                   )}
@@ -2161,54 +2410,6 @@ export default function PreparePage() {
           </div>
         )}
 
-        {/* Process Confirmation Modal */}
-        {showProcessConfirmModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-            <div className="bg-white rounded-xl shadow-2xl p-6 max-w-md w-full">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="p-2 bg-[var(--color-warning-light)] rounded-full">
-                  <AlertCircle className="h-6 w-6 text-[var(--color-warning)]" />
-                </div>
-                <h3 className="text-xl font-bold text-[var(--color-text)]">
-                  {t("prepare.processing.title")}
-                </h3>
-              </div>
-              
-              <p className="text-base text-gray-600 mb-4">
-                Você está prestes a processar <strong>{selectedDocuments.size}</strong> documento(s) 
-                com a estratégia <strong>{CHUNKING_STRATEGIES.find(s => s.id === selectedStrategy)?.name}</strong>.
-              </p>
-              
-              <div className="bg-[var(--color-warning-light)] border border-[var(--color-warning)] rounded-lg p-3 mb-6">
-                <p className="text-sm text-[var(--color-warning)]">
-                  <strong>Atenção:</strong> Os segmentos existentes serão 
-                  <strong> apagados</strong> e novos segmentos serão gerados com a estratégia selecionada.
-                </p>
-              </div>
-              
-              <div className="flex gap-3">
-                <button
-                  onClick={() => setShowProcessConfirmModal(false)}
-                  className="flex-1 px-4 py-2.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-                >
-                  {t("common.cancel")}
-                </button>
-                <button
-                  onClick={() => {
-                    setShowProcessConfirmModal(false)
-                    setCompletedSteps(prev => new Set([...prev, 3]))
-                    setActiveStep(null)
-                    startProcessing()
-                  }}
-                  className="flex-1 px-4 py-2.5 text-sm font-medium text-white bg-[var(--color-primary)] rounded-lg hover:bg-[var(--color-primary)]/90 transition-colors flex items-center justify-center gap-2"
-                >
-                  <Play className="h-4 w-4" />
-                  {t("common.confirm")}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* Text Preview Modal */}
         {showTextModal && selectedDocumentText && (

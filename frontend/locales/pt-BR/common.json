@@ -121,7 +121,9 @@
       "indexSyncType": "Sincronização do Índice",
       "indexSyncTypeHint": "Como o índice será atualizado",
       "syncTriggered": "Manual (sob demanda)",
-      "syncContinuous": "Automático (contínuo)"
+      "syncContinuous": "Automático (contínuo)",
+      "recreateIndex": "Recriar índice se já existir",
+      "recreateIndexHint": "Se marcado, o índice existente será deletado e recriado com as novas configurações. Útil para alterar o endpoint ou modelo de embedding."
     },
     "step2": {
       "title": "2. Selecionar Documentos",

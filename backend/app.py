@@ -1162,6 +1162,67 @@ async def create_vector_index(
         return {"success": False, "error": str(e)}
 
 
+@app.post("/api/vector-search/index/delete")
+async def delete_vector_index(
+    request: CreateVectorIndexRequest,
+    x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
+):
+    """Delete an existing Vector Index"""
+    request_id = str(uuid.uuid4())[:8]
+    
+    catalog = request.tableConfig.get("catalog", "")
+    schema = request.tableConfig.get("schema", "")
+    table_name = request.tableConfig.get("tableName", "")
+    index_name = f"{catalog}.{schema}.{table_name}_vs"
+    
+    print(f"\n{'=' * 80}")
+    print(f"🗑️ [{request_id}] Delete Vector Index: {index_name}")
+    print(f"{'=' * 80}")
+    
+    try:
+        config = get_databricks_config(x_forwarded_access_token)
+        host = config["host"]
+        token = config["token"]
+        
+        # URL encode the index name
+        encoded_index_name = index_name.replace(".", "%2E")
+        url = f"https://{host}/api/2.0/vector-search/indexes/{encoded_index_name}"
+        
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.delete(
+                url,
+                headers={"Authorization": f"Bearer {token}"}
+            )
+            
+            print(f"📡 [{request_id}] Delete response: {response.status_code}")
+            
+            if response.status_code in [200, 204]:
+                print(f"✅ [{request_id}] Index deleted successfully")
+                return {
+                    "success": True,
+                    "message": f"Index {index_name} deleted",
+                    "index_name": index_name
+                }
+            elif response.status_code == 404:
+                print(f"ℹ️ [{request_id}] Index does not exist")
+                return {
+                    "success": True,
+                    "message": "Index does not exist",
+                    "index_name": index_name
+                }
+            else:
+                error_text = response.text
+                print(f"⚠️ [{request_id}] Delete failed: {error_text}")
+                return {
+                    "success": False,
+                    "error": f"Failed to delete index: {error_text}"
+                }
+                
+    except Exception as e:
+        print(f"💥 [{request_id}] Error: {str(e)}")
+        return {"success": False, "error": str(e)}
+
+
 @app.post("/api/extract-text")
 async def extract_text_from_file(
     request: ExtractTextRequest,
@@ -2970,6 +3031,341 @@ async def preview_chunks(
         
     except Exception as e:
         print(f"💥 [{request_id}] Exception: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# Auto Process with Chunking Evaluation
+# ============================================================================
+
+class AutoProcessRequest(BaseModel):
+    tableConfig: Dict[str, str]
+    files: List[str]
+
+class ChunkingEvaluation(BaseModel):
+    strategy: str
+    avg_score: float
+    precision: float
+    chunks_evaluated: int
+    sample_questions: List[Dict[str, Any]]
+
+@app.post("/api/process/auto")
+async def auto_process_with_evaluation(
+    request: AutoProcessRequest,
+    x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
+):
+    """
+    Automated processing pipeline:
+    1. Generate evaluation questions from documents
+    2. Process with Strategy A (recursive) 
+    3. Process with Strategy B (fixed_size)
+    4. Evaluate both strategies using ai_query
+    5. Select best strategy and keep those chunks
+    """
+    request_id = str(uuid.uuid4())[:8]
+    
+    print(f"\n{'=' * 80}")
+    print(f"🤖 [{request_id}] AUTO PROCESS WITH EVALUATION")
+    print(f"{'=' * 80}")
+    
+    try:
+        config = get_databricks_config(x_forwarded_access_token)
+        warehouse_id = os.getenv("DATABRICKS_WAREHOUSE_ID")
+        
+        if not warehouse_id:
+            raise HTTPException(status_code=500, detail="Warehouse ID not configured")
+        
+        table_config = request.tableConfig
+        files = request.files
+        
+        catalog = table_config.get("catalog", "")
+        schema = table_config.get("schema", "")
+        table_name = sanitize_table_name(table_config.get("tableName", ""))
+        
+        parsed_table = f"{catalog}.{schema}.{table_name}_parsed"
+        chunks_table = f"{catalog}.{schema}.{table_name}_chunks"
+        
+        # =====================================================================
+        # STEP 1: Generate evaluation questions from sample documents
+        # =====================================================================
+        print(f"\n📝 [{request_id}] Step 1: Generating evaluation questions...")
+        
+        # Get sample text from first document
+        sample_file = files[0].replace("'", "''")
+        sample_sql = f"""
+        SELECT parsed_text FROM {parsed_table}
+        WHERE file_name = '{sample_file}'
+        LIMIT 1
+        """
+        sample_result = await execute_sql(config, warehouse_id, sample_sql, request_id)
+        
+        if not sample_result or not sample_result.get("data_array"):
+            raise HTTPException(status_code=404, detail="No documents found to evaluate")
+        
+        sample_text = sample_result["data_array"][0][0][:8000]  # Limit for prompt
+        
+        # Generate Q&A pairs using ai_query
+        qa_prompt = f"""Baseado no texto abaixo de um documento, gere 3 perguntas específicas 
+que um usuário faria para encontrar informações importantes.
+Para cada pergunta, identifique o trecho exato do texto que contém a resposta.
+
+Texto:
+{sample_text[:4000]}
+
+Responda APENAS com JSON válido no formato:
+[
+  {{"pergunta": "...", "resposta_esperada": "...", "trecho_relevante": "..."}}
+]"""
+        
+        qa_sql = f"SELECT ai_query('databricks-meta-llama-3-3-70b-instruct', '{qa_prompt.replace(chr(39), chr(39)+chr(39))}')"
+        qa_result = await execute_sql_long(config, warehouse_id, qa_sql, request_id, timeout_minutes=2)
+        
+        eval_questions = []
+        if qa_result and qa_result.get("data_array"):
+            try:
+                qa_response = qa_result["data_array"][0][0]
+                json_start = qa_response.find('[')
+                json_end = qa_response.rfind(']') + 1
+                if json_start >= 0 and json_end > json_start:
+                    eval_questions = json.loads(qa_response[json_start:json_end])
+                    print(f"✅ [{request_id}] Generated {len(eval_questions)} evaluation questions")
+            except Exception as e:
+                print(f"⚠️ [{request_id}] Failed to parse Q&A: {e}")
+                # Fallback: create simple question
+                eval_questions = [{"pergunta": "Qual é o conteúdo principal deste documento?", "trecho_relevante": sample_text[:500]}]
+        
+        # =====================================================================
+        # STEP 2: Process with Strategy A (recursive)
+        # =====================================================================
+        print(f"\n🔷 [{request_id}] Step 2: Processing with Strategy A (recursive)...")
+        
+        chunks_table_a = f"{chunks_table}_eval_a"
+        await execute_sql(config, warehouse_id, f"DROP TABLE IF EXISTS {chunks_table_a}", request_id)
+        
+        create_eval_table_sql = f"""
+        CREATE TABLE IF NOT EXISTS {chunks_table_a} (
+            id STRING,
+            document_id STRING,
+            file_name STRING,
+            chunk_index INT,
+            total_chunks INT,
+            chunk_content STRING,
+            strategy STRING,
+            created_at TIMESTAMP
+        )
+        """
+        await execute_sql(config, warehouse_id, create_eval_table_sql, request_id)
+        
+        strategy_a_chunks = 0
+        for file_name in files:
+            escaped_file = file_name.replace("'", "''")
+            
+            # Get text
+            text_sql = f"SELECT id, parsed_text FROM {parsed_table} WHERE file_name = '{escaped_file}' LIMIT 1"
+            text_result = await execute_sql(config, warehouse_id, text_sql, request_id)
+            
+            if text_result and text_result.get("data_array"):
+                doc_id = text_result["data_array"][0][0]
+                parsed_text = text_result["data_array"][0][1] or ""
+                
+                chunks = chunk_recursive(parsed_text, 1000, 200)
+                strategy_a_chunks += len(chunks)
+                
+                for idx, chunk in enumerate(chunks):
+                    chunk_id = str(uuid.uuid4())
+                    escaped_chunk = chunk.replace("'", "''").replace("\\", "\\\\")
+                    insert_sql = f"""
+                    INSERT INTO {chunks_table_a}
+                    VALUES ('{chunk_id}', '{doc_id}', '{escaped_file}', {idx}, {len(chunks)}, 
+                            '{escaped_chunk}', 'recursive', current_timestamp())
+                    """
+                    await execute_sql(config, warehouse_id, insert_sql, request_id)
+        
+        print(f"✅ [{request_id}] Strategy A: {strategy_a_chunks} chunks created")
+        
+        # =====================================================================
+        # STEP 3: Process with Strategy B (fixed_size)
+        # =====================================================================
+        print(f"\n🔶 [{request_id}] Step 3: Processing with Strategy B (fixed_size)...")
+        
+        chunks_table_b = f"{chunks_table}_eval_b"
+        await execute_sql(config, warehouse_id, f"DROP TABLE IF EXISTS {chunks_table_b}", request_id)
+        
+        create_eval_table_sql_b = create_eval_table_sql.replace(chunks_table_a, chunks_table_b)
+        await execute_sql(config, warehouse_id, create_eval_table_sql_b, request_id)
+        
+        strategy_b_chunks = 0
+        for file_name in files:
+            escaped_file = file_name.replace("'", "''")
+            
+            text_sql = f"SELECT id, parsed_text FROM {parsed_table} WHERE file_name = '{escaped_file}' LIMIT 1"
+            text_result = await execute_sql(config, warehouse_id, text_sql, request_id)
+            
+            if text_result and text_result.get("data_array"):
+                doc_id = text_result["data_array"][0][0]
+                parsed_text = text_result["data_array"][0][1] or ""
+                
+                chunks = chunk_fixed_size(parsed_text, 1000, 200)
+                strategy_b_chunks += len(chunks)
+                
+                for idx, chunk in enumerate(chunks):
+                    chunk_id = str(uuid.uuid4())
+                    escaped_chunk = chunk.replace("'", "''").replace("\\", "\\\\")
+                    insert_sql = f"""
+                    INSERT INTO {chunks_table_b}
+                    VALUES ('{chunk_id}', '{doc_id}', '{escaped_file}', {idx}, {len(chunks)}, 
+                            '{escaped_chunk}', 'fixed_size', current_timestamp())
+                    """
+                    await execute_sql(config, warehouse_id, insert_sql, request_id)
+        
+        print(f"✅ [{request_id}] Strategy B: {strategy_b_chunks} chunks created")
+        
+        # =====================================================================
+        # STEP 4: Evaluate both strategies
+        # =====================================================================
+        print(f"\n📊 [{request_id}] Step 4: Evaluating strategies...")
+        
+        async def evaluate_strategy(chunks_table_eval: str, strategy_name: str) -> Dict:
+            scores = []
+            eval_details = []
+            
+            for qa in eval_questions[:3]:  # Limit to 3 questions
+                question = qa.get("pergunta", "")
+                expected = qa.get("trecho_relevante", "")[:500]
+                
+                if not question:
+                    continue
+                
+                # Get top 3 chunks by simple text match (simulating retrieval)
+                escaped_q = question.replace("'", "''")
+                
+                # Use ai_query to evaluate chunk relevance
+                eval_prompt = f"""Avalie se os chunks abaixo contêm informação relevante para responder a pergunta.
+
+Pergunta: {question}
+
+Resposta esperada (trecho do documento original): {expected[:300]}
+
+Responda com JSON: {{"score": 0-10, "tem_informacao": true/false, "justificativa": "..."}}"""
+                
+                # Get sample chunks for evaluation
+                sample_chunks_sql = f"SELECT chunk_content FROM {chunks_table_eval} LIMIT 5"
+                chunks_result = await execute_sql(config, warehouse_id, sample_chunks_sql, request_id)
+                
+                if chunks_result and chunks_result.get("data_array"):
+                    chunks_text = "\n---\n".join([row[0][:300] for row in chunks_result["data_array"][:3]])
+                    
+                    full_prompt = f"""{eval_prompt}
+
+Chunks recuperados:
+{chunks_text}"""
+                    
+                    eval_sql = f"SELECT ai_query('databricks-meta-llama-3-3-70b-instruct', '{full_prompt.replace(chr(39), chr(39)+chr(39))}')"
+                    
+                    try:
+                        eval_result = await execute_sql_long(config, warehouse_id, eval_sql, request_id, timeout_minutes=1)
+                        
+                        if eval_result and eval_result.get("data_array"):
+                            response = eval_result["data_array"][0][0]
+                            json_start = response.find('{')
+                            json_end = response.rfind('}') + 1
+                            if json_start >= 0:
+                                eval_data = json.loads(response[json_start:json_end])
+                                score = eval_data.get("score", 5)
+                                scores.append(score)
+                                eval_details.append({
+                                    "question": question,
+                                    "score": score,
+                                    "has_info": eval_data.get("tem_informacao", False),
+                                    "justification": eval_data.get("justificativa", "")[:100]
+                                })
+                    except Exception as e:
+                        print(f"⚠️ [{request_id}] Eval error: {e}")
+                        scores.append(5)  # Default score
+            
+            avg_score = sum(scores) / len(scores) if scores else 5.0
+            precision = len([s for s in scores if s >= 7]) / len(scores) if scores else 0.5
+            
+            return {
+                "strategy": strategy_name,
+                "avg_score": round(avg_score, 2),
+                "precision": round(precision, 2),
+                "chunks_count": strategy_a_chunks if strategy_name == "recursive" else strategy_b_chunks,
+                "evaluations": eval_details
+            }
+        
+        eval_a = await evaluate_strategy(chunks_table_a, "recursive")
+        eval_b = await evaluate_strategy(chunks_table_b, "fixed_size")
+        
+        print(f"\n📈 [{request_id}] Evaluation Results:")
+        print(f"  Strategy A (recursive): score={eval_a['avg_score']}, precision={eval_a['precision']}")
+        print(f"  Strategy B (fixed_size): score={eval_b['avg_score']}, precision={eval_b['precision']}")
+        
+        # =====================================================================
+        # STEP 5: Select best strategy and finalize
+        # =====================================================================
+        best_strategy = "recursive" if eval_a['avg_score'] >= eval_b['avg_score'] else "fixed_size"
+        best_table = chunks_table_a if best_strategy == "recursive" else chunks_table_b
+        other_table = chunks_table_b if best_strategy == "recursive" else chunks_table_a
+        
+        print(f"\n🏆 [{request_id}] Best strategy: {best_strategy}")
+        
+        # Drop the losing table
+        await execute_sql(config, warehouse_id, f"DROP TABLE IF EXISTS {other_table}", request_id)
+        
+        # Rename winning table to final chunks table
+        await execute_sql(config, warehouse_id, f"DROP TABLE IF EXISTS {chunks_table}", request_id)
+        
+        # Create final chunks table with correct schema
+        create_final_sql = f"""
+        CREATE TABLE {chunks_table} AS
+        SELECT 
+            id,
+            document_id,
+            file_name,
+            chunk_index,
+            total_chunks,
+            chunk_content,
+            '' as chunk_context,
+            strategy,
+            1000 as chunk_size,
+            200 as chunk_overlap,
+            '{{}}' as doc_metadata,
+            created_at
+        FROM {best_table}
+        """
+        await execute_sql(config, warehouse_id, create_final_sql, request_id)
+        
+        # Cleanup eval table
+        await execute_sql(config, warehouse_id, f"DROP TABLE IF EXISTS {best_table}", request_id)
+        
+        # Get final chunk count
+        count_result = await execute_sql(config, warehouse_id, f"SELECT COUNT(*) FROM {chunks_table}", request_id)
+        final_chunks = int(count_result["data_array"][0][0]) if count_result and count_result.get("data_array") else 0
+        
+        print(f"\n✅ [{request_id}] AUTO PROCESS COMPLETE")
+        print(f"  - Best strategy: {best_strategy}")
+        print(f"  - Final chunks: {final_chunks}")
+        print(f"{'=' * 80}\n")
+        
+        return {
+            "success": True,
+            "bestStrategy": best_strategy,
+            "evaluations": {
+                "recursive": eval_a,
+                "fixed_size": eval_b
+            },
+            "finalChunks": final_chunks,
+            "filesProcessed": len(files),
+            "evaluationQuestions": eval_questions
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"💥 [{request_id}] Exception: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
