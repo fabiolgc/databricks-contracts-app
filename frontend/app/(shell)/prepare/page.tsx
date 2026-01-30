@@ -89,7 +89,7 @@ interface StrategyEvaluation {
 }
 
 interface AutoProcessStatus {
-  step: "idle" | "generating_questions" | "chunking_a" | "chunking_b" | "chunking_c" | "evaluating" | "selecting" | "applying" | "creating_index" | "completed" | "error"
+  step: "idle" | "generating_questions" | "chunking_parallel" | "chunking_a" | "chunking_b" | "chunking_c" | "evaluating" | "selecting" | "applying" | "creating_index" | "completed" | "error"
   message: string
   progress: number
   evaluationA?: StrategyEvaluation
@@ -98,6 +98,8 @@ interface AutoProcessStatus {
   bestStrategy?: string
   finalChunks?: number
   sampleFiles?: number
+  strategyProgress?: { A: number; B: number; C: number }
+  strategyStatus?: { A: string; B: string; C: string }
   // Step timing
   stepTimes?: {
     questions?: number
@@ -771,6 +773,7 @@ export default function PreparePage() {
             // Map backend step to frontend step
             const stepMap: Record<string, string> = {
               generating_questions: "generating_questions",
+              chunking_parallel: "chunking_parallel",
               chunking_a: "chunking_a",
               chunking_b: "chunking_b",
               chunking_c: "chunking_c",
@@ -811,7 +814,10 @@ export default function PreparePage() {
               evaluationB: jobStatus.evaluationB || prev.evaluationB,
               evaluationC: jobStatus.evaluationC || prev.evaluationC,
               bestStrategy: jobStatus.bestStrategy || prev.bestStrategy,
-              tables: jobStatus.tables || prev.tables
+              tables: jobStatus.tables || prev.tables,
+              // Parallel chunking progress
+              strategyProgress: jobStatus.strategyProgress || prev.strategyProgress,
+              strategyStatus: jobStatus.strategyStatus || prev.strategyStatus
             }))
           }
           
@@ -842,6 +848,7 @@ export default function PreparePage() {
         const now = Date.now()
         setStepEndTimes(prev => ({
           ...prev,
+          chunking_parallel: prev.chunking_parallel || now - 6000,
           chunking_a: prev.chunking_a || now - 6000,
           chunking_b: prev.chunking_b || now - 5000,
           chunking_c: prev.chunking_c || now - 4000,
@@ -1855,17 +1862,17 @@ export default function PreparePage() {
                 <div className="flex items-center gap-3">
                   {autoProcessStatus.step === "generating_questions" ? (
                     <Loader2 className="h-5 w-5 text-[var(--color-primary)] animate-spin flex-shrink-0" />
-                  ) : ["chunking_a", "chunking_b", "chunking_c", "evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) ? (
+                  ) : ["chunking_parallel", "chunking_a", "chunking_b", "chunking_c", "evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) ? (
                     <CheckCircle2 className="h-5 w-5 text-[var(--color-success)] flex-shrink-0" />
                   ) : (
                     <div className="h-5 w-5 rounded-full border-2 border-gray-300 flex-shrink-0" />
                   )}
                   <span className={`text-sm flex-1 ${
                     autoProcessStatus.step === "generating_questions" ? "text-[var(--color-primary)] font-medium" :
-                    ["chunking_a", "chunking_b", "chunking_c", "evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) ? "text-[var(--color-success)]" :
+                    ["chunking_parallel", "chunking_a", "chunking_b", "chunking_c", "evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) ? "text-[var(--color-success)]" :
                     "text-gray-500"
                   }`}>
-                    {["chunking_a", "chunking_b", "chunking_c", "evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) 
+                    {["chunking_parallel", "chunking_a", "chunking_b", "chunking_c", "evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) 
                       ? "Perguntas de teste geradas" 
                       : "Gerando perguntas de teste"}
                   </span>
@@ -1901,117 +1908,121 @@ export default function PreparePage() {
                 )}
               </div>
               
-              {/* Step 2: Chunking Method A - Recursivo */}
-              <div className="flex items-center gap-3">
-                {autoProcessStatus.step === "chunking_a" ? (
-                  <Loader2 className="h-5 w-5 text-[var(--color-primary)] animate-spin flex-shrink-0" />
-                ) : ["chunking_b", "chunking_c", "evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) ? (
-                  <CheckCircle2 className="h-5 w-5 text-[var(--color-success)] flex-shrink-0" />
-                ) : (
-                  <div className="h-5 w-5 rounded-full border-2 border-gray-300 flex-shrink-0" />
-                )}
-                <div className={`text-sm flex-1 ${
-                  autoProcessStatus.step === "chunking_a" ? "text-[var(--color-primary)] font-medium" :
-                  ["chunking_b", "chunking_c", "evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) ? "text-[var(--color-success)]" :
-                  "text-gray-500"
-                }`}>
-                  <span>
-                    {["chunking_b", "chunking_c", "evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step)
-                      ? `Estratégia A aplicada: ${t("prepare.autoProcess.steps.recursive")}`
-                      : `Estratégia A: ${t("prepare.autoProcess.steps.recursive")}`}
-                  </span>
-                  {autoProcessStatus.tables?.tempRecursive && (
-                    <span className="ml-2 text-xs font-mono text-gray-400">({autoProcessStatus.tables.tempRecursive})</span>
+              {/* Step 2-4: Parallel Chunking Strategies */}
+              <div className="space-y-2">
+                {/* Strategy A: Recursivo */}
+                <div className="flex items-center gap-3">
+                  {autoProcessStatus.step === "chunking_parallel" && autoProcessStatus.strategyStatus?.A === "processing" ? (
+                    <Loader2 className="h-5 w-5 text-[var(--color-primary)] animate-spin flex-shrink-0" />
+                  ) : ["evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) || autoProcessStatus.strategyStatus?.A === "completed" ? (
+                    <CheckCircle2 className="h-5 w-5 text-[var(--color-success)] flex-shrink-0" />
+                  ) : (
+                    <div className="h-5 w-5 rounded-full border-2 border-gray-300 flex-shrink-0" />
+                  )}
+                  <div className={`text-sm flex-1 ${
+                    autoProcessStatus.step === "chunking_parallel" && autoProcessStatus.strategyStatus?.A === "processing" ? "text-[var(--color-primary)] font-medium" :
+                    ["evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) || autoProcessStatus.strategyStatus?.A === "completed" ? "text-[var(--color-success)]" :
+                    "text-gray-500"
+                  }`}>
+                    <span>
+                      {["evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) || autoProcessStatus.strategyStatus?.A === "completed"
+                        ? `Estratégia A aplicada: ${t("prepare.autoProcess.steps.recursive")}`
+                        : `Estratégia A: ${t("prepare.autoProcess.steps.recursive")}`}
+                    </span>
+                    {autoProcessStatus.tables?.tempRecursive && (
+                      <span className="ml-2 text-xs font-mono text-gray-400">({autoProcessStatus.tables.tempRecursive})</span>
+                    )}
+                  </div>
+                  {autoProcessStatus.evaluationA && (
+                    <span className="text-xs text-gray-500">{autoProcessStatus.evaluationA.chunks_count} chunks</span>
+                  )}
+                  {autoProcessStatus.step === "chunking_parallel" && autoProcessStatus.strategyProgress?.A !== undefined && autoProcessStatus.strategyProgress.A < 100 && (
+                    <span className="text-xs font-mono text-[var(--color-primary)] bg-[var(--color-primary-light)] px-2 py-0.5 rounded">
+                      {autoProcessStatus.strategyProgress.A}%
+                    </span>
                   )}
                 </div>
-                {autoProcessStatus.evaluationA && (
-                  <span className="text-xs text-gray-500">{autoProcessStatus.evaluationA.chunks_count} chunks</span>
-                )}
-                {autoProcessStatus.step === "chunking_a" && stepStartTimes.chunking_a && !stepEndTimes.chunking_a && (
-                  <span className="text-xs font-mono text-[var(--color-primary)] bg-[var(--color-primary-light)] px-2 py-0.5 rounded">
-                    {formatTime(currentStepTime)}
-                  </span>
-                )}
-                {stepEndTimes.chunking_a && stepStartTimes.chunking_a && autoProcessStatus.step !== "chunking_a" && (
-                  <span className="text-xs font-mono text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
-                    {formatTime(Math.floor((stepEndTimes.chunking_a - stepStartTimes.chunking_a) / 1000))}
-                  </span>
-                )}
-              </div>
-              
-              {/* Step 3: Chunking Method B - Tamanho Fixo */}
-              <div className="flex items-center gap-3">
-                {autoProcessStatus.step === "chunking_b" ? (
-                  <Loader2 className="h-5 w-5 text-[var(--color-primary)] animate-spin flex-shrink-0" />
-                ) : ["chunking_c", "evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) ? (
-                  <CheckCircle2 className="h-5 w-5 text-[var(--color-success)] flex-shrink-0" />
-                ) : (
-                  <div className="h-5 w-5 rounded-full border-2 border-gray-300 flex-shrink-0" />
-                )}
-                <div className={`text-sm flex-1 ${
-                  autoProcessStatus.step === "chunking_b" ? "text-[var(--color-primary)] font-medium" :
-                  ["chunking_c", "evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) ? "text-[var(--color-success)]" :
-                  "text-gray-500"
-                }`}>
-                  <span>
-                    {["chunking_c", "evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step)
-                      ? `Estratégia B aplicada: ${t("prepare.autoProcess.steps.fixedSize")}`
-                      : `Estratégia B: ${t("prepare.autoProcess.steps.fixedSize")}`}
-                  </span>
-                  {autoProcessStatus.tables?.tempFixedSize && (
-                    <span className="ml-2 text-xs font-mono text-gray-400">({autoProcessStatus.tables.tempFixedSize})</span>
+
+                {/* Strategy B: Tamanho Fixo */}
+                <div className="flex items-center gap-3">
+                  {autoProcessStatus.step === "chunking_parallel" && autoProcessStatus.strategyStatus?.B === "processing" ? (
+                    <Loader2 className="h-5 w-5 text-[var(--color-primary)] animate-spin flex-shrink-0" />
+                  ) : ["evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) || autoProcessStatus.strategyStatus?.B === "completed" ? (
+                    <CheckCircle2 className="h-5 w-5 text-[var(--color-success)] flex-shrink-0" />
+                  ) : (
+                    <div className="h-5 w-5 rounded-full border-2 border-gray-300 flex-shrink-0" />
+                  )}
+                  <div className={`text-sm flex-1 ${
+                    autoProcessStatus.step === "chunking_parallel" && autoProcessStatus.strategyStatus?.B === "processing" ? "text-[var(--color-primary)] font-medium" :
+                    ["evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) || autoProcessStatus.strategyStatus?.B === "completed" ? "text-[var(--color-success)]" :
+                    "text-gray-500"
+                  }`}>
+                    <span>
+                      {["evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) || autoProcessStatus.strategyStatus?.B === "completed"
+                        ? `Estratégia B aplicada: ${t("prepare.autoProcess.steps.fixedSize")}`
+                        : `Estratégia B: ${t("prepare.autoProcess.steps.fixedSize")}`}
+                    </span>
+                    {autoProcessStatus.tables?.tempFixedSize && (
+                      <span className="ml-2 text-xs font-mono text-gray-400">({autoProcessStatus.tables.tempFixedSize})</span>
+                    )}
+                  </div>
+                  {autoProcessStatus.evaluationB && (
+                    <span className="text-xs text-gray-500">{autoProcessStatus.evaluationB.chunks_count} chunks</span>
+                  )}
+                  {autoProcessStatus.step === "chunking_parallel" && autoProcessStatus.strategyProgress?.B !== undefined && autoProcessStatus.strategyProgress.B < 100 && (
+                    <span className="text-xs font-mono text-[var(--color-primary)] bg-[var(--color-primary-light)] px-2 py-0.5 rounded">
+                      {autoProcessStatus.strategyProgress.B}%
+                    </span>
                   )}
                 </div>
-                {autoProcessStatus.evaluationB && (
-                  <span className="text-xs text-gray-500">{autoProcessStatus.evaluationB.chunks_count} chunks</span>
-                )}
-                {autoProcessStatus.step === "chunking_b" && stepStartTimes.chunking_b && !stepEndTimes.chunking_b && (
-                  <span className="text-xs font-mono text-[var(--color-primary)] bg-[var(--color-primary-light)] px-2 py-0.5 rounded">
-                    {formatTime(currentStepTime)}
-                  </span>
-                )}
-                {stepEndTimes.chunking_b && stepStartTimes.chunking_b && autoProcessStatus.step !== "chunking_b" && (
-                  <span className="text-xs font-mono text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
-                    {formatTime(Math.floor((stepEndTimes.chunking_b - stepStartTimes.chunking_b) / 1000))}
-                  </span>
-                )}
-              </div>
-              
-              {/* Step 4: Structural Chunking */}
-              <div className="flex items-center gap-3">
-                {autoProcessStatus.step === "chunking_c" ? (
-                  <Loader2 className="h-5 w-5 text-[var(--color-primary)] animate-spin flex-shrink-0" />
-                ) : ["evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) ? (
-                  <CheckCircle2 className="h-5 w-5 text-[var(--color-success)] flex-shrink-0" />
-                ) : (
-                  <div className="h-5 w-5 rounded-full border-2 border-gray-300 flex-shrink-0" />
-                )}
-                <div className={`text-sm flex-1 ${
-                  autoProcessStatus.step === "chunking_c" ? "text-[var(--color-primary)] font-medium" :
-                  ["evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) ? "text-[var(--color-success)]" :
-                  "text-gray-500"
-                }`}>
-                  <span>
-                    {["evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step)
-                      ? `Estratégia C aplicada: ${t("prepare.autoProcess.steps.structural")}`
-                      : `Estratégia C: ${t("prepare.autoProcess.steps.structural")}`}
-                  </span>
-                  {autoProcessStatus.tables?.tempStructural && (
-                    <span className="ml-2 text-xs font-mono text-gray-400">({autoProcessStatus.tables.tempStructural})</span>
+
+                {/* Strategy C: Estrutural */}
+                <div className="flex items-center gap-3">
+                  {autoProcessStatus.step === "chunking_parallel" && autoProcessStatus.strategyStatus?.C === "processing" ? (
+                    <Loader2 className="h-5 w-5 text-[var(--color-primary)] animate-spin flex-shrink-0" />
+                  ) : ["evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) || autoProcessStatus.strategyStatus?.C === "completed" ? (
+                    <CheckCircle2 className="h-5 w-5 text-[var(--color-success)] flex-shrink-0" />
+                  ) : (
+                    <div className="h-5 w-5 rounded-full border-2 border-gray-300 flex-shrink-0" />
+                  )}
+                  <div className={`text-sm flex-1 ${
+                    autoProcessStatus.step === "chunking_parallel" && autoProcessStatus.strategyStatus?.C === "processing" ? "text-[var(--color-primary)] font-medium" :
+                    ["evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) || autoProcessStatus.strategyStatus?.C === "completed" ? "text-[var(--color-success)]" :
+                    "text-gray-500"
+                  }`}>
+                    <span>
+                      {["evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) || autoProcessStatus.strategyStatus?.C === "completed"
+                        ? `Estratégia C aplicada: ${t("prepare.autoProcess.steps.structural")}`
+                        : `Estratégia C: ${t("prepare.autoProcess.steps.structural")}`}
+                    </span>
+                    {autoProcessStatus.tables?.tempStructural && (
+                      <span className="ml-2 text-xs font-mono text-gray-400">({autoProcessStatus.tables.tempStructural})</span>
+                    )}
+                  </div>
+                  {autoProcessStatus.evaluationC && (
+                    <span className="text-xs text-gray-500">{autoProcessStatus.evaluationC.chunks_count} chunks</span>
+                  )}
+                  {autoProcessStatus.step === "chunking_parallel" && autoProcessStatus.strategyProgress?.C !== undefined && autoProcessStatus.strategyProgress.C < 100 && (
+                    <span className="text-xs font-mono text-[var(--color-primary)] bg-[var(--color-primary-light)] px-2 py-0.5 rounded">
+                      {autoProcessStatus.strategyProgress.C}%
+                    </span>
                   )}
                 </div>
-                {autoProcessStatus.evaluationC && (
-                  <span className="text-xs text-gray-500">{autoProcessStatus.evaluationC.chunks_count} chunks</span>
+                
+                {/* Parallel execution timer */}
+                {autoProcessStatus.step === "chunking_parallel" && stepStartTimes.chunking_parallel && !stepEndTimes.chunking_parallel && (
+                  <div className="flex justify-end">
+                    <span className="text-xs font-mono text-[var(--color-primary)] bg-[var(--color-primary-light)] px-2 py-0.5 rounded">
+                      {formatTime(currentStepTime)}
+                    </span>
+                  </div>
                 )}
-                {autoProcessStatus.step === "chunking_c" && stepStartTimes.chunking_c && !stepEndTimes.chunking_c && (
-                  <span className="text-xs font-mono text-[var(--color-primary)] bg-[var(--color-primary-light)] px-2 py-0.5 rounded">
-                    {formatTime(currentStepTime)}
-                  </span>
-                )}
-                {stepEndTimes.chunking_c && stepStartTimes.chunking_c && autoProcessStatus.step !== "chunking_c" && (
-                  <span className="text-xs font-mono text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
-                    {formatTime(Math.floor((stepEndTimes.chunking_c - stepStartTimes.chunking_c) / 1000))}
-                  </span>
+                {stepEndTimes.chunking_parallel && stepStartTimes.chunking_parallel && autoProcessStatus.step !== "chunking_parallel" && (
+                  <div className="flex justify-end">
+                    <span className="text-xs font-mono text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
+                      {formatTime(Math.floor((stepEndTimes.chunking_parallel - stepStartTimes.chunking_parallel) / 1000))}
+                    </span>
+                  </div>
                 )}
               </div>
               

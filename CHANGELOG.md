@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.4.0] - 2026-01-30 - **Parallel Chunking Strategies**
+
+### Features
+- **Parallel Execution**: Strategies A, B and C now run in parallel using `asyncio.gather`
+- **Real-time Progress**: Each strategy shows individual progress percentage during parallel execution
+- **Faster Processing**: Significant time reduction by processing 3 strategies simultaneously instead of sequentially
+
+### Backend
+- New `process_strategy` async function for each chunking strategy
+- `asyncio.gather` to run all 3 strategies concurrently
+- Background progress updater task to track parallel execution status
+- New status fields: `strategyProgress` and `strategyStatus` for real-time UI updates
+
+### Frontend
+- New step type `chunking_parallel` for parallel execution mode
+- Individual spinner/checkmark for each strategy based on completion status
+- Progress percentage shown per strategy during execution
+- Unified timer for all parallel strategies
+
+---
+
 ## [2.3.2] - 2026-01-30 - **Alignment Fix**
 
 ### Bug Fixes

@@ -3296,31 +3296,33 @@ Responda APENAS com JSON:
                questions=[q.get("pergunta", "") for q in eval_questions])
     
     # =====================================================================
-    # STEP 2-4: Test each strategy on samples
+    # STEP 2-4: Test each strategy on samples (PARALLEL EXECUTION)
     # =====================================================================
     strategies = [
-        {"name": "recursive", "func": chunk_recursive, "label": "Recursivo", "icon": "🔷"},
-        {"name": "fixed_size", "func": chunk_fixed_size, "label": "Tamanho Fixo", "icon": "🔶"},
-        {"name": "structural", "func": chunk_structural, "label": "Estrutural", "icon": "⭐"}
+        {"name": "recursive", "func": chunk_recursive, "label": "Recursivo", "icon": "🔷", "key": "A"},
+        {"name": "fixed_size", "func": chunk_fixed_size, "label": "Tamanho Fixo", "icon": "🔶", "key": "B"},
+        {"name": "structural", "func": chunk_structural, "label": "Estrutural", "icon": "⭐", "key": "C"}
     ]
     
     temp_tables = {}
     strategy_results = {}
     
-    for strat_idx, strategy in enumerate(strategies):
+    # Progress tracking for parallel execution
+    strategy_progress = {"A": 0, "B": 0, "C": 0}
+    strategy_status = {"A": "pending", "B": "pending", "C": "pending"}
+    
+    async def process_strategy(strategy: dict, strat_idx: int) -> dict:
+        """Process a single chunking strategy on sample files"""
         strat_name = strategy["name"]
         strat_func = strategy["func"]
         strat_label = strategy["label"]
         strat_icon = strategy["icon"]
+        strat_key = strategy["key"]
         
-        step_name = f"chunking_{['a', 'b', 'c'][strat_idx]}"
-        base_progress = 15 + strat_idx * 15
-        
-        update_job(step_name, f"{strat_label}: Iniciando...", base_progress, currentStrategy=strat_label)
-        print(f"\n{strat_icon} [{job_id}] Step {strat_idx + 2}: Testing {strat_label} on {sample_count} samples...")
+        strategy_status[strat_key] = "processing"
+        print(f"\n{strat_icon} [{job_id}] Testing {strat_label} on {sample_count} samples...")
         
         temp_table = f"{chunks_table}_temp_{strat_name[:3]}"
-        temp_tables[strat_name] = temp_table
         
         await execute_sql(config, warehouse_id, f"DROP TABLE IF EXISTS {temp_table}", job_id)
         
@@ -3337,9 +3339,7 @@ Responda APENAS com JSON:
         
         for file_idx, file_name in enumerate(sample_files):
             escaped_file = file_name.replace("'", "''")
-            progress = base_progress + int((file_idx + 1) / sample_count * 12)
-            update_job(step_name, f"{strat_label}: {file_name} ({file_idx + 1}/{sample_count})", progress,
-                      currentFile=file_name, currentFileIndex=file_idx + 1, sampleFiles=sample_count)
+            strategy_progress[strat_key] = int((file_idx + 1) / sample_count * 100)
             
             print(f"  📄 [{job_id}] {strat_label}: Sample {file_idx + 1}/{sample_count}: {file_name}")
             
@@ -3375,36 +3375,94 @@ Responda APENAS com JSON:
                         insert_sql = f"INSERT INTO {temp_table} VALUES {', '.join(batch)}"
                         await execute_sql(config, warehouse_id, insert_sql, job_id)
         
-        strategy_results[strat_name] = {
+        strategy_status[strat_key] = "completed"
+        strategy_progress[strat_key] = 100
+        print(f"  ✅ [{job_id}] {strat_label}: {chunk_count} chunks from {sample_count} samples")
+        
+        return {
+            "name": strat_name,
+            "label": strat_label,
+            "key": strat_key,
             "chunks_count": chunk_count,
             "sample_chunks": sample_chunks,
             "temp_table": temp_table
         }
+    
+    # Update UI to show parallel processing is starting
+    update_job("chunking_parallel", "Aplicando estratégias A, B e C em paralelo...", 15,
+               strategyProgress=strategy_progress, strategyStatus=strategy_status)
+    print(f"\n🚀 [{job_id}] Step 2-4: Running 3 strategies IN PARALLEL...")
+    
+    # Initialize tables structure
+    auto_process_jobs[job_id]["tables"] = {
+        "chunks": chunks_table,
+        "tempRecursive": f"{chunks_table}_temp_rec",
+        "tempFixedSize": f"{chunks_table}_temp_fix",
+        "tempStructural": f"{chunks_table}_temp_str"
+    }
+    
+    # Background task to update progress during parallel execution
+    async def update_parallel_progress():
+        while any(s != "completed" for s in strategy_status.values()):
+            avg_progress = sum(strategy_progress.values()) / 3
+            overall_progress = 15 + int(avg_progress * 0.40)  # 15-55%
+            
+            # Build status message showing which strategies are running
+            running = [k for k, v in strategy_status.items() if v == "processing"]
+            completed = [k for k, v in strategy_status.items() if v == "completed"]
+            
+            status_parts = []
+            if completed:
+                status_parts.append(f"✓ {', '.join(completed)}")
+            if running:
+                status_parts.append(f"⟳ {', '.join(running)}")
+            
+            status_msg = f"Estratégias em paralelo: {' | '.join(status_parts)}"
+            
+            update_job("chunking_parallel", status_msg, overall_progress,
+                      strategyProgress=strategy_progress, strategyStatus=strategy_status)
+            await asyncio.sleep(0.5)
+    
+    # Run all 3 strategies in parallel + progress updater
+    progress_task = asyncio.create_task(update_parallel_progress())
+    
+    try:
+        results = await asyncio.gather(
+            process_strategy(strategies[0], 0),
+            process_strategy(strategies[1], 1),
+            process_strategy(strategies[2], 2)
+        )
+    finally:
+        progress_task.cancel()
+        try:
+            await progress_task
+        except asyncio.CancelledError:
+            pass
+    
+    # Process results from parallel execution
+    for result in results:
+        strat_name = result["name"]
+        strat_key = result["key"]
         
-        # Update job with strategy results so frontend can show them during processing
-        strategy_key = ["A", "B", "C"][strat_idx]
-        strategy_eval_key = f"evaluation{strategy_key}"
+        temp_tables[strat_name] = result["temp_table"]
+        strategy_results[strat_name] = {
+            "chunks_count": result["chunks_count"],
+            "sample_chunks": result["sample_chunks"],
+            "temp_table": result["temp_table"]
+        }
+        
+        # Update job with strategy results
+        strategy_eval_key = f"evaluation{strat_key}"
         auto_process_jobs[job_id][strategy_eval_key] = {
             "strategy": strat_name,
-            "label": strat_label,
-            "chunks_count": chunk_count,
-            "sample_chunks": sample_chunks,
+            "label": result["label"],
+            "chunks_count": result["chunks_count"],
+            "sample_chunks": result["sample_chunks"],
             "avg_score": 0,  # Will be updated after evaluation
             "precision": 0
         }
-        
-        # Also update tables info
-        table_key_map = {"recursive": "tempRecursive", "fixed_size": "tempFixedSize", "structural": "tempStructural"}
-        if "tables" not in auto_process_jobs[job_id]:
-            auto_process_jobs[job_id]["tables"] = {
-                "chunks": chunks_table,
-                "tempRecursive": "",
-                "tempFixedSize": "",
-                "tempStructural": ""
-            }
-        auto_process_jobs[job_id]["tables"][table_key_map.get(strat_name, "")] = temp_table
-        
-        print(f"  ✅ [{job_id}] {strat_label}: {chunk_count} chunks from {sample_count} samples")
+    
+    print(f"✅ [{job_id}] All 3 strategies completed in parallel!")
     
     # =====================================================================
     # STEP 5: Evaluate strategies
