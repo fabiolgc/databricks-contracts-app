@@ -990,13 +990,54 @@ async def sync_vector_index(
         host = config["host"]
         token = config["token"]
         
-        # URL encode the index name
         encoded_index_name = index_name.replace(".", "%2E")
-        url = f"https://{host}/api/2.0/vector-search/indexes/{encoded_index_name}/sync"
+        
+        # First, check index status before attempting sync
+        status_url = f"https://{host}/api/2.0/vector-search/indexes/{encoded_index_name}"
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            status_response = await client.get(
+                status_url,
+                headers={"Authorization": f"Bearer {token}"}
+            )
+            
+            if status_response.status_code == 200:
+                data = status_response.json()
+                delta_sync = data.get("delta_sync_index_spec", {})
+                pipeline_type = delta_sync.get("pipeline_type", "")
+                
+                status_obj = data.get("status", {})
+                index_status = status_obj.get("index_status", "UNKNOWN")
+                ready = status_obj.get("ready", False)
+                
+                print(f"📊 [{request_id}] Index status: {index_status}, ready: {ready}, pipeline: {pipeline_type}")
+                
+                # If index is in CREATED state, it's still initializing - don't sync
+                if index_status == "CREATED":
+                    print(f"⏳ [{request_id}] Index is still initializing (CREATED state), waiting...")
+                    return {
+                        "success": True,
+                        "message": "Index is initializing, sync will happen automatically",
+                        "index_name": index_name,
+                        "status": "INITIALIZING",
+                        "index_status": index_status
+                    }
+                
+                # If index is already ready and synced, no need to trigger sync
+                if ready and index_status == "ONLINE":
+                    print(f"✅ [{request_id}] Index is already ready and online")
+                    return {
+                        "success": True,
+                        "message": "Index is already synced",
+                        "index_name": index_name,
+                        "status": "READY"
+                    }
+        
+        # Only trigger sync if index is in a syncable state
+        sync_url = f"https://{host}/api/2.0/vector-search/indexes/{encoded_index_name}/sync"
         
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(
-                url,
+                sync_url,
                 headers={
                     "Authorization": f"Bearer {token}",
                     "Content-Type": "application/json"
@@ -1010,11 +1051,22 @@ async def sync_vector_index(
                 return {
                     "success": True,
                     "message": "Sync triggered",
-                    "index_name": index_name
+                    "index_name": index_name,
+                    "status": "SYNCING"
                 }
             else:
                 error_text = response.text
                 print(f"⚠️ [{request_id}] Sync failed: {error_text}")
+                
+                # Check if error is due to state - return success with waiting status
+                if "CREATED" in error_text or "not ready" in error_text.lower():
+                    return {
+                        "success": True,
+                        "message": "Index is still initializing",
+                        "index_name": index_name,
+                        "status": "INITIALIZING"
+                    }
+                
                 return {
                     "success": False,
                     "error": f"Failed to trigger sync: {error_text}"
