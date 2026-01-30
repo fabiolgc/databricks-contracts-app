@@ -3296,8 +3296,9 @@ async def execute_auto_process(job_id: str, request: AutoProcessRequest, user_to
     # =====================================================================
     # STEP 1: Generate evaluation questions
     # =====================================================================
-    update_job("generating_questions", "Gerando perguntas de avaliação...", 5)
-    print(f"\n📝 [{job_id}] Step 1: Generating evaluation questions...")
+    LLM_MODEL = "databricks-meta-llama-3-3-70b-instruct"
+    update_job("generating_questions", f"Gerando perguntas de avaliação com LLM: {LLM_MODEL}", 5)
+    print(f"\n📝 [{job_id}] Step 1: Generating evaluation questions with {LLM_MODEL}...")
     
     sample_texts = []
     for sf in sample_files:
