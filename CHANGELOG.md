@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.2] - 2026-01-30 - **Alignment Fix**
+
+### Bug Fixes
+- Fixed evaluation step chevron and timer alignment (now aligned to right like other steps)
+
+---
+
 ## [2.3.1] - 2026-01-30 - **UI Improvements**
 
 ### Features
