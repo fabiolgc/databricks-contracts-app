@@ -115,7 +115,13 @@
       "indexCreated": "Index that will be created:",
       "configValid": "Configuration valid",
       "vsEndpoint": "Vector Search Endpoint",
-      "vsEndpointHint": "Vector Search endpoint name that will be used to create the index"
+      "vsEndpointHint": "Endpoint for processing vectors",
+      "embeddingModel": "Embedding Model",
+      "embeddingModelHint": "Model for generating vectors",
+      "indexSyncType": "Index Synchronization",
+      "indexSyncTypeHint": "How the index will be updated",
+      "syncTriggered": "Manual (on-demand)",
+      "syncContinuous": "Automatic (continuous)"
     },
     "step2": {
       "title": "2. Select Documents",

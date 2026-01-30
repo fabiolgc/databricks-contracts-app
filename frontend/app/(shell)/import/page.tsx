@@ -622,7 +622,10 @@ export default function ImportPage() {
       setVolumeFiles(data.files || [])
       setVolumeFilesTotal(data.total || 0)
       setVolumeFilesPage(page)
-      setSelectedVolumeFiles(new Set())
+      // Keep selection when changing pages (only reset on initial load)
+      if (page === 1 && selectedVolumeFiles.size === 0) {
+        setSelectedVolumeFiles(new Set())
+      }
     } catch (error) {
       console.error("Error loading volume files:", error)
       toast.error(t("common.error"))
@@ -643,11 +646,23 @@ export default function ImportPage() {
     })
   }
 
-  function toggleAllVolumeFiles() {
-    if (selectedVolumeFiles.size === volumeFiles.length) {
+  async function toggleAllVolumeFiles() {
+    // If all files from all pages are selected, deselect all
+    if (selectedVolumeFiles.size === volumeFilesTotal) {
       setSelectedVolumeFiles(new Set())
     } else {
-      setSelectedVolumeFiles(new Set(volumeFiles.map(f => f.name)))
+      // Fetch all file names from all pages
+      try {
+        const response = await fetch(`/api/volume/files?offset=0&limit=${volumeFilesTotal}`)
+        if (response.ok) {
+          const data = await response.json()
+          setSelectedVolumeFiles(new Set(data.files.map((f: VolumeFile) => f.name)))
+        }
+      } catch (error) {
+        console.error("Error fetching all files:", error)
+        // Fallback to selecting only current page
+        setSelectedVolumeFiles(new Set(volumeFiles.map(f => f.name)))
+      }
     }
   }
 
@@ -692,18 +707,38 @@ export default function ImportPage() {
   }
 
   // Function to add files from volume to the import list
-  function addVolumeFilesToImportList() {
+  async function addVolumeFilesToImportList() {
     if (selectedVolumeFiles.size === 0) return
 
     const existingFileNames = new Set(files.map(f => f.name))
     const duplicates: string[] = []
     const filesToAdd: FileWithStatus[] = []
 
+    // Fetch all files from API to get details for files not on current page
+    let allVolumeFiles: VolumeFile[] = volumeFiles
+    
+    // Check if we need to fetch more files (selected files not in current page)
+    const selectedNotInCurrentPage = Array.from(selectedVolumeFiles).some(
+      fileName => !volumeFiles.find(f => f.name === fileName)
+    )
+    
+    if (selectedNotInCurrentPage) {
+      try {
+        const response = await fetch(`/api/volume/files?offset=0&limit=${volumeFilesTotal}`)
+        if (response.ok) {
+          const data = await response.json()
+          allVolumeFiles = data.files || []
+        }
+      } catch (error) {
+        console.error("Error fetching all volume files:", error)
+      }
+    }
+
     selectedVolumeFiles.forEach(fileName => {
       if (existingFileNames.has(fileName)) {
         duplicates.push(fileName)
       } else {
-        const volumeFile = volumeFiles.find(f => f.name === fileName)
+        const volumeFile = allVolumeFiles.find(f => f.name === fileName)
         if (volumeFile) {
           filesToAdd.push({
             id: crypto.randomUUID(),
@@ -1108,7 +1143,12 @@ export default function ImportPage() {
                         <th className="px-4 py-2 text-left">
                           <input
                             type="checkbox"
-                            checked={selectedVolumeFiles.size === volumeFiles.length && volumeFiles.length > 0}
+                            checked={selectedVolumeFiles.size === volumeFilesTotal && volumeFilesTotal > 0}
+                            ref={(el) => {
+                              if (el) {
+                                el.indeterminate = selectedVolumeFiles.size > 0 && selectedVolumeFiles.size < volumeFilesTotal
+                              }
+                            }}
                             onChange={toggleAllVolumeFiles}
                             className="rounded border-gray-300 text-[var(--color-primary)] focus:ring-[var(--color-primary)]"
                           />

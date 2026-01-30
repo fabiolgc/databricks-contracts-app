@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { 
   Database, 
   FileText, 
@@ -80,6 +80,14 @@ interface ProcessingStatus {
   progress: number
   totalFiles: number
   processedFiles: number
+}
+
+interface FileProcessingResult {
+  fileName: string
+  status: "pending" | "processing" | "success" | "error"
+  chunks?: number
+  time?: number
+  error?: string
 }
 
 // Types for chunking preview
@@ -223,6 +231,12 @@ export default function PreparePage() {
   // State for tracking processed files (to filter "Ver Chunks" view)
   const [lastProcessedFiles, setLastProcessedFiles] = useState<string[]>([])
   
+  // State for file processing results (unified log)
+  const [fileProcessingResults, setFileProcessingResults] = useState<FileProcessingResult[]>([])
+  
+  // Ref for auto-scrolling file list
+  const fileListRef = useRef<HTMLDivElement>(null)
+  
   // State for table configuration validation
   const [tableExists, setTableExists] = useState<boolean | null>(null)
   const [existingRecords, setExistingRecords] = useState<number>(0)
@@ -245,9 +259,31 @@ export default function PreparePage() {
   // State for process confirmation modal
   const [showProcessConfirmModal, setShowProcessConfirmModal] = useState(false)
   
-  // State for Vector Search endpoint
+  // State for Vector Search endpoint (loaded from environment)
   const [vsEndpointName, setVsEndpointName] = useState("")
-  const [initialVsEndpointName, setInitialVsEndpointName] = useState("")
+  
+  // State for Vector Index configuration
+  const [embeddingModel, setEmbeddingModel] = useState("databricks-gte-large-en")
+  const [indexSyncType, setIndexSyncType] = useState<"TRIGGERED" | "CONTINUOUS">("TRIGGERED")
+  
+  // State for vectorization progress with step times
+  const [vectorizationStatus, setVectorizationStatus] = useState<{
+    step: "idle" | "checking_endpoint" | "creating_endpoint" | "waiting_endpoint" | "processing_chunks" | "creating_index" | "completed" | "error"
+    message: string
+    progress: number
+    stepTimes: {
+      endpoint?: number
+      chunks?: number
+      index?: number
+    }
+  }>({ step: "idle", message: "", progress: 0, stepTimes: {} })
+  
+  // Track step start times
+  const [stepStartTimes, setStepStartTimes] = useState<{
+    endpoint?: number
+    chunks?: number
+    index?: number
+  }>({})
 
   // Load environment config on mount - use base table name (without _parsed or _chunks suffix)
   useEffect(() => {
@@ -257,6 +293,8 @@ export default function PreparePage() {
         const response = await fetch("/api/config")
         if (response.ok) {
           const config = await response.json()
+          console.log("Loaded config:", config)
+          
           // Use base table name - backend will add _parsed or _chunks suffix as needed
           const baseTableName = "contracts"
           
@@ -274,16 +312,26 @@ export default function PreparePage() {
             // Mark step 1 as completed since config is auto-loaded
             setCompletedSteps(prev => new Set([...prev, 1]))
           }
+          
+          // Load Vector Search endpoint from environment config
+          if (config.vectorSearchEndpoint) {
+            console.log("Setting Vector Search endpoint:", config.vectorSearchEndpoint)
+            setVsEndpointName(config.vectorSearchEndpoint)
+          }
         }
         
-        // Load app config (including vs_endpoint_name)
+        // Load app config (embedding_model, index_sync_type)
         const appConfigResponse = await fetch("/api/app-config")
         if (appConfigResponse.ok) {
           const appConfigData = await appConfigResponse.json()
           if (appConfigData.success && appConfigData.config) {
-            const endpointName = appConfigData.config.vs_endpoint_name || ""
-            setVsEndpointName(endpointName)
-            setInitialVsEndpointName(endpointName)
+            // Load embedding model and sync type
+            if (appConfigData.config.embedding_model) {
+              setEmbeddingModel(appConfigData.config.embedding_model)
+            }
+            if (appConfigData.config.index_sync_type) {
+              setIndexSyncType(appConfigData.config.index_sync_type as "TRIGGERED" | "CONTINUOUS")
+            }
           }
         }
       } catch (error) {
@@ -318,6 +366,21 @@ export default function PreparePage() {
       if (interval) clearInterval(interval)
     }
   }, [processingStatus.status, processingStartTime, currentFileStartTime])
+
+  // Auto-scroll file list to current processing file
+  useEffect(() => {
+    if (fileListRef.current) {
+      const processingIndex = fileProcessingResults.findIndex(f => f.status === "processing")
+      if (processingIndex >= 0) {
+        const container = fileListRef.current
+        const items = container.children
+        if (items[processingIndex]) {
+          const item = items[processingIndex] as HTMLElement
+          item.scrollIntoView({ behavior: "smooth", block: "nearest" })
+        }
+      }
+    }
+  }, [fileProcessingResults])
 
   // Load Vector Search endpoints
   // Load files from volume
@@ -372,20 +435,6 @@ export default function PreparePage() {
       setTableExists(data.exists)
       setExistingRecords(data.recordCount || 0)
       setIsConfigSaved(true)
-      
-      // Save vs_endpoint_name if changed
-      if (vsEndpointName !== initialVsEndpointName) {
-        try {
-          await fetch("/api/app-config", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ vs_endpoint_name: vsEndpointName })
-          })
-          setInitialVsEndpointName(vsEndpointName)
-        } catch (e) {
-          console.error("Error saving vs_endpoint_name:", e)
-        }
-      }
       
       if (data.exists) {
         toast.success("Tabela encontrada!", {
@@ -689,6 +738,11 @@ export default function PreparePage() {
       return
     }
     
+    if (!vsEndpointName) {
+      toast.warning("Configure o endpoint do Vector Search primeiro")
+      return
+    }
+    
     // Always proceed with processing - will delete existing chunks and create new ones
     await executeProcessing()
   }
@@ -709,16 +763,54 @@ export default function PreparePage() {
     setCurrentFileTime(0)
     setTotalProcessingTime(0)
     
+    // Reset vectorization status and step times
+    setVectorizationStatus({ step: "idle", message: "", progress: 0, stepTimes: {} })
+    setStepStartTimes({})
+    
     setProcessingStatus({
       status: "processing",
-      message: "Inicializando tabelas...",
+      message: "Verificando Vector Search endpoint...",
       progress: 0,
       totalFiles: filesToProcess.length,
       processedFiles: 0
     })
     
+    // Track if we can use Vector Search
+    let canUseVectorSearch = vsEndpointName ? true : false
+    let vectorSearchError = vsEndpointName ? "" : "Endpoint não configurado"
+    
+    // Track step times locally
+    const stepTimesLocal: { endpoint?: number; chunks?: number; index?: number } = {}
+    let chunksStartTime = Date.now()
+    
     try {
-      // Step 1: Initialize tables (always overwrite mode - delete existing chunks and create new)
+      // =========================================================================
+      // Vector Search: Skip endpoint check, assume it exists (configured in app.yaml)
+      // =========================================================================
+      if (vsEndpointName) {
+        // Endpoint is pre-configured, mark as instant
+        stepTimesLocal.endpoint = 0
+        chunksStartTime = Date.now()
+        setStepStartTimes({ endpoint: startTime, chunks: chunksStartTime })
+        setVectorizationStatus({
+          step: "processing_chunks",
+          message: `Usando endpoint: ${vsEndpointName}`,
+          progress: 10,
+          stepTimes: { endpoint: 0 }
+        })
+      }
+      
+      // =========================================================================
+      // STEP 1: Initialize tables (always overwrite mode - delete existing chunks and create new)
+      // =========================================================================
+      setProcessingStatus({
+        status: "processing",
+        message: "Inicializando tabelas...",
+        progress: 0,
+        totalFiles: filesToProcess.length,
+        processedFiles: 0
+      })
+      
       const initResponse = await fetch("/api/process/init", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -761,13 +853,26 @@ export default function PreparePage() {
       const errors: Array<{ file: string; error: string }> = []
       const totalFiles = actualFilesToProcess.length
       
+      // Initialize file processing results
+      const initialResults: FileProcessingResult[] = actualFilesToProcess.map((f: string) => ({
+        fileName: f,
+        status: "pending" as const
+      }))
+      setFileProcessingResults(initialResults)
+      
       for (let i = 0; i < totalFiles; i++) {
         const fileName = actualFilesToProcess[i]
         const fileNumber = i + 1
         
         // Reset file timer for each new file
-        setCurrentFileStartTime(Date.now())
+        const fileStartTime = Date.now()
+        setCurrentFileStartTime(fileStartTime)
         setCurrentFileTime(0)
+        
+        // Update file status to processing
+        setFileProcessingResults(prev => prev.map((r, idx) => 
+          idx === i ? { ...r, status: "processing" as const } : r
+        ))
         
         // Update status BEFORE processing - show which file is being processed
         setProcessingStatus({
@@ -796,10 +901,21 @@ export default function PreparePage() {
           }
           
           const fileResult = await fileResponse.json()
+          const fileTime = Math.floor((Date.now() - fileStartTime) / 1000)
           
           if (fileResult.success) {
             processedCount++
             totalChunks += fileResult.chunksCreated || 0
+            
+            // Update file result with success
+            setFileProcessingResults(prev => prev.map((r, idx) => 
+              idx === i ? { 
+                ...r, 
+                status: "success" as const, 
+                chunks: fileResult.chunksCreated || 0,
+                time: fileTime
+              } : r
+            ))
             
             // Update progress AFTER processing - show completion
             setProcessingStatus({
@@ -809,13 +925,18 @@ export default function PreparePage() {
               totalFiles: totalFiles,
               processedFiles: processedCount
             })
-            
-            toast.success(`Arquivo ${fileNumber}/${totalFiles}: ${fileName}`, {
-              description: `${fileResult.textLength?.toLocaleString() || 0} caracteres → ${fileResult.chunksCreated} segmentos`,
-              duration: 3000
-            })
           } else {
             errors.push({ file: fileName, error: fileResult.error || "Erro desconhecido" })
+            
+            // Update file result with error
+            setFileProcessingResults(prev => prev.map((r, idx) => 
+              idx === i ? { 
+                ...r, 
+                status: "error" as const, 
+                error: fileResult.error || "Erro desconhecido",
+                time: fileTime
+              } : r
+            ))
             
             // Update progress even on error
             setProcessingStatus({
@@ -825,15 +946,21 @@ export default function PreparePage() {
               totalFiles: totalFiles,
               processedFiles: processedCount
             })
-            
-            toast.error(`Erro no arquivo ${fileNumber}/${totalFiles}`, {
-              description: `${fileName}: ${fileResult.error}`,
-              duration: 5000
-            })
           }
         } catch (fileError) {
           const errorMsg = fileError instanceof Error ? fileError.message : "Erro desconhecido"
           errors.push({ file: fileName, error: errorMsg })
+          const fileTime = Math.floor((Date.now() - fileStartTime) / 1000)
+          
+          // Update file result with error
+          setFileProcessingResults(prev => prev.map((r, idx) => 
+            idx === i ? { 
+              ...r, 
+              status: "error" as const, 
+              error: errorMsg,
+              time: fileTime
+            } : r
+          ))
           
           // Update progress even on exception
           setProcessingStatus({
@@ -843,16 +970,11 @@ export default function PreparePage() {
             totalFiles: totalFiles,
             processedFiles: processedCount
           })
-          
-          toast.error(`Erro no arquivo ${fileNumber}/${totalFiles}`, {
-            description: `${fileName}: ${errorMsg}`,
-            duration: 5000
-          })
         }
       }
       
-      // Final status
-      const success = errors.length === 0
+      // Chunking status
+      const chunkingSuccess = errors.length === 0
       
       // Save the list of successfully processed files (those without errors)
       const successfullyProcessed = actualFilesToProcess.filter(
@@ -860,19 +982,283 @@ export default function PreparePage() {
       )
       setLastProcessedFiles(successfullyProcessed)
       
+      if (!chunkingSuccess) {
+        setProcessingStatus({
+          status: "error",
+          message: `Concluído com ${errors.length} erro(s). ${totalChunks} segmentos criados.`,
+          progress: 100,
+          totalFiles: actualFilesToProcess.length,
+          processedFiles: processedCount
+        })
+        setVectorizationStatus(prev => ({
+          step: "error",
+          message: "Erros no processamento dos chunks. Vector Index não será criado.",
+          progress: 0,
+          stepTimes: prev.stepTimes
+        }))
+        return
+      }
+      
+      // =========================================================================
+      // STEP 3: Create Vector Index (only if Vector Search is available)
+      // =========================================================================
+      let indexCreated = false
+      const indexName = `${tableConfig.catalog}.${tableConfig.schema}.${tableConfig.tableName}_vs`
+      
+      // Calculate chunks processing time
+      const chunksEndTime = Date.now()
+      stepTimesLocal.chunks = Math.floor((chunksEndTime - chunksStartTime) / 1000)
+      const indexStartTime = Date.now()
+      
+      if (canUseVectorSearch && vsEndpointName) {
+        setStepStartTimes(prev => ({ ...prev, index: indexStartTime }))
+        setVectorizationStatus(prev => ({
+          step: "creating_index",
+          message: "Criando Vector Index...",
+          progress: 80,
+          stepTimes: { ...prev.stepTimes, endpoint: stepTimesLocal.endpoint, chunks: stepTimesLocal.chunks }
+        }))
+        
+        setProcessingStatus({
+          status: "processing",
+          message: `Segmentos criados! Criando Vector Index...`,
+          progress: 95,
+          totalFiles: actualFilesToProcess.length,
+          processedFiles: processedCount
+        })
+        
+        try {
+          // Helper function to wait for index sync
+          const waitForIndexSync = async (maxWaitSeconds: number = 300): Promise<{ success: boolean; message: string }> => {
+            const pollInterval = 5000 // 5 seconds
+            const maxAttempts = Math.ceil((maxWaitSeconds * 1000) / pollInterval)
+            let attempts = 0
+            
+            while (attempts < maxAttempts) {
+              attempts++
+              
+              const statusResponse = await fetch("/api/vector-search/index/status", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  tableConfig,
+                  endpoint_name: vsEndpointName,
+                  embedding_model: embeddingModel,
+                  sync_type: indexSyncType
+                })
+              })
+              
+              const statusResult = await statusResponse.json()
+              
+              if (statusResult.success) {
+                const indexStatus = statusResult.index_status || ""
+                
+                // Update UI with current status
+                setVectorizationStatus(prev => ({
+                  ...prev,
+                  message: `Sincronizando index... (${indexStatus})`,
+                }))
+                
+                // Check if sync is complete
+                if (statusResult.ready || indexStatus === "ONLINE") {
+                  return { success: true, message: "Sync completed" }
+                }
+                
+                // Check for error states
+                if (indexStatus === "FAILED" || indexStatus === "ERROR") {
+                  return { success: false, message: `Sync failed: ${statusResult.message || indexStatus}` }
+                }
+              }
+              
+              // Wait before next poll
+              await new Promise(resolve => setTimeout(resolve, pollInterval))
+            }
+            
+            return { success: false, message: "Sync timeout - index may still be syncing in background" }
+          }
+          
+          // First check if index already exists
+          const indexCheckResponse = await fetch("/api/vector-search/index/check", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              tableConfig,
+              endpoint_name: vsEndpointName,
+              embedding_model: embeddingModel,
+              sync_type: indexSyncType
+            })
+          })
+          
+          const indexCheckResult = await indexCheckResponse.json()
+          
+          if (indexCheckResult.exists) {
+            // Index already exists - trigger sync and wait
+            setVectorizationStatus(prev => ({
+              ...prev,
+              message: `Index "${indexName}" já existe. Sincronizando...`,
+            }))
+            
+            // Trigger sync
+            const syncResponse = await fetch("/api/vector-search/index/sync", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                tableConfig,
+                endpoint_name: vsEndpointName,
+                embedding_model: embeddingModel,
+                sync_type: indexSyncType
+              })
+            })
+            
+            const syncResult = await syncResponse.json()
+            
+            if (syncResult.success) {
+              // Wait for sync to complete
+              const syncWaitResult = await waitForIndexSync(180) // 3 min max for existing index
+              
+              const indexEndTime = Date.now()
+              stepTimesLocal.index = Math.floor((indexEndTime - indexStartTime) / 1000)
+              
+              if (syncWaitResult.success) {
+                setVectorizationStatus(prev => ({
+                  step: "completed",
+                  message: `✓ Vector Index "${indexName}" sincronizado!`,
+                  progress: 100,
+                  stepTimes: { ...prev.stepTimes, index: stepTimesLocal.index }
+                }))
+                toast.success(`Vector Index "${indexName}" sincronizado!`, {
+                  duration: 6000
+                })
+              } else {
+                setVectorizationStatus(prev => ({
+                  step: "completed",
+                  message: `✓ Vector Index "${indexName}" - sync em andamento`,
+                  progress: 100,
+                  stepTimes: { ...prev.stepTimes, index: stepTimesLocal.index }
+                }))
+                toast.info(`Sync do index iniciado. Pode continuar em background.`, {
+                  duration: 6000
+                })
+              }
+              indexCreated = true
+            } else {
+              // Sync trigger failed, but index exists
+              const indexEndTime = Date.now()
+              stepTimesLocal.index = Math.floor((indexEndTime - indexStartTime) / 1000)
+              setVectorizationStatus(prev => ({
+                step: "completed",
+                message: `✓ Vector Index "${indexName}" já existe (sync automático)`,
+                progress: 100,
+                stepTimes: { ...prev.stepTimes, index: stepTimesLocal.index }
+              }))
+              toast.info(`Vector Index "${indexName}" já existe. Sync será automático.`)
+              indexCreated = true
+            }
+          } else {
+            // Create new index
+            const indexCreateResponse = await fetch("/api/vector-search/index/create", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                tableConfig,
+                endpoint_name: vsEndpointName,
+                embedding_model: embeddingModel,
+                sync_type: indexSyncType
+              })
+            })
+            
+            const indexCreateResult = await indexCreateResponse.json()
+            
+            if (indexCreateResult.success) {
+              // Wait for sync to complete
+              setVectorizationStatus(prev => ({
+                ...prev,
+                message: `Index criado! Aguardando sync...`,
+              }))
+              
+              const syncWaitResult = await waitForIndexSync(300) // 5 min max for new index
+              
+              const indexEndTime = Date.now()
+              stepTimesLocal.index = Math.floor((indexEndTime - indexStartTime) / 1000)
+              
+              if (syncWaitResult.success) {
+                setVectorizationStatus(prev => ({
+                  step: "completed",
+                  message: `✓ Vector Index "${indexName}" criado e sincronizado!`,
+                  progress: 100,
+                  stepTimes: { ...prev.stepTimes, index: stepTimesLocal.index }
+                }))
+                toast.success(`Vector Index "${indexName}" pronto!`, {
+                  description: `Modelo: ${embeddingModel}, Sync: ${indexSyncType}`,
+                  duration: 6000
+                })
+              } else {
+                setVectorizationStatus(prev => ({
+                  step: "completed",
+                  message: `✓ Vector Index "${indexName}" criado - sync em andamento`,
+                  progress: 100,
+                  stepTimes: { ...prev.stepTimes, index: stepTimesLocal.index }
+                }))
+                toast.info(`Index criado! Sync pode continuar em background.`, {
+                  description: syncWaitResult.message,
+                  duration: 8000
+                })
+              }
+              indexCreated = true
+            } else {
+              setVectorizationStatus(prev => ({
+                step: "error",
+                message: `Erro ao criar Vector Index: ${indexCreateResult.error}`,
+                progress: 0,
+                stepTimes: prev.stepTimes
+              }))
+              toast.warning("Erro ao criar Vector Index", {
+                description: indexCreateResult.error,
+                duration: 8000
+              })
+            }
+          }
+        } catch (indexError) {
+          setVectorizationStatus(prev => ({
+            step: "error",
+            message: `Erro ao criar Vector Index: ${indexError instanceof Error ? indexError.message : "Erro desconhecido"}`,
+            progress: 0,
+            stepTimes: prev.stepTimes
+          }))
+          toast.warning("Erro ao criar Vector Index", {
+            description: "Os chunks foram criados com sucesso.",
+            duration: 6000
+          })
+        }
+      } else {
+        // Vector Search not available - chunks only
+        setVectorizationStatus(prev => ({
+          step: "completed",
+          message: vectorSearchError || "Vector Search não configurado. Apenas chunks foram criados.",
+          progress: 100,
+          stepTimes: { ...prev.stepTimes, chunks: stepTimesLocal.chunks }
+        }))
+      }
+      
+      // Final status
+      const finalSuccess = canUseVectorSearch ? indexCreated : true // Success if chunks created (even without index)
       setProcessingStatus({
-        status: success ? "completed" : "error",
-        message: success 
-          ? `Processamento concluído! ${totalChunks} segmentos criados em ${processedCount} arquivo(s).`
-          : `Concluído com ${errors.length} erro(s). ${totalChunks} segmentos criados.`,
+        status: finalSuccess ? "completed" : "error",
+        message: canUseVectorSearch 
+          ? (indexCreated 
+            ? `Processamento concluído! ${totalChunks} segmentos criados e Vector Index pronto.`
+            : `Segmentos criados mas erro no Vector Index.`)
+          : `Processamento concluído! ${totalChunks} segmentos criados. (Vector Index não disponível)`,
         progress: 100,
         totalFiles: actualFilesToProcess.length,
         processedFiles: processedCount
       })
       
-      if (success) {
+      if (finalSuccess) {
         toast.success("Processamento concluído!", {
-          description: `${processedCount} arquivos processados, ${totalChunks} segmentos criados`,
+          description: canUseVectorSearch && indexCreated
+            ? `${processedCount} arquivos → ${totalChunks} segmentos → Vector Index pronto`
+            : `${processedCount} arquivos → ${totalChunks} segmentos criados`,
           duration: 6000
         })
       }
@@ -892,6 +1278,13 @@ export default function PreparePage() {
         totalFiles: filesToProcess.length,
         processedFiles: 0
       })
+      
+      setVectorizationStatus(prev => ({
+        step: "error",
+        message: error instanceof Error ? error.message : "Erro no processamento",
+        progress: 0,
+        stepTimes: prev.stepTimes
+      }))
       
       toast.error("Erro no processamento", {
         description: error instanceof Error ? error.message : "Erro desconhecido",
@@ -1336,23 +1729,47 @@ export default function PreparePage() {
                 </div>
               </div>
               
-              {/* Vector Search Endpoint */}
-              <div className="mt-4">
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  {t("prepare.step1.vsEndpoint")}
-                </label>
-                <input
-                  type="text"
-                  value={vsEndpointName}
-                  onChange={(e) => {
-                    setVsEndpointName(e.target.value)
-                    setIsConfigSaved(false)
-                    setCompletedSteps(prev => { const newSet = new Set(prev); newSet.delete(1); return newSet })
-                  }}
-                  placeholder="ex: one-env-shared-endpoint-1"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
-                />
-                <p className="mt-1 text-xs text-gray-500">{t("prepare.step1.vsEndpointHint")}</p>
+              {/* Vector Search Configuration */}
+              <div className="mt-4 grid grid-cols-2 gap-4">
+                {/* Embedding Model */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    {t("prepare.step1.embeddingModel")}
+                  </label>
+                  <select
+                    value={embeddingModel}
+                    onChange={(e) => {
+                      setEmbeddingModel(e.target.value)
+                      setIsConfigSaved(false)
+                      setCompletedSteps(prev => { const newSet = new Set(prev); newSet.delete(1); return newSet })
+                    }}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)] bg-white"
+                  >
+                    <option value="databricks-gte-large-en">databricks-gte-large-en</option>
+                    <option value="databricks-bge-large-en">databricks-bge-large-en</option>
+                  </select>
+                  <p className="mt-1 text-xs text-gray-500">{t("prepare.step1.embeddingModelHint")}</p>
+                </div>
+                
+                {/* Sync Type */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    {t("prepare.step1.indexSyncType")}
+                  </label>
+                  <select
+                    value={indexSyncType}
+                    onChange={(e) => {
+                      setIndexSyncType(e.target.value as "TRIGGERED" | "CONTINUOUS")
+                      setIsConfigSaved(false)
+                      setCompletedSteps(prev => { const newSet = new Set(prev); newSet.delete(1); return newSet })
+                    }}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)] bg-white"
+                  >
+                    <option value="TRIGGERED">{t("prepare.step1.syncTriggered")}</option>
+                    <option value="CONTINUOUS">{t("prepare.step1.syncContinuous")}</option>
+                  </select>
+                  <p className="mt-1 text-xs text-gray-500">{t("prepare.step1.indexSyncTypeHint")}</p>
+                </div>
               </div>
 
               {/* Preview das tabelas que serão criadas/usadas */}
@@ -2045,72 +2462,208 @@ export default function PreparePage() {
           </div>
           
           <div className="p-4">
-            {/* Status Display */}
-            <div className={`mb-4 p-4 rounded-lg ${
-              processingStatus.status === "completed" ? "bg-[var(--color-success-light)] border border-[var(--color-success-lighter)]" :
-              processingStatus.status === "error" ? "bg-[var(--color-primary-light)] border border-[var(--color-primary-lighter)]" :
-              "bg-[var(--color-accent-light)] border border-[var(--color-accent-lighter)]"
-            }`}>
-              <div className="flex items-center gap-2">
-                {processingStatus.status === "processing" && (
-                  <Loader2 className="h-5 w-5 text-[var(--color-accent)] animate-spin" />
-                )}
-                {processingStatus.status === "completed" && (
-                  <CheckCircle2 className="h-5 w-5 text-[var(--color-success)]" />
-                )}
-                {processingStatus.status === "error" && (
-                  <XCircle className="h-5 w-5 text-red-600" />
-                )}
-                <span className={`text-sm font-medium ${
-                  processingStatus.status === "completed" ? "text-[var(--color-success)]" :
-                  processingStatus.status === "error" ? "text-red-600" :
-                  "text-[var(--color-accent)]"
-                }`}>
-                  {processingStatus.message}
-                </span>
-              </div>
-            </div>
-            
-            {/* Timers */}
-            {processingStatus.status === "processing" && (
-              <div className="mb-4 flex items-center justify-center gap-6 text-sm">
-                <div className="flex items-center gap-2">
-                  <span className="text-gray-500">Arquivo atual:</span>
-                  <span className="font-mono text-[var(--color-primary)] font-medium bg-[var(--color-primary-light)] px-2 py-0.5 rounded">
-                    {formatTime(currentFileTime)}
+            {/* File Processing Results - Card Arquivos */}
+            {fileProcessingResults.length > 0 && (
+              <div className="mb-4 p-4 rounded-lg bg-white border border-gray-200">
+                <div className="flex items-center gap-2 mb-3">
+                  <FileText className="h-4 w-4 text-gray-500" />
+                  <span className="text-sm font-medium text-gray-700">Arquivos</span>
+                  <span className="text-sm text-gray-500">
+                    {fileProcessingResults.filter(f => f.status === "success").length} de {fileProcessingResults.length}
                   </span>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-gray-500">Tempo total:</span>
-                  <span className="font-mono text-[var(--color-accent)] font-medium bg-[var(--color-accent-light)] px-2 py-0.5 rounded">
-                    {formatTime(totalProcessingTime)}
-                  </span>
+                <div ref={fileListRef} className="space-y-2 max-h-48 overflow-y-auto">
+                  {fileProcessingResults.map((file, idx) => (
+                    <div key={idx} className="flex items-center gap-3 text-sm py-1.5">
+                      {/* Time first (like in image) */}
+                      {file.status === "processing" && (
+                        <span className="font-mono text-[var(--color-primary)] font-medium min-w-[45px]">
+                          {formatTime(currentFileTime)}
+                        </span>
+                      )}
+                      {file.status === "success" && file.time !== undefined && (
+                        <span className="font-mono text-[var(--color-success)] font-medium min-w-[45px]">
+                          {formatTime(file.time)}
+                        </span>
+                      )}
+                      {file.status === "error" && file.time !== undefined && (
+                        <span className="font-mono text-red-500 font-medium min-w-[45px]">
+                          {formatTime(file.time)}
+                        </span>
+                      )}
+                      {file.status === "pending" && (
+                        <span className="min-w-[45px]" />
+                      )}
+                      
+                      {/* Status icon */}
+                      {file.status === "pending" && (
+                        <div className="h-4 w-4 rounded-full border-2 border-gray-300 flex-shrink-0" />
+                      )}
+                      {file.status === "processing" && (
+                        <Loader2 className="h-4 w-4 text-[var(--color-primary)] animate-spin flex-shrink-0" />
+                      )}
+                      {file.status === "success" && (
+                        <CheckCircle2 className="h-4 w-4 text-[var(--color-success)] flex-shrink-0" />
+                      )}
+                      {file.status === "error" && (
+                        <XCircle className="h-4 w-4 text-red-500 flex-shrink-0" />
+                      )}
+                      
+                      {/* File name */}
+                      <span className={`truncate ${
+                        file.status === "processing" ? "text-[var(--color-primary)] font-medium" :
+                        file.status === "success" ? "text-[var(--color-success)]" :
+                        file.status === "error" ? "text-red-600" : "text-gray-500"
+                      }`}>
+                        {file.fileName}
+                      </span>
+                      
+                      {/* Chunks count (success only) */}
+                      {file.status === "success" && file.chunks !== undefined && (
+                        <span className="text-xs text-gray-500 ml-auto">{file.chunks} segmentos</span>
+                      )}
+                    </div>
+                  ))}
                 </div>
               </div>
             )}
             
-            {/* Final time on completion */}
-            {processingStatus.status === "completed" && totalProcessingTime > 0 && (
-              <div className="mb-4 flex items-center justify-center gap-2 text-sm">
-                <span className="text-gray-500">Tempo total de processamento:</span>
-                <span className="font-mono text-[var(--color-success)] font-medium bg-[var(--color-success-light)] px-2 py-0.5 rounded">
-                  {formatTime(totalProcessingTime)}
-                </span>
-              </div>
-            )}
-            
-            {/* Progress bar */}
-            {processingStatus.status === "processing" && (
-              <div className="mt-4">
-                <div className="w-full bg-gray-200 rounded-full h-2">
-                  <div 
-                    className="bg-[var(--color-primary)] h-2 rounded-full transition-all duration-300"
-                    style={{ width: `${processingStatus.progress}%` }}
-                  />
+            {/* Vectorization Progress - Card Vector Search */}
+            {vectorizationStatus.step !== "idle" && (
+              <div className="p-4 rounded-lg bg-white border border-gray-200">
+                <div className="flex items-center gap-2 mb-3">
+                  <Database className="h-4 w-4 text-[var(--color-accent)]" />
+                  <span className="text-sm font-medium text-gray-700">Vector Search</span>
                 </div>
-                <p className="text-xs text-gray-600 mt-1 text-center">
-                  {processingStatus.processedFiles} de {processingStatus.totalFiles} documentos processados
-                </p>
+                
+                {/* Vectorization Steps */}
+                <div className="space-y-3">
+                  {/* Step 1: Endpoint */}
+                  <div className="flex items-center gap-2 text-sm">
+                    {vectorizationStatus.step === "checking_endpoint" ? (
+                      <Loader2 className="h-4 w-4 text-[var(--color-accent)] animate-spin" />
+                    ) : vectorizationStatus.step === "creating_endpoint" || vectorizationStatus.step === "waiting_endpoint" ? (
+                      <Loader2 className="h-4 w-4 text-amber-500 animate-spin" />
+                    ) : ["processing_chunks", "creating_index", "completed"].includes(vectorizationStatus.step) ? (
+                      <CheckCircle2 className="h-4 w-4 text-[var(--color-success)]" />
+                    ) : vectorizationStatus.step === "error" ? (
+                      <XCircle className="h-4 w-4 text-red-500" />
+                    ) : (
+                      <div className="h-4 w-4 rounded-full border-2 border-gray-300" />
+                    )}
+                    <span className={
+                      ["checking_endpoint", "creating_endpoint", "waiting_endpoint"].includes(vectorizationStatus.step)
+                        ? "text-[var(--color-accent)] font-medium"
+                        : ["processing_chunks", "creating_index", "completed"].includes(vectorizationStatus.step)
+                        ? "text-[var(--color-success)]"
+                        : "text-gray-500"
+                    }>
+                      Endpoint: {vsEndpointName}
+                    </span>
+                  </div>
+                  
+                  {/* Step 2: Chunks - with time and progress bar */}
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2 text-sm">
+                      {vectorizationStatus.step === "processing_chunks" ? (
+                        <Loader2 className="h-4 w-4 text-[var(--color-accent)] animate-spin" />
+                      ) : ["creating_index", "completed"].includes(vectorizationStatus.step) ? (
+                        <CheckCircle2 className="h-4 w-4 text-[var(--color-success)]" />
+                      ) : vectorizationStatus.step === "error" && vectorizationStatus.message.includes("chunks") ? (
+                        <XCircle className="h-4 w-4 text-red-500" />
+                      ) : (
+                        <div className="h-4 w-4 rounded-full border-2 border-gray-300" />
+                      )}
+                      <span className={
+                        vectorizationStatus.step === "processing_chunks"
+                          ? "text-[var(--color-accent)] font-medium"
+                          : ["creating_index", "completed"].includes(vectorizationStatus.step)
+                          ? "text-[var(--color-success)]"
+                          : "text-gray-500"
+                      }>
+                        Processamento de Segmentos
+                      </span>
+                      {/* Time badge - show live time when processing, final time when completed */}
+                      {vectorizationStatus.step === "processing_chunks" && (
+                        <span className="font-mono text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded">
+                          {formatTime(totalProcessingTime)}
+                        </span>
+                      )}
+                      {["creating_index", "completed"].includes(vectorizationStatus.step) && vectorizationStatus.stepTimes.chunks !== undefined && (
+                        <span className="font-mono text-xs bg-[var(--color-success-light)] text-[var(--color-success)] px-2 py-0.5 rounded">
+                          {formatTime(vectorizationStatus.stepTimes.chunks)}
+                        </span>
+                      )}
+                    </div>
+                    {/* Progress bar for chunks processing */}
+                    {vectorizationStatus.step === "processing_chunks" && processingStatus.totalFiles > 0 && (
+                      <div className="ml-6 flex items-center gap-2">
+                        <div className="flex-1 bg-gray-200 rounded-full h-1.5">
+                          <div 
+                            className="bg-[var(--color-accent)] h-1.5 rounded-full transition-all duration-300"
+                            style={{ width: `${processingStatus.progress}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* Step 3: Vector Index */}
+                  <div className="flex items-center gap-2 text-sm">
+                    {vectorizationStatus.step === "creating_index" ? (
+                      <Loader2 className="h-4 w-4 text-[var(--color-accent)] animate-spin" />
+                    ) : vectorizationStatus.step === "completed" ? (
+                      <CheckCircle2 className="h-4 w-4 text-[var(--color-success)]" />
+                    ) : vectorizationStatus.step === "error" && vectorizationStatus.message.includes("Index") ? (
+                      <XCircle className="h-4 w-4 text-red-500" />
+                    ) : (
+                      <div className="h-4 w-4 rounded-full border-2 border-gray-300" />
+                    )}
+                    <span className={
+                      vectorizationStatus.step === "creating_index"
+                        ? "text-[var(--color-accent)] font-medium"
+                        : vectorizationStatus.step === "completed"
+                        ? "text-[var(--color-success)]"
+                        : "text-gray-500"
+                    }>
+                      Vector Index: {tableConfig.catalog}.{tableConfig.schema}.{tableConfig.tableName}_vs
+                    </span>
+                    {/* Time badge for index creation */}
+                    {vectorizationStatus.step === "completed" && vectorizationStatus.stepTimes.index !== undefined && (
+                      <span className="font-mono text-xs bg-[var(--color-success-light)] text-[var(--color-success)] px-2 py-0.5 rounded">
+                        {formatTime(vectorizationStatus.stepTimes.index)}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                
+                {/* Status message and total time in footer */}
+                <div className="mt-3 flex items-center justify-between">
+                  {vectorizationStatus.message && (
+                    <div className={`text-xs px-2 py-1 rounded ${
+                      vectorizationStatus.step === "error" 
+                        ? "bg-red-50 text-red-600"
+                        : vectorizationStatus.step === "completed"
+                        ? "bg-[var(--color-success-light)] text-[var(--color-success)]"
+                        : "bg-[var(--color-accent-light)] text-[var(--color-accent)]"
+                    }`}>
+                      {vectorizationStatus.message}
+                    </div>
+                  )}
+                  {/* Total time in bottom right - show during processing and after completion */}
+                  {(processingStatus.status === "processing" || processingStatus.status === "completed") && totalProcessingTime > 0 && (
+                    <div className="flex items-center gap-2 ml-auto">
+                      <span className="text-xs text-gray-500">Tempo total:</span>
+                      <span className={`font-mono text-xs px-2 py-0.5 rounded ${
+                        processingStatus.status === "completed"
+                          ? "bg-[var(--color-success-light)] text-[var(--color-success)]"
+                          : "bg-[var(--color-accent-light)] text-[var(--color-accent)]"
+                      }`}>
+                        {formatTime(totalProcessingTime)}
+                      </span>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
             

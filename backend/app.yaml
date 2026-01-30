@@ -3,6 +3,25 @@
 
 command: ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
 
+# OAuth scopes required for the app
+# Note: vectorsearch.vector-search-endpoints scope doesn't exist, 
+# so we use Service Principal for endpoint operations
+permissions:
+  - permission: "sql"
+    description: "Execute SQL queries"
+  - permission: "vectorsearch.vector-search-indexes"
+    description: "Manage Vector Search indexes"
+  - permission: "serving.serving-endpoints"
+    description: "Access embedding model endpoints"
+  - permission: "catalog.tables:read"
+    description: "Read Unity Catalog tables"
+  - permission: "catalog.schemas:read"
+    description: "Read Unity Catalog schemas"
+  - permission: "catalog.catalogs:read"
+    description: "Read Unity Catalog catalogs"
+  - permission: "files.files"
+    description: "Manage files in volumes"
+
 env:
   # Unity Catalog configuration
   - name: DATABRICKS_CATALOG
@@ -24,3 +43,7 @@ env:
   
   - name: DATABRICKS_HTTP_PATH
     value: "/sql/1.0/warehouses/09231fd5489fc752"
+  
+  # Vector Search configuration
+  - name: VECTOR_SEARCH_ENDPOINT
+    value: "one-env-shared-endpoint-12"

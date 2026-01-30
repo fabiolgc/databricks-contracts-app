@@ -8,6 +8,7 @@ Serves static Next.js files and provides API endpoints for:
 import os
 import re
 import uuid
+import json
 import asyncio
 from datetime import datetime
 from typing import Optional, List, Dict, Any
@@ -107,6 +108,15 @@ class DeleteDocumentsRequest(BaseModel):
     documentIds: List[str]  # List of document IDs to delete, or empty for all
     deleteFromVolume: bool = False  # Also delete PDF files from volume
 
+class VectorSearchEndpointRequest(BaseModel):
+    endpoint_name: str
+
+class CreateVectorIndexRequest(BaseModel):
+    tableConfig: Dict[str, str]  # catalog, schema, tableName
+    endpoint_name: str
+    embedding_model: str = "databricks-gte-large-en"
+    sync_type: str = "TRIGGERED"  # TRIGGERED or CONTINUOUS
+
 class ChunkingPreviewRequest(BaseModel):
     catalog: str
     schema_name: str
@@ -148,6 +158,30 @@ def get_databricks_config(user_token: Optional[str] = None):
     
     if not config["token"]:
         raise ValueError("Authentication token not available")
+    
+    return config
+
+
+def get_service_principal_config():
+    """Get Databricks configuration using Service Principal only.
+    Used for operations that don't have OAuth scopes available (e.g., vector search endpoints).
+    """
+    sp_token = os.getenv("DATABRICKS_CLIENT_SECRET") or os.getenv("DATABRICKS_TOKEN")
+    
+    config = {
+        "host": os.getenv("DATABRICKS_SERVER_HOSTNAME") or os.getenv("DATABRICKS_HOST"),
+        "token": sp_token,
+        "catalog": os.getenv("DATABRICKS_CATALOG", "fabio_goncalves"),
+        "schema": os.getenv("DATABRICKS_SCHEMA", "customer_cielo"),
+        "volume": os.getenv("DATABRICKS_VOLUME", "pdf"),
+        "auth_method": "Service Principal (forced)",
+    }
+    
+    if not config["host"]:
+        raise ValueError("DATABRICKS_SERVER_HOSTNAME or DATABRICKS_HOST is not configured")
+    
+    if not config["token"]:
+        raise ValueError("Service Principal token (DATABRICKS_CLIENT_SECRET) not available")
     
     return config
 
@@ -696,12 +730,436 @@ async def health_check():
 @app.get("/api/config")
 async def get_config():
     """Get default configuration from environment"""
+    catalog = os.getenv("DATABRICKS_CATALOG", "")
+    schema = os.getenv("DATABRICKS_SCHEMA", "")
+    volume = os.getenv("DATABRICKS_VOLUME", "")
+    host = os.getenv("DATABRICKS_SERVER_HOSTNAME", "")
+    vs_endpoint = os.getenv("VECTOR_SEARCH_ENDPOINT", "one-env-shared-endpoint-12")
+    
+    print(f"[CONFIG] Returning config:")
+    print(f"  - catalog: {catalog}")
+    print(f"  - schema: {schema}")
+    print(f"  - volume: {volume}")
+    print(f"  - host: {host}")
+    print(f"  - vectorSearchEndpoint: {vs_endpoint}")
+    
     return {
-        "catalog": os.getenv("DATABRICKS_CATALOG", ""),
-        "schema": os.getenv("DATABRICKS_SCHEMA", ""),
-        "volume": os.getenv("DATABRICKS_VOLUME", ""),
-        "host": os.getenv("DATABRICKS_SERVER_HOSTNAME", ""),
+        "catalog": catalog,
+        "schema": schema,
+        "volume": volume,
+        "host": host,
+        "vectorSearchEndpoint": vs_endpoint,
     }
+
+
+# ============================================================================
+# Vector Search API Routes
+# ============================================================================
+
+@app.post("/api/vector-search/endpoint/check")
+async def check_vector_search_endpoint(
+    request: VectorSearchEndpointRequest,
+    x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
+):
+    """Check if a Vector Search endpoint exists and get its status"""
+    request_id = str(uuid.uuid4())[:8]
+    endpoint_name = request.endpoint_name
+    
+    print(f"\n{'=' * 80}")
+    print(f"🔍 [{request_id}] Check Vector Search endpoint: {endpoint_name}")
+    print(f"{'=' * 80}")
+    
+    try:
+        config = get_databricks_config(x_forwarded_access_token)
+        host = config["host"]
+        token = config["token"]
+        
+        # Detailed logging for debugging
+        print(f"📋 [{request_id}] Configuration:")
+        print(f"  - Host: {host}")
+        print(f"  - Auth method: {config.get('auth_method', 'unknown')}")
+        print(f"  - Token present: {'Yes' if token else 'No'}")
+        print(f"  - Token length: {len(token) if token else 0}")
+        print(f"  - Token starts with: {token[:20]}..." if token and len(token) > 20 else f"  - Token: {token}")
+        print(f"  - OBO token provided: {'Yes' if x_forwarded_access_token else 'No'}")
+        
+        url = f"https://{host}/api/2.0/vector-search/endpoints/{endpoint_name}"
+        print(f"  - URL: {url}")
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                url,
+                headers={"Authorization": f"Bearer {token}"}
+            )
+            
+            print(f"📡 [{request_id}] Response:")
+            print(f"  - Status code: {response.status_code}")
+            print(f"  - Headers: {dict(response.headers)}")
+            
+            if response.status_code == 200:
+                data = response.json()
+                status = data.get("endpoint_status", {}).get("state", "UNKNOWN")
+                print(f"✅ [{request_id}] Endpoint exists with status: {status}")
+                return {
+                    "success": True,
+                    "exists": True,
+                    "status": status,
+                    "endpoint": data
+                }
+            elif response.status_code == 404:
+                print(f"ℹ️ [{request_id}] Endpoint does not exist")
+                return {
+                    "success": True,
+                    "exists": False,
+                    "status": "NOT_FOUND"
+                }
+            else:
+                # Log detailed error information
+                print(f"⚠️ [{request_id}] API returned status {response.status_code}")
+                print(f"  - Response body: {response.text[:1000] if response.text else 'empty'}")
+                
+                # Try to parse error details
+                error_detail = f"API returned status {response.status_code}"
+                try:
+                    error_json = response.json()
+                    if "message" in error_json:
+                        error_detail = f"{response.status_code}: {error_json['message']}"
+                    elif "error" in error_json:
+                        error_detail = f"{response.status_code}: {error_json['error']}"
+                except:
+                    pass
+                
+                return {
+                    "success": False,
+                    "error": error_detail,
+                    "status_code": response.status_code,
+                    "auth_method": config.get('auth_method', 'unknown')
+                }
+                
+    except Exception as e:
+        print(f"💥 [{request_id}] Error: {str(e)}")
+        import traceback
+        print(f"  Traceback: {traceback.format_exc()}")
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/vector-search/endpoint/create")
+async def create_vector_search_endpoint(
+    request: VectorSearchEndpointRequest,
+    x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
+):
+    """Create a new Vector Search endpoint"""
+    request_id = str(uuid.uuid4())[:8]
+    endpoint_name = request.endpoint_name
+    
+    print(f"\n{'=' * 80}")
+    print(f"🚀 [{request_id}] Create Vector Search endpoint: {endpoint_name}")
+    print(f"{'=' * 80}")
+    
+    try:
+        config = get_databricks_config(x_forwarded_access_token)
+        host = config["host"]
+        token = config["token"]
+        
+        url = f"https://{host}/api/2.0/vector-search/endpoints"
+        
+        payload = {
+            "name": endpoint_name,
+            "endpoint_type": "STANDARD"
+        }
+        
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                url,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json"
+                },
+                json=payload
+            )
+            
+            if response.status_code in [200, 201]:
+                data = response.json()
+                print(f"✅ [{request_id}] Endpoint creation initiated")
+                return {
+                    "success": True,
+                    "message": "Endpoint creation initiated",
+                    "endpoint": data
+                }
+            else:
+                error_text = response.text
+                print(f"⚠️ [{request_id}] API returned status {response.status_code}: {error_text}")
+                return {
+                    "success": False,
+                    "error": f"Failed to create endpoint: {error_text}"
+                }
+                
+    except Exception as e:
+        print(f"💥 [{request_id}] Error: {str(e)}")
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/vector-search/index/check")
+async def check_vector_index(
+    request: CreateVectorIndexRequest,
+    x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
+):
+    """Check if a Vector Index exists"""
+    request_id = str(uuid.uuid4())[:8]
+    
+    catalog = request.tableConfig.get("catalog", "")
+    schema = request.tableConfig.get("schema", "")
+    table_name = request.tableConfig.get("tableName", "")
+    index_name = f"{catalog}.{schema}.{table_name}_vs"
+    
+    print(f"\n{'=' * 80}")
+    print(f"🔍 [{request_id}] Check Vector Index: {index_name}")
+    print(f"{'=' * 80}")
+    
+    try:
+        config = get_databricks_config(x_forwarded_access_token)
+        host = config["host"]
+        token = config["token"]
+        
+        # URL encode the index name
+        encoded_index_name = index_name.replace(".", "%2E")
+        url = f"https://{host}/api/2.0/vector-search/indexes/{encoded_index_name}"
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                url,
+                headers={"Authorization": f"Bearer {token}"}
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                status = data.get("status", {}).get("ready", False)
+                index_status = data.get("status", {}).get("index_status", "UNKNOWN")
+                print(f"✅ [{request_id}] Index exists, ready: {status}, status: {index_status}")
+                return {
+                    "success": True,
+                    "exists": True,
+                    "ready": status,
+                    "index_status": index_status,
+                    "index": data
+                }
+            elif response.status_code == 404:
+                print(f"ℹ️ [{request_id}] Index does not exist")
+                return {
+                    "success": True,
+                    "exists": False
+                }
+            else:
+                print(f"⚠️ [{request_id}] API returned status {response.status_code}")
+                return {
+                    "success": False,
+                    "error": f"API returned status {response.status_code}"
+                }
+                
+    except Exception as e:
+        print(f"💥 [{request_id}] Error: {str(e)}")
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/vector-search/index/sync")
+async def sync_vector_index(
+    request: CreateVectorIndexRequest,
+    x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
+):
+    """Trigger a sync for an existing Vector Index"""
+    request_id = str(uuid.uuid4())[:8]
+    
+    catalog = request.tableConfig.get("catalog", "")
+    schema = request.tableConfig.get("schema", "")
+    table_name = request.tableConfig.get("tableName", "")
+    index_name = f"{catalog}.{schema}.{table_name}_vs"
+    
+    print(f"\n{'=' * 80}")
+    print(f"🔄 [{request_id}] Trigger Sync for Vector Index: {index_name}")
+    print(f"{'=' * 80}")
+    
+    try:
+        config = get_databricks_config(x_forwarded_access_token)
+        host = config["host"]
+        token = config["token"]
+        
+        # URL encode the index name
+        encoded_index_name = index_name.replace(".", "%2E")
+        url = f"https://{host}/api/2.0/vector-search/indexes/{encoded_index_name}/sync"
+        
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                url,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json"
+                }
+            )
+            
+            print(f"📡 [{request_id}] Sync response: {response.status_code}")
+            
+            if response.status_code in [200, 201, 202]:
+                print(f"✅ [{request_id}] Sync triggered successfully")
+                return {
+                    "success": True,
+                    "message": "Sync triggered",
+                    "index_name": index_name
+                }
+            else:
+                error_text = response.text
+                print(f"⚠️ [{request_id}] Sync failed: {error_text}")
+                return {
+                    "success": False,
+                    "error": f"Failed to trigger sync: {error_text}"
+                }
+                
+    except Exception as e:
+        print(f"💥 [{request_id}] Error: {str(e)}")
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/vector-search/index/status")
+async def get_vector_index_status(
+    request: CreateVectorIndexRequest,
+    x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
+):
+    """Get the current status of a Vector Index (for polling during sync)"""
+    request_id = str(uuid.uuid4())[:8]
+    
+    catalog = request.tableConfig.get("catalog", "")
+    schema = request.tableConfig.get("schema", "")
+    table_name = request.tableConfig.get("tableName", "")
+    index_name = f"{catalog}.{schema}.{table_name}_vs"
+    
+    try:
+        config = get_databricks_config(x_forwarded_access_token)
+        host = config["host"]
+        token = config["token"]
+        
+        encoded_index_name = index_name.replace(".", "%2E")
+        url = f"https://{host}/api/2.0/vector-search/indexes/{encoded_index_name}"
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                url,
+                headers={"Authorization": f"Bearer {token}"}
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                status_obj = data.get("status", {})
+                ready = status_obj.get("ready", False)
+                index_status = status_obj.get("index_status", "UNKNOWN")
+                message = status_obj.get("message", "")
+                
+                # Check delta_sync_index_spec for more details
+                delta_sync = data.get("delta_sync_index_spec", {})
+                pipeline_id = delta_sync.get("pipeline_id", "")
+                
+                print(f"📊 [{request_id}] Index status: ready={ready}, status={index_status}")
+                
+                return {
+                    "success": True,
+                    "ready": ready,
+                    "index_status": index_status,
+                    "message": message,
+                    "pipeline_id": pipeline_id,
+                    "index_name": index_name
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": f"Failed to get status: {response.status_code}"
+                }
+                
+    except Exception as e:
+        print(f"💥 [{request_id}] Error: {str(e)}")
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/vector-search/index/create")
+async def create_vector_index(
+    request: CreateVectorIndexRequest,
+    x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
+):
+    """Create a new Vector Index using Delta Sync"""
+    request_id = str(uuid.uuid4())[:8]
+    
+    catalog = request.tableConfig.get("catalog", "")
+    schema = request.tableConfig.get("schema", "")
+    table_name = request.tableConfig.get("tableName", "")
+    
+    source_table = f"{catalog}.{schema}.{table_name}_chunks"
+    index_name = f"{catalog}.{schema}.{table_name}_vs"
+    endpoint_name = request.endpoint_name
+    embedding_model = request.embedding_model
+    sync_type = request.sync_type
+    
+    print(f"\n{'=' * 80}")
+    print(f"🚀 [{request_id}] Create Vector Index")
+    print(f"   Index: {index_name}")
+    print(f"   Source Table: {source_table}")
+    print(f"   Endpoint: {endpoint_name}")
+    print(f"   Embedding Model: {embedding_model}")
+    print(f"   Sync Type: {sync_type}")
+    print(f"{'=' * 80}")
+    
+    try:
+        config = get_databricks_config(x_forwarded_access_token)
+        host = config["host"]
+        token = config["token"]
+        
+        url = f"https://{host}/api/2.0/vector-search/indexes"
+        
+        payload = {
+            "name": index_name,
+            "endpoint_name": endpoint_name,
+            "primary_key": "id",
+            "index_type": "DELTA_SYNC",
+            "delta_sync_index_spec": {
+                "source_table": source_table,
+                "pipeline_type": sync_type,
+                "embedding_source_columns": [
+                    {
+                        "name": "chunk_content",
+                        "embedding_model_endpoint_name": embedding_model
+                    }
+                ]
+            }
+        }
+        
+        print(f"📤 [{request_id}] Payload: {json.dumps(payload, indent=2)}")
+        
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.post(
+                url,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json"
+                },
+                json=payload
+            )
+            
+            if response.status_code in [200, 201]:
+                data = response.json()
+                print(f"✅ [{request_id}] Index creation initiated")
+                return {
+                    "success": True,
+                    "message": "Index creation initiated",
+                    "index_name": index_name,
+                    "index": data
+                }
+            else:
+                error_text = response.text
+                print(f"⚠️ [{request_id}] API returned status {response.status_code}: {error_text}")
+                return {
+                    "success": False,
+                    "error": f"Failed to create index: {error_text}"
+                }
+                
+    except Exception as e:
+        print(f"💥 [{request_id}] Error: {str(e)}")
+        return {"success": False, "error": str(e)}
 
 
 @app.post("/api/extract-text")
@@ -1582,6 +2040,7 @@ async def init_processing(
             print(f"⚠️ [{request_id}] Could not drop chunks table: {str(e)}")
         
         # Step 3: Create fresh chunks table (with metadata support for hybrid_ai strategy)
+        # Enable Change Data Feed for Vector Search compatibility
         create_chunks_sql = f"""
         CREATE TABLE {chunks_table} (
             id STRING,
@@ -1598,6 +2057,7 @@ async def init_processing(
             created_at TIMESTAMP
         )
         USING DELTA
+        TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')
         """
         print(f"\n📊 [{request_id}] Creating fresh chunks table: {chunks_table}")
         await execute_sql(config, warehouse_id, create_chunks_sql, request_id)
@@ -1970,6 +2430,8 @@ class AppConfigRequest(BaseModel):
     logo_url: Optional[str] = None  # Custom logo URL
     app_name: Optional[str] = None  # Custom app name
     vs_endpoint_name: Optional[str] = None  # Vector Search endpoint name
+    embedding_model: Optional[str] = None  # Embedding model for vector search
+    index_sync_type: Optional[str] = None  # TRIGGERED or CONTINUOUS
 
 
 class AIConfigRequest(BaseModel):
@@ -2083,7 +2545,9 @@ async def get_app_config(
         "accent_color": "#1857B6",  # Blue
         "logo_url": "",  # Empty = use default
         "app_name": "Contracts App",
-        "vs_endpoint_name": ""  # Vector Search endpoint - empty by default
+        "vs_endpoint_name": "",  # Vector Search endpoint - empty by default
+        "embedding_model": "databricks-gte-large-en",  # Default embedding model
+        "index_sync_type": "TRIGGERED"  # Default sync type (manual)
     }
     
     try:
@@ -2164,6 +2628,10 @@ async def save_app_config(
             new_values["app_name"] = request.app_name
         if request.vs_endpoint_name is not None:
             new_values["vs_endpoint_name"] = request.vs_endpoint_name
+        if request.embedding_model is not None:
+            new_values["embedding_model"] = request.embedding_model
+        if request.index_sync_type is not None:
+            new_values["index_sync_type"] = request.index_sync_type
         
         if not new_values:
             print(f"ℹ️ [{request_id}] No values to save")
