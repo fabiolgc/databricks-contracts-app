@@ -100,6 +100,7 @@ interface AutoProcessStatus {
   sampleFiles?: number
   strategyProgress?: { A: number; B: number; C: number }
   strategyStatus?: { A: string; B: string; C: string }
+  indexAction?: "checking" | "creating" | "waiting_creation" | "syncing" | "waiting_sync" | "created" | "synced"
   // Step timing
   stepTimes?: {
     questions?: number
@@ -925,7 +926,8 @@ export default function PreparePage() {
   }
   
   // Monitor Vector Index status until ready
-  async function monitorIndexStatus(chunksCount: number): Promise<void> {
+  // operationType: "create" | "sync" - to show appropriate final message
+  async function monitorIndexStatus(chunksCount: number, operationType: "create" | "sync" = "create"): Promise<void> {
     const maxAttempts = 60 // Max 5 minutes (5s intervals)
     let attempts = 0
     
@@ -945,13 +947,23 @@ export default function PreparePage() {
         const statusResult = await statusResponse.json()
         
         if (statusResult.success) {
-          const { ready, detailed_state, indexed_row_count } = statusResult
+          const { ready, detailed_state, indexed_row_count, index_status } = statusResult
+          
+          // Update message based on current state
+          const stateMessage = index_status === "CREATED" 
+            ? "Aguardando inicialização..." 
+            : detailed_state 
+              ? `${operationType === "sync" ? "Sincronizando" : "Criando"}: ${detailed_state}...`
+              : `${operationType === "sync" ? "Sincronizando" : "Criando"}...`
           
           setAutoProcessStatus(prev => ({
             ...prev,
             message: ready 
               ? `Index pronto! ${indexed_row_count || chunksCount} segmentos indexados.`
-              : `Sincronizando: ${detailed_state || "processando"}...`
+              : stateMessage,
+            indexAction: ready 
+              ? (operationType === "sync" ? "synced" : "created")
+              : (index_status === "CREATED" ? "waiting_creation" : (operationType === "sync" ? "waiting_sync" : "waiting_creation"))
           }))
           
           if (ready) {
@@ -961,11 +973,16 @@ export default function PreparePage() {
             setTotalProcessingTime(totalTime)
             setStepEndTimes(prev => ({ ...prev, creating_index: endTime }))
             
+            const finalMessage = operationType === "sync" 
+              ? `Vector Index sincronizado! ${indexed_row_count || chunksCount} segmentos.`
+              : `Vector Index criado! ${indexed_row_count || chunksCount} segmentos.`
+            
             setAutoProcessStatus(prev => ({
               ...prev,
               step: "completed",
-              message: `Concluído! ${indexed_row_count || chunksCount} segmentos indexados.`,
-              progress: 100
+              message: finalMessage,
+              progress: 100,
+              indexAction: operationType === "sync" ? "synced" : "created"
             }))
             
             setProcessingStatus({
@@ -976,7 +993,7 @@ export default function PreparePage() {
               processedFiles: selectedDocuments.size
             })
             
-            toast.success("Processamento concluído!", {
+            toast.success(operationType === "sync" ? "Index sincronizado!" : "Index criado!", {
               description: `${indexed_row_count || chunksCount} segmentos indexados.`,
               duration: 6000
             })
@@ -1006,12 +1023,12 @@ export default function PreparePage() {
     setAutoProcessStatus(prev => ({
       ...prev,
       step: "completed",
-      message: `Chunks criados. Sync em andamento (timeout).`,
+      message: `Chunks criados. ${operationType === "sync" ? "Sync" : "Criação"} em andamento (timeout).`,
       progress: 100
     }))
     
-    toast.warning("Sync ainda em andamento", {
-      description: "O índice está sendo sincronizado em background.",
+    toast.warning(`${operationType === "sync" ? "Sync" : "Criação"} ainda em andamento`, {
+      description: "O índice está sendo processado em background.",
       duration: 8000
     })
   }
@@ -1029,7 +1046,8 @@ export default function PreparePage() {
       ...prev,
       step: "creating_index",
       message: "Verificando Vector Index...",
-      progress: 90
+      progress: 90,
+      indexAction: "checking"
     }))
     
     try {
@@ -1055,7 +1073,8 @@ export default function PreparePage() {
           // Same endpoint -> just sync
           setAutoProcessStatus(prev => ({
             ...prev,
-            message: "Index existe. Sincronizando..."
+            message: "Sincronizando Vector Index...",
+            indexAction: "syncing"
           }))
           
           const syncResponse = await fetch("/api/vector-search/index/sync", {
@@ -1092,14 +1111,30 @@ export default function PreparePage() {
             return
           }
           
+          // Check if initializing (CREATED state)
+          if (syncResult.status === "INITIALIZING") {
+            setAutoProcessStatus(prev => ({
+              ...prev,
+              message: "Aguardando inicialização do índice...",
+              indexAction: "waiting_creation"
+            }))
+          } else {
+            setAutoProcessStatus(prev => ({
+              ...prev,
+              message: "Aguardando sincronização...",
+              indexAction: "waiting_sync"
+            }))
+          }
+          
           // Monitor sync status until ready
-          await monitorIndexStatus(chunksCount)
+          await monitorIndexStatus(chunksCount, "sync")
           return
         } else {
           // Different endpoint -> delete and recreate
           setAutoProcessStatus(prev => ({
             ...prev,
-            message: `Endpoint diferente (${existingEndpoint}). Recriando...`
+            message: `Endpoint diferente. Recriando índice...`,
+            indexAction: "creating"
           }))
           
           toast.info(`Index usa endpoint diferente. Recriando com ${configuredEndpoint}...`)
@@ -1125,7 +1160,8 @@ export default function PreparePage() {
       // Step 2: Create new index (either doesn't exist or was deleted)
       setAutoProcessStatus(prev => ({
         ...prev,
-        message: t("prepare.autoProcess.creatingIndex")
+        message: "Criando Vector Index...",
+        indexAction: "creating"
       }))
       
       // Use AbortController for timeout handling
@@ -1152,14 +1188,13 @@ export default function PreparePage() {
           // Index creation initiated (or timed out but may still be creating)
           setAutoProcessStatus(prev => ({
             ...prev,
-            message: createResult.timeout 
-              ? "Criação iniciada. Aguardando sincronização..." 
-              : "Index criado. Aguardando sincronização..."
+            message: "Aguardando criação do índice...",
+            indexAction: "waiting_creation"
           }))
           
           // Wait a bit before polling
           await new Promise(resolve => setTimeout(resolve, 3000))
-          await monitorIndexStatus(chunksCount)
+          await monitorIndexStatus(chunksCount, "create")
         } else {
           throw new Error(createResult.error || "Falha ao criar index")
         }
@@ -1171,12 +1206,13 @@ export default function PreparePage() {
           console.log("Create request timed out, will poll status anyway...")
           setAutoProcessStatus(prev => ({
             ...prev,
-            message: "Timeout na requisição. Verificando status..."
+            message: "Aguardando criação do índice...",
+            indexAction: "waiting_creation"
           }))
           
           // Wait a bit then check if index was created
           await new Promise(resolve => setTimeout(resolve, 5000))
-          await monitorIndexStatus(chunksCount)
+          await monitorIndexStatus(chunksCount, "create")
           return
         }
         
@@ -2203,10 +2239,17 @@ export default function PreparePage() {
                 }`}>
                   <span>
                     {autoProcessStatus.step === "completed" 
-                      ? "Vector Index criado" 
+                      ? (autoProcessStatus.indexAction === "synced" ? "Vector Index sincronizado" : "Vector Index criado")
                       : autoProcessStatus.step === "error"
                         ? "Erro no Vector Index"
-                        : t("prepare.autoProcess.steps.creatingIndex")}
+                        : autoProcessStatus.step === "creating_index"
+                          ? (autoProcessStatus.indexAction === "checking" ? "Verificando Vector Index..."
+                            : autoProcessStatus.indexAction === "creating" ? "Criando Vector Index..."
+                            : autoProcessStatus.indexAction === "syncing" ? "Sincronizando Vector Index..."
+                            : autoProcessStatus.indexAction === "waiting_creation" ? "Aguardando criação..."
+                            : autoProcessStatus.indexAction === "waiting_sync" ? "Aguardando sincronização..."
+                            : "Processando Vector Index...")
+                          : "Vector Index"}
                   </span>
                   {autoProcessStatus.indexName && (
                     <span className="ml-2 text-xs font-mono text-gray-400">({autoProcessStatus.indexName})</span>
