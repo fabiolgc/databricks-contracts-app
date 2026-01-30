@@ -2192,7 +2192,7 @@ export default function PreparePage() {
                 }`}>
                   <span>
                     {["creating_index", "completed"].includes(autoProcessStatus.step) ? "Estratégia aplicada" : t("prepare.autoProcess.steps.applying")}
-                    {autoProcessStatus.bestStrategy && (
+                    {autoProcessStatus.bestStrategy && ["applying", "creating_index", "completed"].includes(autoProcessStatus.step) && (
                       <span className="font-semibold ml-1">
                         ({autoProcessStatus.bestStrategy === "recursive" ? t("prepare.autoProcess.steps.recursive") :
                           autoProcessStatus.bestStrategy === "fixed_size" ? t("prepare.autoProcess.steps.fixedSize") :
