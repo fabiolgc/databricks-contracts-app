@@ -34,7 +34,7 @@ env:
   
   # SQL Warehouse configuration
   - name: DATABRICKS_WAREHOUSE_ID
-    value: "09231fd5489fc752"
+    value: "604c0ed0a11f8a1d"
   
   - name: DATABRICKS_SERVER_HOSTNAME
     value: "e2-demo-field-eng.cloud.databricks.com"
