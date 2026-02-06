@@ -3781,9 +3781,11 @@ Responda APENAS com um número de 1 a 10."""
         id STRING, document_id STRING, file_name STRING,
         chunk_index INT, total_chunks INT, chunk_content STRING,
         strategy STRING, created_at TIMESTAMP
-    )"""
+    )
+    USING DELTA
+    TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')"""
     await execute_sql(config, warehouse_id, create_final_sql, job_id)
-    print(f"✅ [{job_id}] Table {chunks_table} created")
+    print(f"✅ [{job_id}] Table {chunks_table} created with CDF enabled")
     
     final_chunks = 0
     for file_idx, file_name in enumerate(files):
@@ -4126,9 +4128,11 @@ Responda APENAS com um número de 0 a 10:"""
             id STRING, document_id STRING, file_name STRING,
             chunk_index INT, total_chunks INT, chunk_content STRING,
             strategy STRING, created_at TIMESTAMP
-        )"""
+        )
+        USING DELTA
+        TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')"""
         await execute_sql(config, warehouse_id, create_final_sql, request_id)
-        print(f"✅ [{request_id}] Table {chunks_table} created")
+        print(f"✅ [{request_id}] Table {chunks_table} created with CDF enabled")
         
         final_chunks = 0
         for file_idx, file_name in enumerate(files):

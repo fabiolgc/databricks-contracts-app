@@ -251,6 +251,7 @@ export default function PreparePage() {
   }, [])
   const persistJobId = useCallback((id: string) => {
     setCurrentJobId(id)
+    setHasStoredJobId(true)
     try { localStorage.setItem(AUTO_PROCESS_JOB_KEY, id) } catch { /* ignore */ }
   }, [])
   const [showQuestions, setShowQuestions] = useState(false)
@@ -1035,10 +1036,11 @@ export default function PreparePage() {
       
       const { jobId } = await startResponse.json()
       console.log("[AutoProcess] Job started with ID:", jobId)
+      setCurrentJobId(jobId)
       persistJobId(jobId)
       setIsCancelling(false)
       isCancellingRef.current = false
-      
+
       const pollResult = await pollAutoProcessJob(jobId, filesToProcess.length)
       if (pollResult && "cancelled" in pollResult) {
         clearStoredJobId()
@@ -1138,16 +1140,17 @@ export default function PreparePage() {
   
   // Cancel auto processing
   async function cancelAutoProcessing() {
-    if (!currentJobId) {
+    const jobId = currentJobId || (typeof window !== "undefined" ? localStorage.getItem(AUTO_PROCESS_JOB_KEY) : null)
+    if (!jobId) {
       return
     }
-    
+
     setIsCancelling(true)
     isCancellingRef.current = true
-    console.log("[AutoProcess] Cancelling job:", currentJobId)
-    
+    console.log("[AutoProcess] Cancelling job:", jobId)
+
     try {
-      const cancelResponse = await fetch(`/api/process/auto/cancel/${currentJobId}`, {
+      const cancelResponse = await fetch(`/api/process/auto/cancel/${jobId}`, {
         method: "POST"
       })
       
@@ -2359,7 +2362,6 @@ export default function PreparePage() {
                         ? "Estratégias A / B / C avaliadas"
                         : "Avaliando estratégias A / B / C"}
                     </span>
-                    <StrategyHint t={t} />
                     {/* Show parallel evaluation progress */}
                     {autoProcessStatus.step === "evaluating" && autoProcessStatus.evalProgress && (
                       <span className="ml-2 text-xs font-normal text-gray-500">
@@ -2597,9 +2599,24 @@ export default function PreparePage() {
               </div>
             )}
             
-            {/* Completed Button */}
-            {(autoProcessStatus.step === "completed" || autoProcessStatus.step === "error") && (
-              <div className="mt-4 flex justify-end">
+            {/* Footer: Cancel while processing, Concluído when done (same position) */}
+            <div className="mt-4 flex justify-end">
+              {!["idle", "completed", "error"].includes(autoProcessStatus.step) && (currentJobId || hasStoredJobId) ? (
+                <button
+                  onClick={cancelAutoProcessing}
+                  disabled={isCancelling}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50 flex items-center gap-2"
+                >
+                  {isCancelling ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Cancelando...
+                    </>
+                  ) : (
+                    t("common.cancel")
+                  )}
+                </button>
+              ) : (autoProcessStatus.step === "completed" || autoProcessStatus.step === "error") ? (
                 <button
                   onClick={() => {
                     setAutoProcessStatus({ step: "idle", message: "", progress: 0 })
@@ -2615,8 +2632,8 @@ export default function PreparePage() {
                   <CheckCircle2 className="h-4 w-4" />
                   {t("import.fileList.completed")}
                 </button>
-              </div>
-            )}
+              ) : null}
+            </div>
           </div>
         </div>
         )}
