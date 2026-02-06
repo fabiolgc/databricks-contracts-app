@@ -133,6 +133,46 @@ class ChunkingPreviewRequest(BaseModel):
     separatorType: str = "paragraph"  # For by_separator: paragraph, line, sentence, custom
     customSeparator: str = ""  # For custom separator
 
+# ============================================================================
+# Pydantic Models for Module 3 - Agent
+# ============================================================================
+
+class AgentProfile(BaseModel):
+    id: Optional[str] = None
+    name: str
+    description: str
+    system_prompt: str
+    is_active: bool = True
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+class CreateProfileRequest(BaseModel):
+    name: str
+    description: str
+    system_prompt: str
+
+class UpdateProfileRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    system_prompt: Optional[str] = None
+    is_active: Optional[bool] = None
+
+class AgentChatRequest(BaseModel):
+    message: str
+    profile_id: str
+    conversation_history: Optional[List[Dict[str, str]]] = None
+
+class AgentChatResponse(BaseModel):
+    response: str
+    sources: List[Dict[str, Any]] = []
+    token_usage: Dict[str, int] = {}
+    trace_id: Optional[str] = None
+
+class AgentQueryRequest(BaseModel):
+    query: str
+    profile_id: str
+    top_k: int = 5
+
 # CORS middleware (adjust origins as needed for your environment)
 app.add_middleware(
     CORSMiddleware,
@@ -3216,7 +3256,8 @@ async def start_auto_process(
         "progress": 0,
         "started_at": datetime.now().isoformat(),
         "result": None,
-        "error": None
+        "error": None,
+        "cancelled": False
     }
     
     # Start background task
@@ -3235,11 +3276,36 @@ async def get_auto_process_status(job_id: str):
     return job
 
 
+@app.post("/api/process/auto/cancel/{job_id}")
+async def cancel_auto_process(job_id: str):
+    """Cancel an auto process job"""
+    if job_id not in auto_process_jobs:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+    
+    job = auto_process_jobs[job_id]
+    
+    if job["status"] in ["completed", "failed", "cancelled"]:
+        return {"success": False, "message": f"Job already {job['status']}"}
+    
+    print(f"\n🛑 [{job_id}] Cancelling auto process job...")
+    job["cancelled"] = True
+    job["status"] = "cancelled"
+    job["message"] = "Processamento cancelado pelo usuário"
+    job["cancelled_at"] = datetime.now().isoformat()
+    
+    return {"success": True, "message": "Job cancelled", "jobId": job_id}
+
+
 async def run_auto_process_background(job_id: str, request: AutoProcessRequest, user_token: Optional[str]):
     """Background task for auto process"""
     try:
         # Run the actual processing
         result = await execute_auto_process(job_id, request, user_token)
+        
+        # Check if cancelled before marking as completed
+        if auto_process_jobs[job_id].get("cancelled", False):
+            print(f"🛑 [{job_id}] Job was cancelled, not marking as completed")
+            return
         
         auto_process_jobs[job_id]["status"] = "completed"
         auto_process_jobs[job_id]["step"] = "done"
@@ -3247,14 +3313,22 @@ async def run_auto_process_background(job_id: str, request: AutoProcessRequest, 
         auto_process_jobs[job_id]["result"] = result
         auto_process_jobs[job_id]["completed_at"] = datetime.now().isoformat()
         
+    except asyncio.CancelledError:
+        print(f"🛑 [{job_id}] Background job cancelled")
+        auto_process_jobs[job_id]["status"] = "cancelled"
+        auto_process_jobs[job_id]["message"] = "Processamento cancelado"
+        auto_process_jobs[job_id]["cancelled_at"] = datetime.now().isoformat()
+        raise
     except Exception as e:
         print(f"💥 [{job_id}] Background job failed: {str(e)}")
         import traceback
         traceback.print_exc()
         
-        auto_process_jobs[job_id]["status"] = "failed"
-        auto_process_jobs[job_id]["error"] = str(e)
-        auto_process_jobs[job_id]["completed_at"] = datetime.now().isoformat()
+        # Only mark as failed if not cancelled
+        if not auto_process_jobs[job_id].get("cancelled", False):
+            auto_process_jobs[job_id]["status"] = "failed"
+            auto_process_jobs[job_id]["error"] = str(e)
+            auto_process_jobs[job_id]["completed_at"] = datetime.now().isoformat()
 
 
 async def execute_auto_process(job_id: str, request: AutoProcessRequest, user_token: Optional[str]) -> dict:
@@ -3284,8 +3358,14 @@ async def execute_auto_process(job_id: str, request: AutoProcessRequest, user_to
     print(f"  [{job_id}] Total files: {total_files}, Sample files: {sample_count}")
     print(f"  [{job_id}] Samples: {sample_files}")
     
+    # Helper to check if job was cancelled
+    def check_cancelled():
+        if job_id in auto_process_jobs and auto_process_jobs[job_id].get("cancelled", False):
+            raise asyncio.CancelledError(f"Job {job_id} was cancelled")
+    
     # Update job status
     def update_job(step: str, message: str, progress: int, **extra):
+        check_cancelled()
         auto_process_jobs[job_id].update({
             "step": step,
             "message": message,
@@ -3302,6 +3382,7 @@ async def execute_auto_process(job_id: str, request: AutoProcessRequest, user_to
     
     sample_texts = []
     for sf in sample_files:
+        check_cancelled()
         escaped_sf = sf.replace("'", "''")
         sample_sql = f"SELECT parsed_text FROM {parsed_table} WHERE file_name = '{escaped_sf}' LIMIT 1"
         sample_result = await execute_sql(config, warehouse_id, sample_sql, job_id)
@@ -3391,6 +3472,7 @@ Responda APENAS com JSON:
         sample_chunks = []
         
         for file_idx, file_name in enumerate(sample_files):
+            check_cancelled()
             escaped_file = file_name.replace("'", "''")
             strategy_progress[strat_key] = int((file_idx + 1) / sample_count * 100)
             
@@ -3457,24 +3539,28 @@ Responda APENAS com JSON:
     # Background task to update progress during parallel execution
     async def update_parallel_progress():
         while any(s != "completed" for s in strategy_status.values()):
-            avg_progress = sum(strategy_progress.values()) / 3
-            overall_progress = 15 + int(avg_progress * 0.40)  # 15-55%
-            
-            # Build status message showing which strategies are running
-            running = [k for k, v in strategy_status.items() if v == "processing"]
-            completed = [k for k, v in strategy_status.items() if v == "completed"]
-            
-            status_parts = []
-            if completed:
-                status_parts.append(f"✓ {', '.join(completed)}")
-            if running:
-                status_parts.append(f"⟳ {', '.join(running)}")
-            
-            status_msg = f"Estratégias em paralelo: {' | '.join(status_parts)}"
-            
-            update_job("chunking_parallel", status_msg, overall_progress,
-                      strategyProgress=strategy_progress, strategyStatus=strategy_status)
-            await asyncio.sleep(0.5)
+            try:
+                check_cancelled()
+                avg_progress = sum(strategy_progress.values()) / 3
+                overall_progress = 15 + int(avg_progress * 0.40)  # 15-55%
+                
+                # Build status message showing which strategies are running
+                running = [k for k, v in strategy_status.items() if v == "processing"]
+                completed = [k for k, v in strategy_status.items() if v == "completed"]
+                
+                status_parts = []
+                if completed:
+                    status_parts.append(f"✓ {', '.join(completed)}")
+                if running:
+                    status_parts.append(f"⟳ {', '.join(running)}")
+                
+                status_msg = f"Estratégias em paralelo: {' | '.join(status_parts)}"
+                
+                update_job("chunking_parallel", status_msg, overall_progress,
+                          strategyProgress=strategy_progress, strategyStatus=strategy_status)
+                await asyncio.sleep(0.5)
+            except asyncio.CancelledError:
+                break
     
     # Run all 3 strategies in parallel + progress updater
     progress_task = asyncio.create_task(update_parallel_progress())
@@ -3580,6 +3666,7 @@ Responda APENAS com um número de 1 a 10."""
         
         scores = []
         for q_idx, question in enumerate(questions_to_eval):
+            check_cancelled()
             score = await evaluate_single_question(temp_table, strat_label, question, q_idx)
             scores.append(score)
         
@@ -3608,23 +3695,27 @@ Responda APENAS com um número de 1 a 10."""
     # Background task to update progress while evaluations run
     async def update_eval_progress():
         while any(p != "completed" for p in eval_progress.values()):
-            active = [k for k, v in eval_progress.items() if v == "evaluating"]
-            completed = [k for k, v in eval_progress.items() if v == "completed"]
-            
-            if active:
-                msg = f"Avaliando em paralelo: {', '.join(active)}"
-                if completed:
-                    msg += f" (concluído: {', '.join(completed)})"
-            else:
-                msg = "Iniciando avaliações..."
-            
-            progress = 60 + len(completed) * 6
-            auto_process_jobs[job_id].update({
-                "message": msg,
-                "progress": progress,
-                "evalProgress": dict(eval_progress)
-            })
-            await asyncio.sleep(1)
+            try:
+                check_cancelled()
+                active = [k for k, v in eval_progress.items() if v == "evaluating"]
+                completed = [k for k, v in eval_progress.items() if v == "completed"]
+                
+                if active:
+                    msg = f"Avaliando em paralelo: {', '.join(active)}"
+                    if completed:
+                        msg += f" (concluído: {', '.join(completed)})"
+                else:
+                    msg = "Iniciando avaliações..."
+                
+                progress = 60 + len(completed) * 6
+                auto_process_jobs[job_id].update({
+                    "message": msg,
+                    "progress": progress,
+                    "evalProgress": dict(eval_progress)
+                })
+                await asyncio.sleep(1)
+            except asyncio.CancelledError:
+                break
     
     # Start progress updater
     progress_task = asyncio.create_task(update_eval_progress())
@@ -3696,6 +3787,7 @@ Responda APENAS com um número de 1 a 10."""
     
     final_chunks = 0
     for file_idx, file_name in enumerate(files):
+        check_cancelled()
         escaped_file = file_name.replace("'", "''")
         progress = 80 + int((file_idx + 1) / total_files * 15)
         update_job("applying", f"{best_label}: {file_name} ({file_idx + 1}/{total_files})", progress,
@@ -4559,6 +4651,696 @@ def chunk_by_sentence(text: str, chunk_size: int, overlap: int) -> List[str]:
         chunks.append(current_chunk.strip())
     
     return chunks
+
+
+# ============================================================================
+# Module 3: Agent Endpoints
+# ============================================================================
+
+# Default agent profiles (pre-configured)
+DEFAULT_PROFILES = [
+    {
+        "id": "buyer",
+        "name": "Comprador",
+        "description": "Analisa contratos verificando conformidade com padrões, cláusulas obrigatórias e termos legais",
+        "system_prompt": """Você é um especialista em análise de contratos para compradores. Seu objetivo é:
+
+1. Verificar se o contrato segue os padrões estabelecidos pela empresa
+2. Identificar cláusulas obrigatórias que podem estar faltando
+3. Avaliar termos e condições de pagamento
+4. Verificar prazos de entrega e penalidades
+5. Identificar riscos contratuais para o comprador
+
+Ao analisar documentos, seja objetivo e destaque:
+- Pontos de atenção e riscos
+- Cláusulas que precisam de revisão
+- Recomendações de melhoria
+
+Sempre cite o trecho específico do contrato ao fazer observações.""",
+        "is_active": True
+    },
+    {
+        "id": "analyst",
+        "name": "Analista",
+        "description": "Verifica cobertura de garantia, vigência, valores, multas e produtos cobertos",
+        "system_prompt": """Você é um analista de contratos especializado em verificar coberturas e condições. Seu objetivo é:
+
+1. Verificar se um produto ou serviço está coberto pela garantia
+2. Analisar períodos de vigência e validade
+3. Identificar valores, multas e penalidades
+4. Verificar condições de renovação e cancelamento
+5. Analisar SLAs e níveis de serviço acordados
+
+Ao responder perguntas:
+- Seja preciso com datas, valores e percentuais
+- Cite o trecho exato do contrato
+- Indique se a informação não foi encontrada nos documentos disponíveis
+
+Formate valores monetários e datas de forma clara.""",
+        "is_active": True
+    },
+    {
+        "id": "legal",
+        "name": "Jurídico",
+        "description": "Identifica riscos legais, cláusulas abusivas e pendências jurídicas",
+        "system_prompt": """Você é um consultor jurídico especializado em análise de riscos contratuais. Seu objetivo é:
+
+1. Identificar cláusulas potencialmente abusivas
+2. Avaliar riscos legais e regulatórios
+3. Verificar conformidade com legislação aplicável
+4. Identificar pendências e obrigações
+5. Analisar cláusulas de rescisão e penalidades
+
+Ao analisar contratos:
+- Destaque riscos em ordem de severidade (alto, médio, baixo)
+- Cite a legislação aplicável quando relevante
+- Recomende ajustes específicos
+- Identifique cláusulas que precisam de revisão jurídica
+
+Mantenha linguagem técnica mas acessível.""",
+        "is_active": True
+    }
+]
+
+
+def get_profiles_table_name(config: dict) -> str:
+    """Get full table name for agent profiles"""
+    return f"{config['catalog']}.{config['schema']}.agent_profiles"
+
+
+async def ensure_profiles_table_exists(config: dict, warehouse_id: str, request_id: str) -> bool:
+    """Create agent_profiles table if it doesn't exist"""
+    table_name = get_profiles_table_name(config)
+    
+    create_sql = f"""
+    CREATE TABLE IF NOT EXISTS {table_name} (
+        id STRING,
+        name STRING,
+        description STRING,
+        system_prompt STRING,
+        is_active BOOLEAN,
+        created_at TIMESTAMP,
+        updated_at TIMESTAMP
+    )
+    USING DELTA
+    """
+    
+    print(f"  📋 [{request_id}] Ensuring profiles table exists: {table_name}")
+    
+    result = await execute_sql(config, warehouse_id, create_sql, request_id)
+    if result is None:
+        print(f"  ⚠️ [{request_id}] Failed to create profiles table")
+        return False
+    
+    # Check if default profiles exist
+    check_sql = f"SELECT COUNT(*) as count FROM {table_name}"
+    count_result = await execute_sql(config, warehouse_id, check_sql, request_id)
+    
+    if count_result and count_result.get("data_array"):
+        count = int(count_result["data_array"][0][0])
+        if count == 0:
+            # Insert default profiles
+            print(f"  📝 [{request_id}] Inserting default profiles...")
+            for profile in DEFAULT_PROFILES:
+                escaped_prompt = profile["system_prompt"].replace("'", "''")
+                insert_sql = f"""
+                INSERT INTO {table_name} (id, name, description, system_prompt, is_active, created_at, updated_at)
+                VALUES (
+                    '{profile["id"]}',
+                    '{profile["name"]}',
+                    '{profile["description"]}',
+                    '{escaped_prompt}',
+                    {str(profile["is_active"]).lower()},
+                    current_timestamp(),
+                    current_timestamp()
+                )
+                """
+                await execute_sql(config, warehouse_id, insert_sql, request_id)
+            print(f"  ✅ [{request_id}] Default profiles inserted")
+    
+    return True
+
+
+@app.get("/api/profiles")
+async def list_profiles(
+    x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
+):
+    """List all agent profiles"""
+    request_id = str(uuid.uuid4())[:8]
+    print(f"\n{'='*60}")
+    print(f"📋 [{request_id}] GET /api/profiles")
+    print(f"{'='*60}")
+    
+    try:
+        config = get_databricks_config(x_forwarded_access_token)
+        warehouse_id = os.getenv("DATABRICKS_WAREHOUSE_ID")
+        
+        if not warehouse_id:
+            raise HTTPException(status_code=500, detail="DATABRICKS_WAREHOUSE_ID not configured")
+        
+        # Ensure table exists
+        await ensure_profiles_table_exists(config, warehouse_id, request_id)
+        
+        table_name = get_profiles_table_name(config)
+        sql = f"""
+        SELECT id, name, description, system_prompt, is_active, 
+               created_at, updated_at
+        FROM {table_name}
+        ORDER BY name
+        """
+        
+        result = await execute_sql(config, warehouse_id, sql, request_id)
+        
+        profiles = []
+        if result and result.get("data_array"):
+            for row in result["data_array"]:
+                profiles.append({
+                    "id": row[0],
+                    "name": row[1],
+                    "description": row[2],
+                    "system_prompt": row[3],
+                    "is_active": row[4],
+                    "created_at": row[5],
+                    "updated_at": row[6]
+                })
+        
+        print(f"  ✅ [{request_id}] Found {len(profiles)} profiles")
+        return {"profiles": profiles}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"  ❌ [{request_id}] Error listing profiles: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/profiles/{profile_id}")
+async def get_profile(
+    profile_id: str,
+    x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
+):
+    """Get a specific agent profile"""
+    request_id = str(uuid.uuid4())[:8]
+    print(f"\n{'='*60}")
+    print(f"📋 [{request_id}] GET /api/profiles/{profile_id}")
+    print(f"{'='*60}")
+    
+    try:
+        config = get_databricks_config(x_forwarded_access_token)
+        warehouse_id = os.getenv("DATABRICKS_WAREHOUSE_ID")
+        
+        if not warehouse_id:
+            raise HTTPException(status_code=500, detail="DATABRICKS_WAREHOUSE_ID not configured")
+        
+        table_name = get_profiles_table_name(config)
+        sql = f"""
+        SELECT id, name, description, system_prompt, is_active, 
+               created_at, updated_at
+        FROM {table_name}
+        WHERE id = '{profile_id}'
+        """
+        
+        result = await execute_sql(config, warehouse_id, sql, request_id)
+        
+        if result and result.get("data_array") and len(result["data_array"]) > 0:
+            row = result["data_array"][0]
+            profile = {
+                "id": row[0],
+                "name": row[1],
+                "description": row[2],
+                "system_prompt": row[3],
+                "is_active": row[4],
+                "created_at": row[5],
+                "updated_at": row[6]
+            }
+            print(f"  ✅ [{request_id}] Found profile: {profile['name']}")
+            return {"profile": profile}
+        
+        raise HTTPException(status_code=404, detail=f"Profile not found: {profile_id}")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"  ❌ [{request_id}] Error getting profile: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/profiles")
+async def create_profile(
+    request: CreateProfileRequest,
+    x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
+):
+    """Create a new agent profile"""
+    request_id = str(uuid.uuid4())[:8]
+    print(f"\n{'='*60}")
+    print(f"📋 [{request_id}] POST /api/profiles")
+    print(f"  Name: {request.name}")
+    print(f"{'='*60}")
+    
+    try:
+        config = get_databricks_config(x_forwarded_access_token)
+        warehouse_id = os.getenv("DATABRICKS_WAREHOUSE_ID")
+        
+        if not warehouse_id:
+            raise HTTPException(status_code=500, detail="DATABRICKS_WAREHOUSE_ID not configured")
+        
+        # Ensure table exists
+        await ensure_profiles_table_exists(config, warehouse_id, request_id)
+        
+        profile_id = str(uuid.uuid4())[:8]
+        table_name = get_profiles_table_name(config)
+        
+        escaped_name = request.name.replace("'", "''")
+        escaped_desc = request.description.replace("'", "''")
+        escaped_prompt = request.system_prompt.replace("'", "''")
+        
+        sql = f"""
+        INSERT INTO {table_name} (id, name, description, system_prompt, is_active, created_at, updated_at)
+        VALUES (
+            '{profile_id}',
+            '{escaped_name}',
+            '{escaped_desc}',
+            '{escaped_prompt}',
+            true,
+            current_timestamp(),
+            current_timestamp()
+        )
+        """
+        
+        result = await execute_sql(config, warehouse_id, sql, request_id)
+        
+        if result is not None:
+            print(f"  ✅ [{request_id}] Profile created: {profile_id}")
+            return {
+                "success": True,
+                "profile": {
+                    "id": profile_id,
+                    "name": request.name,
+                    "description": request.description,
+                    "system_prompt": request.system_prompt,
+                    "is_active": True
+                }
+            }
+        
+        raise HTTPException(status_code=500, detail="Failed to create profile")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"  ❌ [{request_id}] Error creating profile: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/api/profiles/{profile_id}")
+async def update_profile(
+    profile_id: str,
+    request: UpdateProfileRequest,
+    x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
+):
+    """Update an agent profile"""
+    request_id = str(uuid.uuid4())[:8]
+    print(f"\n{'='*60}")
+    print(f"📋 [{request_id}] PUT /api/profiles/{profile_id}")
+    print(f"{'='*60}")
+    
+    try:
+        config = get_databricks_config(x_forwarded_access_token)
+        warehouse_id = os.getenv("DATABRICKS_WAREHOUSE_ID")
+        
+        if not warehouse_id:
+            raise HTTPException(status_code=500, detail="DATABRICKS_WAREHOUSE_ID not configured")
+        
+        table_name = get_profiles_table_name(config)
+        
+        # Build SET clause dynamically
+        updates = []
+        if request.name is not None:
+            updates.append(f"name = '{request.name.replace(chr(39), chr(39)+chr(39))}'")
+        if request.description is not None:
+            updates.append(f"description = '{request.description.replace(chr(39), chr(39)+chr(39))}'")
+        if request.system_prompt is not None:
+            updates.append(f"system_prompt = '{request.system_prompt.replace(chr(39), chr(39)+chr(39))}'")
+        if request.is_active is not None:
+            updates.append(f"is_active = {str(request.is_active).lower()}")
+        
+        updates.append("updated_at = current_timestamp()")
+        
+        sql = f"""
+        UPDATE {table_name}
+        SET {', '.join(updates)}
+        WHERE id = '{profile_id}'
+        """
+        
+        result = await execute_sql(config, warehouse_id, sql, request_id)
+        
+        if result is not None:
+            print(f"  ✅ [{request_id}] Profile updated: {profile_id}")
+            return {"success": True, "profile_id": profile_id}
+        
+        raise HTTPException(status_code=500, detail="Failed to update profile")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"  ❌ [{request_id}] Error updating profile: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/profiles/{profile_id}")
+async def delete_profile(
+    profile_id: str,
+    x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
+):
+    """Delete an agent profile"""
+    request_id = str(uuid.uuid4())[:8]
+    print(f"\n{'='*60}")
+    print(f"📋 [{request_id}] DELETE /api/profiles/{profile_id}")
+    print(f"{'='*60}")
+    
+    try:
+        config = get_databricks_config(x_forwarded_access_token)
+        warehouse_id = os.getenv("DATABRICKS_WAREHOUSE_ID")
+        
+        if not warehouse_id:
+            raise HTTPException(status_code=500, detail="DATABRICKS_WAREHOUSE_ID not configured")
+        
+        table_name = get_profiles_table_name(config)
+        sql = f"DELETE FROM {table_name} WHERE id = '{profile_id}'"
+        
+        result = await execute_sql(config, warehouse_id, sql, request_id)
+        
+        if result is not None:
+            print(f"  ✅ [{request_id}] Profile deleted: {profile_id}")
+            return {"success": True, "profile_id": profile_id}
+        
+        raise HTTPException(status_code=500, detail="Failed to delete profile")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"  ❌ [{request_id}] Error deleting profile: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/agent/chat")
+async def agent_chat(
+    request: AgentChatRequest,
+    x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
+):
+    """
+    Chat with the AI agent using RAG (Vector Search + LLM).
+    Uses the selected profile's system prompt to guide responses.
+    """
+    request_id = str(uuid.uuid4())[:8]
+    print(f"\n{'='*60}")
+    print(f"🤖 [{request_id}] POST /api/agent/chat")
+    print(f"  Profile: {request.profile_id}")
+    print(f"  Message: {request.message[:100]}...")
+    print(f"{'='*60}")
+    
+    # Diagnostic info to return
+    diagnostics = {
+        "vector_search_status": "not_attempted",
+        "vector_search_error": None,
+        "index_name": None,
+        "llm_status": "not_attempted",
+        "llm_error": None
+    }
+    
+    try:
+        config = get_databricks_config(x_forwarded_access_token)
+        warehouse_id = os.getenv("DATABRICKS_WAREHOUSE_ID")
+        
+        if not warehouse_id:
+            raise HTTPException(status_code=500, detail="DATABRICKS_WAREHOUSE_ID not configured")
+        
+        # Get profile
+        table_name = get_profiles_table_name(config)
+        profile_sql = f"""
+        SELECT system_prompt, name FROM {table_name} WHERE id = '{request.profile_id}'
+        """
+        profile_result = await execute_sql(config, warehouse_id, profile_sql, request_id)
+        
+        if not profile_result or not profile_result.get("data_array"):
+            raise HTTPException(status_code=404, detail=f"Profile not found: {request.profile_id}")
+        
+        system_prompt = profile_result["data_array"][0][0]
+        profile_name = profile_result["data_array"][0][1]
+        print(f"  📝 [{request_id}] Using profile: {profile_name}")
+        
+        # Get chunks table and index names
+        chunks_table = f"{config['catalog']}.{config['schema']}.contracts_chunks"
+        index_name = f"{config['catalog']}.{config['schema']}.contracts_chunks_index"
+        diagnostics["index_name"] = index_name
+        
+        # Step 1: Check if Vector Index exists
+        print(f"  🔍 [{request_id}] Checking vector index: {index_name}")
+        
+        vs_check_url = f"https://{config['host']}/api/2.0/vector-search/indexes/{index_name}"
+        
+        sources = []
+        context_chunks = []
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            # Check index exists
+            check_response = await client.get(
+                vs_check_url,
+                headers={"Authorization": f"Bearer {config['token']}"}
+            )
+            
+            if check_response.status_code == 404:
+                diagnostics["vector_search_status"] = "index_not_found"
+                diagnostics["vector_search_error"] = f"Vector index '{index_name}' does not exist. Please create and sync the index in the 'Prepare Data' module first."
+                print(f"  ⚠️ [{request_id}] Vector index not found: {index_name}")
+            elif check_response.status_code != 200:
+                diagnostics["vector_search_status"] = "check_failed"
+                diagnostics["vector_search_error"] = f"Failed to check index status: {check_response.status_code}"
+                print(f"  ⚠️ [{request_id}] Failed to check index: {check_response.status_code}")
+            else:
+                # Index exists, check its status
+                index_info = check_response.json()
+                index_status = index_info.get("status", {}).get("ready", False)
+                
+                if not index_status:
+                    index_state = index_info.get("status", {}).get("index_status", "UNKNOWN")
+                    diagnostics["vector_search_status"] = "index_not_ready"
+                    diagnostics["vector_search_error"] = f"Vector index exists but is not ready. Status: {index_state}. Please wait for sync to complete."
+                    print(f"  ⚠️ [{request_id}] Index not ready: {index_state}")
+                else:
+                    # Index is ready, perform the search
+                    print(f"  🔍 [{request_id}] Querying vector index...")
+                    diagnostics["vector_search_status"] = "querying"
+                    
+                    vs_query_url = f"https://{config['host']}/api/2.0/vector-search/indexes/{index_name}/query"
+                    
+                    vs_response = await client.post(
+                        vs_query_url,
+                        headers={
+                            "Authorization": f"Bearer {config['token']}",
+                            "Content-Type": "application/json"
+                        },
+                        json={
+                            "query_text": request.message,
+                            "columns": ["chunk_id", "file_name", "chunk_index", "content"],
+                            "num_results": 5
+                        }
+                    )
+                    
+                    if vs_response.status_code == 200:
+                        vs_result = vs_response.json()
+                        result_data = vs_result.get("result", {})
+                        
+                        if "data_array" in result_data:
+                            for row in result_data["data_array"]:
+                                chunk_id = row[0] if len(row) > 0 else ""
+                                file_name = row[1] if len(row) > 1 else ""
+                                chunk_index = row[2] if len(row) > 2 else 0
+                                content = row[3] if len(row) > 3 else ""
+                                score = row[4] if len(row) > 4 else 0.0
+                                
+                                sources.append({
+                                    "chunk_id": chunk_id,
+                                    "file_name": file_name,
+                                    "chunk_index": chunk_index,
+                                    "content": content,
+                                    "score": float(score) if score else 0.0
+                                })
+                                context_chunks.append(f"[{file_name} - Parte {chunk_index}]\n{content}")
+                        
+                        diagnostics["vector_search_status"] = "success"
+                        print(f"  📄 [{request_id}] Found {len(sources)} relevant chunks")
+                        
+                        if len(sources) == 0:
+                            diagnostics["vector_search_error"] = "No relevant documents found for your query. The index may be empty or the query didn't match any content."
+                    else:
+                        diagnostics["vector_search_status"] = "query_failed"
+                        error_detail = vs_response.text[:200] if vs_response.text else "Unknown error"
+                        diagnostics["vector_search_error"] = f"Vector search query failed: {vs_response.status_code} - {error_detail}"
+                        print(f"  ⚠️ [{request_id}] Vector Search query failed: {vs_response.status_code}")
+                        print(f"      Response: {vs_response.text[:500]}")
+        
+        # Build context for LLM
+        if context_chunks:
+            context = "\n\n---\n\n".join(context_chunks)
+        else:
+            context = "Nenhum documento relevante encontrado no índice de busca vetorial."
+            if diagnostics["vector_search_error"]:
+                context += f"\n\nNota técnica: {diagnostics['vector_search_error']}"
+        
+        # Build conversation messages
+        messages = []
+        
+        if request.conversation_history:
+            for msg in request.conversation_history[-10:]:
+                messages.append(msg)
+        
+        user_message = f"""Contexto dos contratos relevantes:
+
+{context}
+
+---
+
+Pergunta do usuário: {request.message}"""
+        
+        messages.append({"role": "user", "content": user_message})
+        
+        # Call LLM via Model Serving
+        llm_endpoint = os.getenv("LLM_ENDPOINT", "databricks-meta-llama-3-3-70b-instruct")
+        llm_url = f"https://{config['host']}/serving-endpoints/{llm_endpoint}/invocations"
+        
+        print(f"  🧠 [{request_id}] Calling LLM: {llm_endpoint}")
+        diagnostics["llm_status"] = "calling"
+        
+        llm_payload = {
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                *messages
+            ],
+            "max_tokens": 2000,
+            "temperature": 0.1
+        }
+        
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            llm_response = await client.post(
+                llm_url,
+                headers={
+                    "Authorization": f"Bearer {config['token']}",
+                    "Content-Type": "application/json"
+                },
+                json=llm_payload
+            )
+        
+        if llm_response.status_code != 200:
+            diagnostics["llm_status"] = "failed"
+            diagnostics["llm_error"] = f"LLM call failed: {llm_response.status_code}"
+            print(f"  ❌ [{request_id}] LLM call failed: {llm_response.status_code}")
+            print(f"      Response: {llm_response.text[:500]}")
+            raise HTTPException(status_code=500, detail=f"LLM call failed: {llm_response.status_code}")
+        
+        llm_result = llm_response.json()
+        diagnostics["llm_status"] = "success"
+        
+        # Extract response and token usage
+        response_text = ""
+        token_usage = {}
+        
+        if "choices" in llm_result and len(llm_result["choices"]) > 0:
+            response_text = llm_result["choices"][0].get("message", {}).get("content", "")
+        
+        if "usage" in llm_result:
+            token_usage = {
+                "prompt_tokens": llm_result["usage"].get("prompt_tokens", 0),
+                "completion_tokens": llm_result["usage"].get("completion_tokens", 0),
+                "total_tokens": llm_result["usage"].get("total_tokens", 0)
+            }
+        
+        print(f"  ✅ [{request_id}] Response generated ({token_usage.get('total_tokens', 0)} tokens)")
+        
+        return {
+            "response": response_text,
+            "sources": sources,
+            "token_usage": token_usage,
+            "trace_id": request_id,
+            "profile_name": profile_name,
+            "diagnostics": diagnostics
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"  ❌ [{request_id}] Error in agent chat: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/agent/query")
+async def agent_query(
+    request: AgentQueryRequest,
+    x_forwarded_access_token: Optional[str] = Header(None, alias="x-forwarded-access-token")
+):
+    """
+    Query the vector index directly without LLM processing.
+    Useful for testing retrieval quality.
+    """
+    request_id = str(uuid.uuid4())[:8]
+    print(f"\n{'='*60}")
+    print(f"🔍 [{request_id}] POST /api/agent/query")
+    print(f"  Query: {request.query[:100]}...")
+    print(f"  Top K: {request.top_k}")
+    print(f"{'='*60}")
+    
+    try:
+        config = get_databricks_config(x_forwarded_access_token)
+        index_name = f"{config['catalog']}.{config['schema']}.contracts_chunks_index"
+        
+        vs_url = f"https://{config['host']}/api/2.0/vector-search/indexes/{index_name}/query"
+        
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            vs_response = await client.post(
+                vs_url,
+                headers={
+                    "Authorization": f"Bearer {config['token']}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "query_text": request.query,
+                    "columns": ["chunk_id", "file_name", "chunk_index", "content"],
+                    "num_results": request.top_k
+                }
+            )
+        
+        if vs_response.status_code != 200:
+            print(f"  ❌ [{request_id}] Vector Search failed: {vs_response.status_code}")
+            raise HTTPException(status_code=500, detail=f"Vector Search failed: {vs_response.status_code}")
+        
+        vs_result = vs_response.json()
+        result_data = vs_result.get("result", {})
+        
+        results = []
+        if "data_array" in result_data:
+            for row in result_data["data_array"]:
+                results.append({
+                    "chunk_id": row[0] if len(row) > 0 else "",
+                    "file_name": row[1] if len(row) > 1 else "",
+                    "chunk_index": row[2] if len(row) > 2 else 0,
+                    "content": row[3] if len(row) > 3 else "",
+                    "score": row[4] if len(row) > 4 else 0.0
+                })
+        
+        print(f"  ✅ [{request_id}] Found {len(results)} results")
+        
+        return {
+            "query": request.query,
+            "results": results,
+            "total": len(results)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"  ❌ [{request_id}] Error in agent query: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================================================

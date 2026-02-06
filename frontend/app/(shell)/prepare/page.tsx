@@ -236,6 +236,8 @@ export default function PreparePage() {
     message: "",
     progress: 0
   })
+  const [currentJobId, setCurrentJobId] = useState<string | null>(null)
+  const [isCancelling, setIsCancelling] = useState(false)
   const [showQuestions, setShowQuestions] = useState(false)
   const [showStrategies, setShowStrategies] = useState(false)
   const [showEvaluationResults, setShowEvaluationResults] = useState(false)
@@ -771,6 +773,8 @@ export default function PreparePage() {
       
       const { jobId } = await startResponse.json()
       console.log("[AutoProcess] Job started with ID:", jobId)
+      setCurrentJobId(jobId)
+      setIsCancelling(false)
       
       // Poll for job status
       let result: {
@@ -786,10 +790,18 @@ export default function PreparePage() {
       } | null = null
       let pollCount = 0
       const maxPolls = 300 // 5 minutes max (1 poll per second)
+      let shouldStopPolling = false
       
-      while (pollCount < maxPolls) {
+      while (pollCount < maxPolls && !shouldStopPolling) {
         await new Promise(resolve => setTimeout(resolve, 1000)) // Poll every 1 second
         pollCount++
+        
+        // Check if cancelled
+        if (isCancelling) {
+          console.log("[AutoProcess] Cancellation requested, stopping poll")
+          shouldStopPolling = true
+          break
+        }
         
         try {
           const statusResponse = await fetch(`/api/process/auto/status/${jobId}`)
@@ -800,6 +812,26 @@ export default function PreparePage() {
           
           const jobStatus = await statusResponse.json()
           console.log(`[AutoProcess] Poll ${pollCount}: ${jobStatus.status} - ${jobStatus.step}`)
+          
+          // Check if job was cancelled or failed
+          if (jobStatus.status === "cancelled") {
+            console.log("[AutoProcess] Job was cancelled")
+            setAutoProcessStatus({
+              step: "error",
+              message: "Processamento cancelado pelo usuário",
+              progress: 0
+            })
+            setProcessingStatus({
+              status: "error",
+              message: "Processamento cancelado",
+              progress: 0,
+              totalFiles: filesToProcess.length,
+              processedFiles: 0
+            })
+            toast.warning("Processamento cancelado")
+            shouldStopPolling = true
+            break
+          }
           
           // Update UI based on backend status
           if (jobStatus.step && jobStatus.message) {
@@ -870,9 +902,16 @@ export default function PreparePage() {
         }
       }
       
+      if (shouldStopPolling) {
+        setCurrentJobId(null)
+        return
+      }
+      
       if (!result) {
         throw new Error("Timeout aguardando processamento")
       }
+      
+      setCurrentJobId(null)
       
       console.log("[AutoProcess] Final result:", result)
       
@@ -954,6 +993,59 @@ export default function PreparePage() {
         description: errorMessage,
         duration: 10000
       })
+    } finally {
+      setCurrentJobId(null)
+      setIsCancelling(false)
+    }
+  }
+  
+  // Cancel auto processing
+  async function cancelAutoProcessing() {
+    if (!currentJobId) {
+      return
+    }
+    
+    setIsCancelling(true)
+    console.log("[AutoProcess] Cancelling job:", currentJobId)
+    
+    try {
+      const cancelResponse = await fetch(`/api/process/auto/cancel/${currentJobId}`, {
+        method: "POST"
+      })
+      
+      if (!cancelResponse.ok) {
+        const errorText = await cancelResponse.text()
+        throw new Error(`Falha ao cancelar: HTTP ${cancelResponse.status}`)
+      }
+      
+      const cancelResult = await cancelResponse.json()
+      console.log("[AutoProcess] Cancel response:", cancelResult)
+      
+      if (cancelResult.success) {
+        setAutoProcessStatus({
+          step: "error",
+          message: "Processamento cancelado pelo usuário",
+          progress: 0
+        })
+        setProcessingStatus({
+          status: "error",
+          message: "Processamento cancelado",
+          progress: 0,
+          totalFiles: 0,
+          processedFiles: 0
+        })
+        toast.warning("Processamento cancelado")
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Erro ao cancelar"
+      console.error("[AutoProcess] Cancel error:", errorMessage)
+      toast.error("Erro ao cancelar processamento", {
+        description: errorMessage,
+        duration: 7000
+      })
+    } finally {
+      setCurrentJobId(null)
+      setIsCancelling(false)
     }
   }
   
@@ -1918,6 +2010,25 @@ export default function PreparePage() {
                   : "bg-gray-100 text-gray-600"
               }`}>
                 {formatTime(totalProcessingTime)}
+              </span>
+            )}
+            {currentJobId && 
+             autoProcessStatus.step !== "completed" && 
+             autoProcessStatus.step !== "error" && 
+             !isCancelling && (
+              <button
+                onClick={cancelAutoProcessing}
+                disabled={isCancelling}
+                className="ml-2 px-3 py-1.5 text-sm font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+              >
+                <X className="h-4 w-4" />
+                Cancelar
+              </button>
+            )}
+            {isCancelling && (
+              <span className="ml-2 text-sm text-gray-500 flex items-center gap-1.5">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Cancelando...
               </span>
             )}
           </div>
