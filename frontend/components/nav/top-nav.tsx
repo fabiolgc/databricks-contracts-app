@@ -48,6 +48,7 @@ export function TopNav() {
   const navItems = [
     { href: "/import", labelKey: "app.nav.import" },
     { href: "/prepare", labelKey: "app.nav.prepare" },
+    { href: "/agent", labelKey: "app.nav.agent" },
   ]
 
   useEffect(() => {

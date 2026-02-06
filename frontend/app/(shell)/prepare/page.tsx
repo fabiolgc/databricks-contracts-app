@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useCallback } from "react"
 import { 
   Database, 
   FileText, 
@@ -22,6 +22,8 @@ import {
 } from "lucide-react"
 import { toast, Toaster } from "sonner"
 import { useTranslation } from "@/lib/i18n"
+
+const AUTO_PROCESS_JOB_KEY = "databricks-contracts-app-autoprocess-jobId"
 
 // Helper function to format time in MM:SS
 function formatTime(seconds: number): string {
@@ -238,6 +240,15 @@ export default function PreparePage() {
   })
   const [currentJobId, setCurrentJobId] = useState<string | null>(null)
   const [isCancelling, setIsCancelling] = useState(false)
+  const isCancellingRef = useRef(false)
+  const clearStoredJobId = useCallback(() => {
+    setCurrentJobId(null)
+    try { localStorage.removeItem(AUTO_PROCESS_JOB_KEY) } catch { /* ignore */ }
+  }, [])
+  const persistJobId = useCallback((id: string) => {
+    setCurrentJobId(id)
+    try { localStorage.setItem(AUTO_PROCESS_JOB_KEY, id) } catch { /* ignore */ }
+  }, [])
   const [showQuestions, setShowQuestions] = useState(false)
   const [showStrategies, setShowStrategies] = useState(false)
   const [showEvaluationResults, setShowEvaluationResults] = useState(false)
@@ -371,7 +382,153 @@ export default function PreparePage() {
     }
     loadConfig()
   }, [])
-  
+
+  // Reconnect to running auto process job on mount (e.g. after page reload)
+  useEffect(() => {
+    let cancelled = false
+    const jobId = typeof window !== "undefined" ? localStorage.getItem(AUTO_PROCESS_JOB_KEY) : null
+    if (!jobId) return
+
+    const reconnect = async () => {
+      try {
+        const statusResponse = await fetch(`/api/process/auto/status/${jobId}`)
+        if (!statusResponse.ok || cancelled) {
+          clearStoredJobId()
+          return
+        }
+        const job = await statusResponse.json()
+
+        if (job.status === "running") {
+          const stepMap: Record<string, string> = {
+            generating_questions: "generating_questions",
+            chunking_parallel: "chunking_parallel",
+            chunking_a: "chunking_a",
+            chunking_b: "chunking_b",
+            chunking_c: "chunking_c",
+            evaluating: "evaluating",
+            applying: "applying"
+          }
+          const frontendStep = stepMap[job.step] || job.step
+          setCurrentJobId(jobId)
+          isCancellingRef.current = false
+          setProcessingStatus({
+            status: "processing",
+            message: job.message || "Processamento em andamento...",
+            progress: job.progress || 0,
+            totalFiles: job.totalFiles || 0,
+            processedFiles: 0
+          })
+          setAutoProcessStatus(prev => ({
+            ...prev,
+            step: frontendStep,
+            message: job.message || prev.message,
+            progress: job.progress ?? prev.progress,
+            currentFile: job.currentFile,
+            currentFileIndex: job.currentFileIndex,
+            totalFiles: job.totalFiles,
+            questions: job.questions || prev.questions,
+            evaluationA: job.evaluationA || prev.evaluationA,
+            evaluationB: job.evaluationB || prev.evaluationB,
+            evaluationC: job.evaluationC || prev.evaluationC,
+            bestStrategy: job.bestStrategy || prev.bestStrategy,
+            tables: job.tables || prev.tables,
+            strategyProgress: job.strategyProgress || prev.strategyProgress,
+            strategyStatus: job.strategyStatus || prev.strategyStatus
+          }))
+          const startedAt = job.started_at ? new Date(job.started_at).getTime() : Date.now()
+          setProcessingStartTime(startedAt)
+          currentStepRef.current = frontendStep
+          setStepStartTimes(prev => (prev[frontendStep] ? prev : { ...prev, [frontendStep]: startedAt }))
+          toast.info("Processamento em andamento reconectado")
+          pollAutoProcessJob(jobId, job.totalFiles || 0)
+            .then(r => {
+              if (cancelled) return
+              if (r && "cancelled" in r) {
+                clearStoredJobId()
+                return
+              }
+              if (r && "result" in r && r.result.success) {
+                const res = r.result
+                const strategyLabels: Record<string, string> = {
+                  recursive: t("prepare.autoProcess.steps.recursive"),
+                  fixed_size: t("prepare.autoProcess.steps.fixedSize"),
+                  structural: t("prepare.autoProcess.steps.structural")
+                }
+                const bestKey = res.bestStrategy || "recursive"
+                const bestLabel = strategyLabels[bestKey] || bestKey
+                setAutoProcessStatus({
+                  step: "applying",
+                  message: `Estratégia ${bestLabel} aplicada: ${res.finalChunks} chunks`,
+                  progress: 85,
+                  evaluationA: res.evaluations?.recursive,
+                  evaluationB: res.evaluations?.fixed_size,
+                  evaluationC: res.evaluations?.structural,
+                  bestStrategy: res.bestStrategy,
+                  finalChunks: res.finalChunks,
+                  sampleFiles: res.sampleFilesUsed,
+                  questions: res.questions,
+                  tables: res.tables,
+                  indexName: res.indexName
+                })
+                setProcessingStatus({ status: "idle", message: "", progress: 100, totalFiles: 0, processedFiles: 0 })
+                if (res.finalChunks != null) createVectorIndexAfterProcessing(res.finalChunks)
+              }
+              clearStoredJobId()
+            })
+            .catch(err => {
+              if (!cancelled) {
+                setAutoProcessStatus({ step: "error", message: err instanceof Error ? err.message : "Erro", progress: 0 })
+                setProcessingStatus({ status: "error", message: err instanceof Error ? err.message : "", progress: 0, totalFiles: 0, processedFiles: 0 })
+              }
+              clearStoredJobId()
+            })
+        } else if (job.status === "completed" && job.result) {
+          clearStoredJobId()
+          const result = job.result
+          const strategyLabels: Record<string, string> = {
+            recursive: t("prepare.autoProcess.steps.recursive"),
+            fixed_size: t("prepare.autoProcess.steps.fixedSize"),
+            structural: t("prepare.autoProcess.steps.structural")
+          }
+          const bestStrategyKey = result.bestStrategy || "recursive"
+          const bestStrategyLabel = strategyLabels[bestStrategyKey] || bestStrategyKey
+          setAutoProcessStatus({
+            step: "applying",
+            message: `Estratégia ${bestStrategyLabel} aplicada: ${result.finalChunks} chunks`,
+            progress: 85,
+            evaluationA: result.evaluations?.recursive,
+            evaluationB: result.evaluations?.fixed_size,
+            evaluationC: result.evaluations?.structural,
+            bestStrategy: result.bestStrategy,
+            finalChunks: result.finalChunks,
+            sampleFiles: result.sampleFilesUsed,
+            questions: result.questions,
+            tables: result.tables,
+            indexName: result.indexName
+          })
+          setProcessingStatus({ status: "idle", message: "", progress: 100, totalFiles: 0, processedFiles: 0 })
+          if (result.success && result.finalChunks != null) {
+            createVectorIndexAfterProcessing(result.finalChunks)
+          }
+        } else if (job.status === "failed") {
+          clearStoredJobId()
+          setAutoProcessStatus({ step: "error", message: job.error || "Processamento falhou", progress: 0 })
+          setProcessingStatus({ status: "error", message: job.error || "", progress: 0, totalFiles: 0, processedFiles: 0 })
+        } else if (job.status === "cancelled") {
+          clearStoredJobId()
+          setAutoProcessStatus({ step: "error", message: "Processamento cancelado pelo usuário", progress: 0 })
+          setProcessingStatus({ status: "error", message: "Processamento cancelado", progress: 0, totalFiles: 0, processedFiles: 0 })
+        } else {
+          clearStoredJobId()
+        }
+      } catch {
+        clearStoredJobId()
+      }
+    }
+    reconnect()
+    return () => { cancelled = true }
+  }, [clearStoredJobId, t])
+
   // Auto-load documents when step 2 is active and config is saved
   useEffect(() => {
     if (activeStep === 2 && isConfigSaved && parsedDocuments.length === 0 && !isLoadingDocuments) {
@@ -705,6 +862,97 @@ export default function PreparePage() {
     }
   }
 
+  type AutoProcessResult = {
+    success: boolean
+    bestStrategy?: string
+    evaluations?: Record<string, StrategyEvaluation>
+    finalChunks?: number
+    sampleFilesUsed?: number
+    questions?: string[]
+    tables?: { chunks: string; tempRecursive: string; tempFixedSize: string; tempStructural: string }
+    indexName?: string
+    error?: string
+  }
+
+  async function pollAutoProcessJob(
+    jobId: string,
+    filesCount: number
+  ): Promise<{ result: AutoProcessResult } | { cancelled: true }> {
+    let result: AutoProcessResult | null = null
+    let pollCount = 0
+    const maxPolls = 300
+    let shouldStopPolling = false
+    const stepMap: Record<string, string> = {
+      generating_questions: "generating_questions",
+      chunking_parallel: "chunking_parallel",
+      chunking_a: "chunking_a",
+      chunking_b: "chunking_b",
+      chunking_c: "chunking_c",
+      evaluating: "evaluating",
+      applying: "applying"
+    }
+    while (pollCount < maxPolls && !shouldStopPolling) {
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      pollCount++
+      if (isCancellingRef.current) {
+        shouldStopPolling = true
+        break
+      }
+      try {
+        const statusResponse = await fetch(`/api/process/auto/status/${jobId}`)
+        if (!statusResponse.ok) continue
+        const jobStatus = await statusResponse.json()
+        if (jobStatus.status === "cancelled") {
+          setAutoProcessStatus({ step: "error", message: "Processamento cancelado pelo usuário", progress: 0 })
+          setProcessingStatus({ status: "error", message: "Processamento cancelado", progress: 0, totalFiles: filesCount, processedFiles: 0 })
+          toast.warning("Processamento cancelado")
+          return { cancelled: true }
+        }
+        if (jobStatus.step && jobStatus.message) {
+          const frontendStep = stepMap[jobStatus.step] || jobStatus.step
+          const prevStep = currentStepRef.current
+          if (frontendStep !== prevStep) {
+            const now = Date.now()
+            if (prevStep) setStepEndTimes(prev => ({ ...prev, [prevStep]: now }))
+            setStepStartTimes(prev => (!prev[frontendStep] ? { ...prev, [frontendStep]: now } : prev))
+            currentStepRef.current = frontendStep
+          }
+          setAutoProcessStatus(prev => ({
+            ...prev,
+            step: frontendStep,
+            message: jobStatus.message,
+            progress: jobStatus.progress ?? prev.progress,
+            currentFile: jobStatus.currentFile,
+            currentFileIndex: jobStatus.currentFileIndex,
+            sampleFiles: jobStatus.sampleFiles,
+            totalFiles: jobStatus.totalFiles,
+            questions: jobStatus.questions ?? prev.questions,
+            evaluationA: jobStatus.evaluationA ?? prev.evaluationA,
+            evaluationB: jobStatus.evaluationB ?? prev.evaluationB,
+            evaluationC: jobStatus.evaluationC ?? prev.evaluationC,
+            bestStrategy: jobStatus.bestStrategy ?? prev.bestStrategy,
+            tables: jobStatus.tables ?? prev.tables,
+            strategyProgress: jobStatus.strategyProgress ?? prev.strategyProgress,
+            strategyStatus: jobStatus.strategyStatus ?? prev.strategyStatus
+          }))
+        }
+        if (jobStatus.status === "completed" && jobStatus.result) {
+          result = jobStatus.result
+          break
+        }
+        if (jobStatus.status === "failed") {
+          throw new Error(jobStatus.error || "Processamento falhou")
+        }
+      } catch (pollError) {
+        if (pollError instanceof Error && pollError.message.includes("Processamento falhou")) throw pollError
+        console.warn("[AutoProcess] Poll error:", pollError)
+      }
+    }
+    if (shouldStopPolling) return { cancelled: true }
+    if (!result) throw new Error("Timeout aguardando processamento")
+    return { result }
+  }
+
   // Start auto processing with evaluation
   async function startAutoProcessing() {
     if (selectedDocuments.size === 0) {
@@ -773,146 +1021,21 @@ export default function PreparePage() {
       
       const { jobId } = await startResponse.json()
       console.log("[AutoProcess] Job started with ID:", jobId)
-      setCurrentJobId(jobId)
+      persistJobId(jobId)
       setIsCancelling(false)
+      isCancellingRef.current = false
       
-      // Poll for job status
-      let result: {
-        success: boolean
-        bestStrategy?: string
-        evaluations?: Record<string, StrategyEvaluation>
-        finalChunks?: number
-        sampleFilesUsed?: number
-        questions?: string[]
-        tables?: { chunks: string; tempRecursive: string; tempFixedSize: string; tempStructural: string }
-        indexName?: string
-        error?: string
-      } | null = null
-      let pollCount = 0
-      const maxPolls = 300 // 5 minutes max (1 poll per second)
-      let shouldStopPolling = false
-      
-      while (pollCount < maxPolls && !shouldStopPolling) {
-        await new Promise(resolve => setTimeout(resolve, 1000)) // Poll every 1 second
-        pollCount++
-        
-        // Check if cancelled
-        if (isCancelling) {
-          console.log("[AutoProcess] Cancellation requested, stopping poll")
-          shouldStopPolling = true
-          break
-        }
-        
-        try {
-          const statusResponse = await fetch(`/api/process/auto/status/${jobId}`)
-          if (!statusResponse.ok) {
-            console.warn(`[AutoProcess] Status poll failed: ${statusResponse.status}`)
-            continue
-          }
-          
-          const jobStatus = await statusResponse.json()
-          console.log(`[AutoProcess] Poll ${pollCount}: ${jobStatus.status} - ${jobStatus.step}`)
-          
-          // Check if job was cancelled or failed
-          if (jobStatus.status === "cancelled") {
-            console.log("[AutoProcess] Job was cancelled")
-            setAutoProcessStatus({
-              step: "error",
-              message: "Processamento cancelado pelo usuário",
-              progress: 0
-            })
-            setProcessingStatus({
-              status: "error",
-              message: "Processamento cancelado",
-              progress: 0,
-              totalFiles: filesToProcess.length,
-              processedFiles: 0
-            })
-            toast.warning("Processamento cancelado")
-            shouldStopPolling = true
-            break
-          }
-          
-          // Update UI based on backend status
-          if (jobStatus.step && jobStatus.message) {
-            // Map backend step to frontend step
-            const stepMap: Record<string, string> = {
-              generating_questions: "generating_questions",
-              chunking_parallel: "chunking_parallel",
-              chunking_a: "chunking_a",
-              chunking_b: "chunking_b",
-              chunking_c: "chunking_c",
-              evaluating: "evaluating",
-              applying: "applying"
-            }
-            const frontendStep = stepMap[jobStatus.step] || jobStatus.step
-            
-            // Update step times using ref for sync comparison
-            const prevStep = currentStepRef.current
-            if (frontendStep !== prevStep) {
-              const now = Date.now()
-              if (prevStep) {
-                setStepEndTimes(prev => ({ ...prev, [prevStep]: now }))
-              }
-              setStepStartTimes(prev => {
-                // Only set if not already set
-                if (!prev[frontendStep]) {
-                  return { ...prev, [frontendStep]: now }
-                }
-                return prev
-              })
-              currentStepRef.current = frontendStep
-            }
-            
-            setAutoProcessStatus(prev => ({
-              ...prev,
-              step: frontendStep,
-              message: jobStatus.message,
-              progress: jobStatus.progress || prev.progress,
-              currentFile: jobStatus.currentFile,
-              currentFileIndex: jobStatus.currentFileIndex,
-              sampleFiles: jobStatus.sampleFiles,
-              totalFiles: jobStatus.totalFiles,
-              questions: jobStatus.questions || prev.questions,
-              // Update evaluation results and tables in real-time
-              evaluationA: jobStatus.evaluationA || prev.evaluationA,
-              evaluationB: jobStatus.evaluationB || prev.evaluationB,
-              evaluationC: jobStatus.evaluationC || prev.evaluationC,
-              bestStrategy: jobStatus.bestStrategy || prev.bestStrategy,
-              tables: jobStatus.tables || prev.tables,
-              // Parallel chunking progress
-              strategyProgress: jobStatus.strategyProgress || prev.strategyProgress,
-              strategyStatus: jobStatus.strategyStatus || prev.strategyStatus
-            }))
-          }
-          
-          if (jobStatus.status === "completed" && jobStatus.result) {
-            result = jobStatus.result
-            break
-          }
-          
-          if (jobStatus.status === "failed") {
-            throw new Error(jobStatus.error || "Processamento falhou")
-          }
-        } catch (pollError) {
-          if (pollError instanceof Error && pollError.message.includes("Processamento falhou")) {
-            throw pollError
-          }
-          console.warn(`[AutoProcess] Poll error (continuing):`, pollError)
-        }
-      }
-      
-      if (shouldStopPolling) {
-        setCurrentJobId(null)
+      const pollResult = await pollAutoProcessJob(jobId, filesToProcess.length)
+      if (pollResult && "cancelled" in pollResult) {
+        clearStoredJobId()
         return
       }
-      
-      if (!result) {
-        throw new Error("Timeout aguardando processamento")
+      if (!pollResult || !("result" in pollResult)) {
+        clearStoredJobId()
+        return
       }
-      
-      setCurrentJobId(null)
-      
+      const result = pollResult.result
+      clearStoredJobId()
       console.log("[AutoProcess] Final result:", result)
       
       if (result.success) {
@@ -994,7 +1117,7 @@ export default function PreparePage() {
         duration: 10000
       })
     } finally {
-      setCurrentJobId(null)
+      clearStoredJobId()
       setIsCancelling(false)
     }
   }
@@ -1006,6 +1129,7 @@ export default function PreparePage() {
     }
     
     setIsCancelling(true)
+    isCancellingRef.current = true
     console.log("[AutoProcess] Cancelling job:", currentJobId)
     
     try {
@@ -1044,7 +1168,7 @@ export default function PreparePage() {
         duration: 7000
       })
     } finally {
-      setCurrentJobId(null)
+      clearStoredJobId()
       setIsCancelling(false)
     }
   }

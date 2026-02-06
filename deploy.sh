@@ -30,7 +30,7 @@ echo "────────────────────────�
 (
   cd frontend
   echo "  → Installing dependencies..."
-  npm ci --quiet
+  npm install --quiet
   
   echo "  → Building static export..."
   npm run build
