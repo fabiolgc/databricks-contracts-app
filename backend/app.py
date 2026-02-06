@@ -5088,9 +5088,11 @@ async def agent_chat(
         profile_name = profile_result["data_array"][0][1]
         print(f"  📝 [{request_id}] Using profile: {profile_name}")
         
-        # Get chunks table and index names
-        chunks_table = f"{config['catalog']}.{config['schema']}.contracts_chunks"
-        index_name = f"{config['catalog']}.{config['schema']}.contracts_chunks_index"
+        # Get chunks table and index names (using same pattern as Prepare module)
+        # tableName = contracts -> chunks = contracts_chunks, index = contracts_vs
+        base_table = "contracts"  # Default table name from settings
+        chunks_table = f"{config['catalog']}.{config['schema']}.{base_table}_chunks"
+        index_name = f"{config['catalog']}.{config['schema']}.{base_table}_vs"
         diagnostics["index_name"] = index_name
         
         # Step 1: Check if Vector Index exists
@@ -5141,7 +5143,7 @@ async def agent_chat(
                         },
                         json={
                             "query_text": request.message,
-                            "columns": ["chunk_id", "file_name", "chunk_index", "content"],
+                            "columns": ["id", "file_name", "chunk_index", "chunk_content"],
                             "num_results": 5
                         }
                     )
@@ -5292,7 +5294,8 @@ async def agent_query(
     
     try:
         config = get_databricks_config(x_forwarded_access_token)
-        index_name = f"{config['catalog']}.{config['schema']}.contracts_chunks_index"
+        base_table = "contracts"  # Default table name from settings
+        index_name = f"{config['catalog']}.{config['schema']}.{base_table}_vs"
         
         vs_url = f"https://{config['host']}/api/2.0/vector-search/indexes/{index_name}/query"
         
@@ -5305,7 +5308,7 @@ async def agent_query(
                 },
                 json={
                     "query_text": request.query,
-                    "columns": ["chunk_id", "file_name", "chunk_index", "content"],
+                    "columns": ["id", "file_name", "chunk_index", "chunk_content"],
                     "num_results": request.top_k
                 }
             )

@@ -241,8 +241,12 @@ export default function PreparePage() {
   const [currentJobId, setCurrentJobId] = useState<string | null>(null)
   const [isCancelling, setIsCancelling] = useState(false)
   const isCancellingRef = useRef(false)
+  const [hasStoredJobId, setHasStoredJobId] = useState(() =>
+    typeof window !== "undefined" ? !!localStorage.getItem(AUTO_PROCESS_JOB_KEY) : false
+  )
   const clearStoredJobId = useCallback(() => {
     setCurrentJobId(null)
+    setHasStoredJobId(false)
     try { localStorage.removeItem(AUTO_PROCESS_JOB_KEY) } catch { /* ignore */ }
   }, [])
   const persistJobId = useCallback((id: string) => {
@@ -393,6 +397,7 @@ export default function PreparePage() {
       try {
         const statusResponse = await fetch(`/api/process/auto/status/${jobId}`)
         if (!statusResponse.ok || cancelled) {
+          setActiveStep(2)
           clearStoredJobId()
           return
         }
@@ -410,6 +415,7 @@ export default function PreparePage() {
           }
           const frontendStep = stepMap[job.step] || job.step
           setCurrentJobId(jobId)
+          setActiveStep(null)
           isCancellingRef.current = false
           setProcessingStatus({
             status: "processing",
@@ -473,6 +479,7 @@ export default function PreparePage() {
                 setProcessingStatus({ status: "idle", message: "", progress: 100, totalFiles: 0, processedFiles: 0 })
                 if (res.finalChunks != null) createVectorIndexAfterProcessing(res.finalChunks)
               }
+              setActiveStep(2)
               clearStoredJobId()
             })
             .catch(err => {
@@ -480,9 +487,11 @@ export default function PreparePage() {
                 setAutoProcessStatus({ step: "error", message: err instanceof Error ? err.message : "Erro", progress: 0 })
                 setProcessingStatus({ status: "error", message: err instanceof Error ? err.message : "", progress: 0, totalFiles: 0, processedFiles: 0 })
               }
+              setActiveStep(2)
               clearStoredJobId()
             })
         } else if (job.status === "completed" && job.result) {
+          setActiveStep(2)
           clearStoredJobId()
           const result = job.result
           const strategyLabels: Record<string, string> = {
@@ -511,17 +520,21 @@ export default function PreparePage() {
             createVectorIndexAfterProcessing(result.finalChunks)
           }
         } else if (job.status === "failed") {
+          setActiveStep(2)
           clearStoredJobId()
           setAutoProcessStatus({ step: "error", message: job.error || "Processamento falhou", progress: 0 })
           setProcessingStatus({ status: "error", message: job.error || "", progress: 0, totalFiles: 0, processedFiles: 0 })
         } else if (job.status === "cancelled") {
+          setActiveStep(2)
           clearStoredJobId()
           setAutoProcessStatus({ step: "error", message: "Processamento cancelado pelo usuário", progress: 0 })
           setProcessingStatus({ status: "error", message: "Processamento cancelado", progress: 0, totalFiles: 0, processedFiles: 0 })
         } else {
+          setActiveStep(2)
           clearStoredJobId()
         }
       } catch {
+        setActiveStep(2)
         clearStoredJobId()
       }
     }
@@ -529,12 +542,13 @@ export default function PreparePage() {
     return () => { cancelled = true }
   }, [clearStoredJobId, t])
 
-  // Auto-load documents when step 2 is active and config is saved
+  // Auto-load documents when step 2 is active and config is saved (skip if reconnecting to a running job)
   useEffect(() => {
+    if (hasStoredJobId) return
     if (activeStep === 2 && isConfigSaved && parsedDocuments.length === 0 && !isLoadingDocuments) {
       loadParsedDocuments()
     }
-  }, [activeStep, isConfigSaved])
+  }, [activeStep, isConfigSaved, hasStoredJobId])
 
   // Timer update effect
   useEffect(() => {
@@ -2136,25 +2150,6 @@ export default function PreparePage() {
                 {formatTime(totalProcessingTime)}
               </span>
             )}
-            {currentJobId && 
-             autoProcessStatus.step !== "completed" && 
-             autoProcessStatus.step !== "error" && 
-             !isCancelling && (
-              <button
-                onClick={cancelAutoProcessing}
-                disabled={isCancelling}
-                className="ml-2 px-3 py-1.5 text-sm font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
-              >
-                <X className="h-4 w-4" />
-                Cancelar
-              </button>
-            )}
-            {isCancelling && (
-              <span className="ml-2 text-sm text-gray-500 flex items-center gap-1.5">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Cancelando...
-              </span>
-            )}
           </div>
           
           <div className="p-4">
@@ -2226,10 +2221,10 @@ export default function PreparePage() {
                     ["evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) ? "text-[var(--color-success)]" :
                     "text-gray-500"
                   }`}>
-                    <StrategyHint t={t} />
                     {["evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step)
                       ? "Estratégias A / B / C aplicadas"
                       : "Aplicando estratégias A / B / C"}
+                    <StrategyHint t={t} />
                   </span>
                   {(autoProcessStatus.strategyStatus || autoProcessStatus.evaluationA) && (
                     <button 
@@ -2359,12 +2354,12 @@ export default function PreparePage() {
                     ["selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) ? "text-[var(--color-success)]" :
                     "text-gray-500"
                   }`}>
-                    <StrategyHint t={t} />
                     <span>
                       {["selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step)
                         ? "Estratégias A / B / C avaliadas"
                         : "Avaliando estratégias A / B / C"}
                     </span>
+                    <StrategyHint t={t} />
                     {/* Show parallel evaluation progress */}
                     {autoProcessStatus.step === "evaluating" && autoProcessStatus.evalProgress && (
                       <span className="ml-2 text-xs font-normal text-gray-500">
