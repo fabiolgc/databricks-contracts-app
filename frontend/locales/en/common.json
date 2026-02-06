@@ -3,7 +3,8 @@
     "name": "Contracts App",
     "nav": {
       "import": "Import Documents",
-      "prepare": "Prepare data for search"
+      "prepare": "Prepare data for search",
+      "agent": "AI Agent"
     }
   },
   "language": {
@@ -231,11 +232,81 @@
         "structural": "Structural",
         "evaluating": "Evaluating strategies",
         "applying": "Applying strategy",
-        "creatingIndex": "Creating Vector Index"
+        "creatingIndex": "Creating Vector Index",
+        "strategyHintA": "Recursive: splits respecting paragraphs and line breaks. Keeps context.",
+        "strategyHintB": "Fixed size: splits text into equal parts with configurable overlap.",
+        "strategyHintC": "Structural: splits by document structure (headings, sections)."
       },
       "results": {
         "best": "Best"
       }
+    }
+  },
+  "agent": {
+    "title": "AI Agent",
+    "subtitle": "Chat with contracts using AI-powered analysis",
+    "profile": {
+      "title": "Analysis Profile",
+      "select": "Select a profile",
+      "buyer": "Buyer",
+      "analyst": "Analyst",
+      "legal": "Legal",
+      "custom": "Custom",
+      "manage": "Manage Profiles",
+      "create": "Create Profile",
+      "edit": "Edit Profile",
+      "delete": "Delete Profile",
+      "name": "Profile Name",
+      "description": "Description",
+      "systemPrompt": "System Prompt",
+      "active": "Active",
+      "confirmDelete": "Are you sure you want to delete this profile?"
+    },
+    "chat": {
+      "placeholder": "Ask about your contracts...",
+      "send": "Send",
+      "thinking": "Thinking...",
+      "noMessages": "Start a conversation with the AI agent",
+      "sources": "Sources",
+      "noSources": "No sources found",
+      "clear": "Clear conversation",
+      "copy": "Copy response"
+    },
+    "metrics": {
+      "title": "Metrics",
+      "tokens": "Tokens",
+      "promptTokens": "Prompt",
+      "completionTokens": "Completion",
+      "totalTokens": "Total",
+      "sources": "Sources Found",
+      "responseTime": "Response Time",
+      "traceId": "Trace ID"
+    },
+    "traces": {
+      "title": "Execution Traces",
+      "vectorSearch": "Vector Search",
+      "llmCall": "LLM Call",
+      "profile": "Profile Used",
+      "noTraces": "No traces available"
+    },
+    "feedback": {
+      "title": "Feedback",
+      "helpful": "Was this response helpful?",
+      "yes": "Yes",
+      "no": "No",
+      "thankYou": "Thank you for your feedback!"
+    },
+    "errors": {
+      "noProfile": "Please select a profile first",
+      "emptyMessage": "Please enter a message",
+      "chatFailed": "Failed to get response from agent",
+      "loadProfiles": "Failed to load profiles"
+    },
+    "toast": {
+      "profileCreated": "Profile created successfully",
+      "profileUpdated": "Profile updated successfully",
+      "profileDeleted": "Profile deleted successfully",
+      "feedbackSaved": "Feedback saved"
     }
   }
 }

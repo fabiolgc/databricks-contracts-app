@@ -3,7 +3,8 @@
     "name": "Contracts App",
     "nav": {
       "import": "Importar Documentos",
-      "prepare": "Preparar dados para busca"
+      "prepare": "Preparar dados para busca",
+      "agent": "Agente IA"
     }
   },
   "language": {
@@ -231,11 +232,81 @@
         "structural": "Estrutural",
         "evaluating": "Avaliando estratégias",
         "applying": "Aplicando estratégia",
-        "creatingIndex": "Criando Vector Index"
+        "creatingIndex": "Criando Vector Index",
+        "strategyHintA": "Recursivo: divide respeitando parágrafos e quebras de linha. Mantém o contexto.",
+        "strategyHintB": "Tamanho fixo: divide o texto em partes iguais com sobreposição configurável.",
+        "strategyHintC": "Estrutural: divide pela estrutura do documento (títulos, seções)."
       },
       "results": {
         "best": "Melhor"
       }
+    }
+  },
+  "agent": {
+    "title": "Agente IA",
+    "subtitle": "Converse com os contratos usando análise por IA",
+    "profile": {
+      "title": "Perfil de Análise",
+      "select": "Selecione um perfil",
+      "buyer": "Comprador",
+      "analyst": "Analista",
+      "legal": "Jurídico",
+      "custom": "Personalizado",
+      "manage": "Gerenciar Perfis",
+      "create": "Criar Perfil",
+      "edit": "Editar Perfil",
+      "delete": "Excluir Perfil",
+      "name": "Nome do Perfil",
+      "description": "Descrição",
+      "systemPrompt": "Prompt do Sistema",
+      "active": "Ativo",
+      "confirmDelete": "Tem certeza que deseja excluir este perfil?"
+    },
+    "chat": {
+      "placeholder": "Pergunte sobre seus contratos...",
+      "send": "Enviar",
+      "thinking": "Pensando...",
+      "noMessages": "Inicie uma conversa com o agente IA",
+      "sources": "Fontes",
+      "noSources": "Nenhuma fonte encontrada",
+      "clear": "Limpar conversa",
+      "copy": "Copiar resposta"
+    },
+    "metrics": {
+      "title": "Métricas",
+      "tokens": "Tokens",
+      "promptTokens": "Prompt",
+      "completionTokens": "Completude",
+      "totalTokens": "Total",
+      "sources": "Fontes Encontradas",
+      "responseTime": "Tempo de Resposta",
+      "traceId": "ID do Trace"
+    },
+    "traces": {
+      "title": "Traces de Execução",
+      "vectorSearch": "Busca Vetorial",
+      "llmCall": "Chamada LLM",
+      "profile": "Perfil Utilizado",
+      "noTraces": "Nenhum trace disponível"
+    },
+    "feedback": {
+      "title": "Feedback",
+      "helpful": "Esta resposta foi útil?",
+      "yes": "Sim",
+      "no": "Não",
+      "thankYou": "Obrigado pelo seu feedback!"
+    },
+    "errors": {
+      "noProfile": "Por favor, selecione um perfil primeiro",
+      "emptyMessage": "Por favor, digite uma mensagem",
+      "chatFailed": "Falha ao obter resposta do agente",
+      "loadProfiles": "Falha ao carregar perfis"
+    },
+    "toast": {
+      "profileCreated": "Perfil criado com sucesso",
+      "profileUpdated": "Perfil atualizado com sucesso",
+      "profileDeleted": "Perfil excluído com sucesso",
+      "feedbackSaved": "Feedback salvo"
     }
   }
 }

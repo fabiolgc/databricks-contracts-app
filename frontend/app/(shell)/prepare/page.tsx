@@ -17,18 +17,48 @@ import {
   Plus,
   Layers,
   X,
-  Check
+  Check,
+  Info
 } from "lucide-react"
 import { toast, Toaster } from "sonner"
 import { useTranslation } from "@/lib/i18n"
 
 // Helper function to format time in MM:SS
 function formatTime(seconds: number): string {
-  // Ensure non-negative values
   const safeSeconds = Math.max(0, Math.floor(seconds))
   const mins = Math.floor(safeSeconds / 60)
   const secs = safeSeconds % 60
   return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
+}
+
+function StrategyHint({ t }: { t: (key: string) => string }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <span className="relative inline-flex items-center">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        className="text-gray-400 hover:text-[var(--color-accent)] transition-colors p-0.5 rounded focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] focus:ring-offset-1"
+        aria-label={t("common.info")}
+      >
+        <Info className="h-4 w-4" />
+      </button>
+      {open && (
+        <div
+          className="absolute left-0 top-full z-50 mt-1 w-64 p-3 bg-white border border-gray-200 rounded-lg shadow-lg text-left"
+          role="tooltip"
+        >
+          <p className="text-xs font-medium text-[var(--color-text)] mb-2">A / B / C:</p>
+          <ul className="text-xs text-gray-600 space-y-1">
+            <li><strong>A:</strong> {t("prepare.autoProcess.steps.strategyHintA")}</li>
+            <li><strong>B:</strong> {t("prepare.autoProcess.steps.strategyHintB")}</li>
+            <li><strong>C:</strong> {t("prepare.autoProcess.steps.strategyHintC")}</li>
+          </ul>
+        </div>
+      )}
+    </span>
+  )
 }
 
 // Types
@@ -1956,11 +1986,12 @@ export default function PreparePage() {
                   ) : (
                     <div className="h-5 w-5 rounded-full border-2 border-gray-300 flex-shrink-0" />
                   )}
-                  <span className={`text-sm flex-1 ${
+                  <span className={`text-sm flex-1 flex items-center gap-1.5 ${
                     autoProcessStatus.step === "chunking_parallel" ? "text-[var(--color-primary)] font-medium" :
                     ["evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) ? "text-[var(--color-success)]" :
                     "text-gray-500"
                   }`}>
+                    <StrategyHint t={t} />
                     {["evaluating", "selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step)
                       ? "Estratégias A / B / C aplicadas"
                       : "Aplicando estratégias A / B / C"}
@@ -2088,11 +2119,12 @@ export default function PreparePage() {
                   ) : (
                     <div className="h-5 w-5 rounded-full border-2 border-gray-300 flex-shrink-0" />
                   )}
-                  <div className={`text-sm flex-1 ${
+                  <div className={`text-sm flex-1 flex items-center gap-1.5 ${
                     autoProcessStatus.step === "evaluating" ? "text-[var(--color-primary)] font-medium" :
                     ["selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step) ? "text-[var(--color-success)]" :
                     "text-gray-500"
                   }`}>
+                    <StrategyHint t={t} />
                     <span>
                       {["selecting", "applying", "creating_index", "completed"].includes(autoProcessStatus.step)
                         ? "Estratégias A / B / C avaliadas"
